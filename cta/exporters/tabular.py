@@ -51,13 +51,15 @@ def export_bundle(
         jp.write_text(json.dumps(payload, indent=2))
         written["json"] = jp
 
-    if "pdf" in fmt_set or "png" in fmt_set or "svg" in fmt_set:
-        ext = "pdf" if "pdf" in fmt_set else ("svg" if "svg" in fmt_set else "png")
-        try:
-            fig_path = out_dir / f"breakdown.{ext}"
-            report.plot("breakdown", path=fig_path)
-            written[ext] = fig_path
-        except (NotImplementedError, ValueError):
-            pass
+    for ext in ("pdf", "svg", "png"):
+        if ext in fmt_set:
+            for kind in ("breakdown", "scaling"):
+                try:
+                    fig_path = out_dir / f"{kind}.{ext}"
+                    report.plot(kind, path=fig_path)
+                    written[ext] = fig_path
+                    break
+                except ValueError:
+                    continue
 
     return written

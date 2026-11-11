@@ -111,6 +111,85 @@ def equiv_cmd(
         raise typer.Exit(code=2)
 
 
+@app.command("plot")
+def plot_cmd(
+    traces: Annotated[list[str] | None, typer.Argument(help="Two or more trace files, globs, or RunBundle directories.")] = None,
+    manifest: Annotated[Path | None, typer.Option("--manifest", "-m", help="Declarative YAML/TOML sweep manifest.")] = None,
+    kind: Annotated[str, typer.Option("--kind", "-k", help="Comma-separated plot kinds (breakdown,tornado,traffic_delta,skew,roofline,scaling).")] = "breakdown",
+    out_dir: Annotated[Path, typer.Option("--out-dir", "-o", help="Output directory for generated figures.")] = Path("figures"),
+    fmt: Annotated[str, typer.Option("--format", "-f", help="Figure file extension (pdf, svg, png).")] = "pdf",
+    style: Annotated[str, typer.Option("--style", help="Preset style (paper_single_col, paper_double_col, presentation).")] = "paper_single_col",
+    cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache"),
+) -> None:
+    """Render publication-ready comparative plots to PDF, SVG, or PNG."""
+    if manifest is not None:
+        groups, cfg = load_manifest(manifest)
+        report = run_comparison(groups, cfg)
+    else:
+        if not traces or len(traces) < 2:
+            raise typer.BadParameter("Provide at least two trace paths/directories or --manifest.")
+        report = run_compare_sdk(traces[0], traces[1], *traces[2:], cache_dir=cache_dir)
+
+    ext = fmt.lstrip(".").lower()
+    for k in (x.strip() for x in kind.split(",") if x.strip()):
+        dst = out_dir / f"{k}.{ext}"
+        report.plot(kind=k, path=dst, style=style)
+        console.print(f"[green]✓ Saved figure:[/green] {dst}")
+
+
+@app.command("synth")
+def synth_cmd(
+    out_dir: Annotated[Path, typer.Argument(help="Directory to populate with synthetic demo traces & sweep manifest.")] = Path("demo_traces"),
+) -> None:
+    """Generate miniature valid traces across all 7 ecosystems for demos and offline testing."""
+    from cta.synth.generators import (
+        compile_goal_to_bin,
+        write_chakra_et_run,
+        write_goal_allreduce,
+        write_jtop_trace,
+        write_kineto_trace,
+        write_ncu_csv,
+        write_nsys_sqlite,
+        write_trtexec_layers,
+        write_trtexec_timing,
+    )
+
+    write_chakra_et_run(out_dir / "chakra_ring", world_size=4, compute_us=900, allreduce_bytes=400_000)
+    write_chakra_et_run(out_dir / "chakra_skewed", world_size=4, compute_us=900, allreduce_bytes=800_000, straggler_rank=2, straggler_factor=1.8)
+
+    g_ring = write_goal_allreduce(out_dir / "goal" / "ring.goal", world_size=4, compute_ns=900_000, allreduce_bytes=400_000, algo="ring")
+    compile_goal_to_bin(g_ring, out_dir / "goal" / "ring.bin")
+    write_goal_allreduce(out_dir / "goal" / "direct.goal", world_size=4, compute_ns=900_000, allreduce_bytes=400_000, algo="direct")
+
+    for mode, comp_ms, p_mw, prec, fused in (("fp16", 3.2, 22_000.0, "FP16", False), ("int8", 1.3, 14_000.0, "INT8", True)):
+        bdir = out_dir / f"gpu_bundle_{mode}"
+        write_nsys_sqlite(bdir / "profile.sqlite", gemm_us=int(comp_ms * 300), comm_us=250)
+        write_trtexec_timing(bdir / "times.json", queries=40, compute_ms=comp_ms)
+        write_trtexec_layers(bdir / "profile.json", bdir / "engine.json", fused=fused, precision=prec)
+        write_jtop_trace(bdir / "jtop.json", duration_s=4, power_mw=p_mw)
+
+    write_kineto_trace(out_dir / "kineto" / "eager.json.gz", attn_us=450.0, gemm_us=600.0, kernel_variant="fp16")
+    write_kineto_trace(out_dir / "kineto" / "compiled_fp8.json.gz", attn_us=210.0, gemm_us=280.0, kernel_variant="fp8")
+    write_ncu_csv(out_dir / "ncu" / "baseline.csv", sm_pct=35.0, dram_pct=84.0)
+    write_ncu_csv(out_dir / "ncu" / "optimized.csv", gemm_dur_ns=260_000.0, sm_pct=82.0, dram_pct=38.0, flops=4e10, dram_bytes=5e8)
+
+    (out_dir / "sweep.yaml").write_text(
+        """groups:
+  - id: fp16
+    label: Jetson_FP16
+    path: gpu_bundle_fp16
+  - id: int8
+    label: Jetson_INT8
+    path: gpu_bundle_int8
+config:
+  warmup_steps: 2
+  gates:
+    mean_step_ms: 5.0
+"""
+    )
+    console.print(f"[green]✓ Generated synthetic multi-format demo workspace in:[/green] {out_dir}")
+
+
 @app.command("inspect")
 def inspect_cmd(
     source: Annotated[str, typer.Argument(help="Trace file, glob, or RunBundle directory.")],
