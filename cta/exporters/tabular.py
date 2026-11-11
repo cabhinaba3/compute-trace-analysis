@@ -3,10 +3,35 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from cta.core.models import ComparisonReport
 from cta.exporters.latex import export_latex
 from cta.exporters.markdown import export_markdown
+
+# "tornado" is an alias of "topk", so it is not exported separately.
+PLOT_KINDS = ("breakdown", "topk", "traffic_delta", "skew", "roofline", "scaling")
+
+
+def report_to_dict(report: ComparisonReport) -> dict[str, Any]:
+    """JSON-serialisable view of a report. `aspects` keeps the legacy summary-only shape."""
+    return {
+        "mode": report.mode,
+        "groups": [g.label for g in report.groups],
+        "diagnoses": [d.summary for d in report.diagnoses],
+        "violations": [v.message for v in report.violations],
+        "aspects": {name: asp.summary.to_dicts() for name, asp in report.aspects.items()},
+        "details": {
+            name: {t: df.to_dicts() for t, df in asp.details.items()}
+            for name, asp in report.aspects.items()
+            if asp.details
+        },
+        "scalars": {name: asp.scalars for name, asp in report.aspects.items() if asp.scalars},
+    }
+
+
+def report_to_json(report: ComparisonReport) -> str:
+    return json.dumps(report_to_dict(report), indent=2, default=str)
 
 
 def export_bundle(
@@ -38,28 +63,17 @@ def export_bundle(
 
     if "json" in fmt_set:
         jp = out_dir / "report.json"
-        payload = {
-            "mode": report.mode,
-            "groups": [g.label for g in report.groups],
-            "diagnoses": [d.summary for d in report.diagnoses],
-            "violations": [v.message for v in report.violations],
-            "aspects": {
-                name: asp.summary.to_dicts()
-                for name, asp in report.aspects.items()
-            },
-        }
-        jp.write_text(json.dumps(payload, indent=2))
+        jp.write_text(report_to_json(report))
         written["json"] = jp
 
     for ext in ("pdf", "svg", "png"):
         if ext in fmt_set:
-            for kind in ("breakdown", "topk", "roofline", "scaling"):
+            for kind in PLOT_KINDS:
+                fig_path = out_dir / f"{kind}.{ext}"
                 try:
-                    fig_path = out_dir / f"{kind}.{ext}"
                     report.plot(kind, path=fig_path)
-                    written[ext] = fig_path
-                    break
-                except ValueError:
+                except ValueError:  # plot not applicable to this report's aspects
                     continue
+                written[f"{ext}:{kind}"] = fig_path
 
     return written

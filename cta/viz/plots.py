@@ -285,23 +285,26 @@ def render_plot(
     with plt.rc_context(cast(Any, PAPER_RC)):
         fig = plt.figure(figsize=figsize, constrained_layout=True)
         k = kind.lower()
-        if k == "breakdown":
-            _plot_breakdown(report, fig)
-        elif k in ("tornado", "topk", "top_k", "hotspots"):
-            _plot_tornado(report, fig, **kwargs)
-        elif k in ("traffic_delta", "heatmap", "traffic"):
-            _plot_traffic_heatmap(report, fig)
-        elif k == "skew":
-            _plot_skew(report, fig)
-        elif k == "roofline":
-            _plot_roofline(report, fig)
-        elif k == "scaling":
-            _plot_scaling(report, fig, **kwargs)
-        else:
-            plt.close(fig)
-            raise ValueError(
-                f"Unknown plot kind '{kind}'. Supported: breakdown, tornado, topk, traffic_delta, skew, roofline, scaling"
-            )
+        try:
+            if k == "breakdown":
+                _plot_breakdown(report, fig)
+            elif k in ("tornado", "topk", "top_k", "hotspots"):
+                _plot_tornado(report, fig, **kwargs)
+            elif k in ("traffic_delta", "heatmap", "traffic"):
+                _plot_traffic_heatmap(report, fig)
+            elif k == "skew":
+                _plot_skew(report, fig)
+            elif k == "roofline":
+                _plot_roofline(report, fig)
+            elif k == "scaling":
+                _plot_scaling(report, fig, **kwargs)
+            else:
+                raise ValueError(
+                    f"Unknown plot kind '{kind}'. Supported: breakdown, tornado, topk, traffic_delta, skew, roofline, scaling"
+                )
+        except ValueError:
+            plt.close(fig)  # do not leak figures for inapplicable plot kinds
+            raise
 
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)

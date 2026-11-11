@@ -37,7 +37,12 @@ def render_terminal_report(report: ComparisonReport, console: Console | None = N
                     cells.append("yes" if v else "no")
                 elif isinstance(v, float):
                     if k.endswith("delta_pct"):
-                        color = "red" if v > 2.0 else ("green" if v < -2.0 else "white")
+                        # `speedup` (pairs) is direction-aware: >1 means the candidate is better.
+                        sp = row.get("speedup")
+                        if isinstance(sp, float):
+                            color = "green" if sp > 1.02 else ("red" if sp < 0.98 else "white")
+                        else:
+                            color = "red" if v > 2.0 else ("green" if v < -2.0 else "white")
                         cells.append(f"[{color}]{v:+.2f}%[/{color}]")
                     elif k == "speedup":
                         cells.append(f"{v:.2f}x")
