@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "compute-trace-analysis"
-version = "1.0.0"
+dynamic = ["version"]
 description = "Cross-platform multi-trace and multi-aspect performance comparison framework for AI/HPC schedules and GPU profilers"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -33,6 +33,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: System :: Benchmark",
 ]
@@ -67,6 +68,9 @@ cta = "cta.cli.app:main"
 [project.urls]
 Repository = "https://github.com/cabhinaba3/compute-trace-analysis"
 Issues = "https://github.com/cabhinaba3/compute-trace-analysis/issues"
+
+[tool.hatch.version]
+path = "cta/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cta"]

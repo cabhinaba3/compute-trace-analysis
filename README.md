@@ -62,6 +62,8 @@ cta compare demo_traces/gpu_bundle_fp16 demo_traces/gpu_bundle_int8 \
 cta compare --manifest demo_traces/sweep.yaml
 ```
 
+Gates fail the run (exit code 2) when a metric's `delta_pct` exceeds the threshold, and also when a gate names a metric the report does not contain (use `--allow-missing-gates` to ignore). Add `--format json` to `compare`/`analyze` to print the report as JSON on stdout (export status goes to stderr), e.g. `cta compare a b --format json | jq .violations`.
+
 ### 3. Verify Chakra-ET $\leftrightarrow$ GOAL schedule equivalence
 ```bash
 cta equiv demo_traces/chakra_ring demo_traces/goal/ring.bin --collective-algo ring --rel-tol 0.02
@@ -76,7 +78,7 @@ cta plot demo_traces/chakra_ring demo_traces/chakra_skewed \
   --out-dir figures/
 ```
 
-Supported plot kinds: `breakdown`, `tornado`, `traffic_delta`, `skew`, `roofline`, `scaling`.
+Supported plot kinds: `breakdown`, `topk` (alias `tornado`), `traffic_delta`, `skew`, `roofline`, `scaling`.
 
 ---
 
@@ -116,27 +118,34 @@ assert verdict.equivalent
 
 ## Extending CTA with Custom Plugins
 
-Third-party formats and comparison aspects register cleanly via decorators in [`cta/core/registry.py`](cta/core/registry.py):
+Third-party formats and comparison aspects register via decorators in [`cta/core/registry.py`](cta/core/registry.py), either in your own module or through the `cta.plugins` entry-point group. Run `cta list` to see what is registered.
 
 ```python
+from pathlib import Path
+
 import polars as pl
 from cta import AspectResult, CompareConfig, TraceArtifact, TrialGroup, register_adapter, register_aspect
 
 
-@register_adapter("custom_log", extensions=(".clog",))
+@register_adapter("custom_log")
 class CustomAdapter:
-    name = "custom_log"
-
-    def can_sniffer(self, path):
+    def detect(self, path: Path) -> bool:
         return path.suffix == ".clog"
 
-    def ingest(self, artifact: TraceArtifact) -> dict[str, pl.DataFrame]:
-        return {"steps": pl.read_csv(artifact.paths[0])}
+    def ingest(self, artifact: TraceArtifact, out_dir: Path) -> dict[str, Path]:
+        # Write each normalized table as Parquet and return {table_name: path}.
+        dst = out_dir / "steps.parquet"
+        pl.read_csv(artifact.paths[0]).write_parquet(dst)
+        return {"steps": dst}
 
 
-@register_aspect("custom_metric", required_tables=("steps",))
-def compute_custom_metric(groups: tuple[TrialGroup, ...], tables, cfg: CompareConfig) -> AspectResult:
-    ...
+@register_aspect("custom_metric", title="Custom Metric", required_formats=("custom_log",))
+class CustomMetric:
+    def run(
+        self, groups: tuple[TrialGroup, ...], tables: dict[str, list[dict[str, Path]]], cfg: CompareConfig
+    ) -> AspectResult:
+        # tables[group_id][trial_index]["custom_log.steps"] -> Parquet path
+        ...
 ```
 
 ---
@@ -151,7 +160,7 @@ cta/
   exporters/     Rich terminal, Markdown, LaTeX booktabs, CSV/JSON bundle exporters
   viz/           Okabe-Ito Type-42 Matplotlib publication figure suite
   synth/         Deterministic synthetic trace generators for all 7 ecosystems
-  cli/           Typer CLI (`cta compare`, `equiv`, `plot`, `inspect`, `synth`, `cache`)
+  cli/           Typer CLI (`cta compare`, `analyze`, `equiv`, `plot`, `inspect`, `list`, `synth`, `cache`)
 examples/        Runnable SDK quickstarts and declarative sweep YAML manifest
 tests/           Unit and end-to-end integration test suites
 ```
