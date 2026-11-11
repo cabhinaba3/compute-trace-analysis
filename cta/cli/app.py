@@ -6,7 +6,9 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.pretty import Pretty
+from rich.table import Table
 
+from cta.aspects.distributed import verify_chakra_goal_equivalence
 from cta.core.cache import CacheStore
 from cta.core.diagnosis import parse_gate_spec
 from cta.core.engine import compare as run_compare_sdk
@@ -73,6 +75,39 @@ def compare_cmd(
             console.print(f"[green]✓ Exported {fmt_name}:[/green] {fpath}")
 
     if report.violations:
+        raise typer.Exit(code=2)
+
+
+@app.command("equiv")
+def equiv_cmd(
+    chakra_trace: Annotated[str, typer.Argument(help="Chakra-ET directory, glob, or .et file.")],
+    goal_schedule: Annotated[str, typer.Argument(help="GOAL .goal or .bin schedule file.")],
+    collective_algo: Annotated[str, typer.Option("--collective-algo", help="Collective decomposition algorithm (ring, tree, direct).")] = "ring",
+    rel_tol: Annotated[float, typer.Option("--rel-tol", help="Relative error tolerance.")] = 0.02,
+    cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache"),
+) -> None:
+    """Verify compute duration and decomposed collective byte equivalence between Chakra-ET and GOAL."""
+    verdict = verify_chakra_goal_equivalence(
+        chakra_trace,
+        goal_schedule,
+        collective_algo=collective_algo,
+        rel_tol=rel_tol,
+        cache_dir=cache_dir,
+    )
+    tbl = Table(title="Chakra-ET <-> GOAL Equivalence Check")
+    for col in ("check", "expected", "observed", "rel_error", "passed"):
+        tbl.add_column(col, justify="left" if col == "check" else "right")
+    for row in verdict.checks.iter_rows(named=True):
+        ok_str = "[green]PASS[/green]" if row["passed"] else "[bold red]FAIL[/bold red]"
+        tbl.add_row(
+            str(row["check"]),
+            f"{float(row['expected']):.4g}",
+            f"{float(row['observed']):.4g}",
+            f"{float(row['rel_error']) * 100:.2f}%",
+            ok_str,
+        )
+    console.print(tbl)
+    if not verdict.equivalent:
         raise typer.Exit(code=2)
 
 
