@@ -22,13 +22,15 @@ Originally developed for GPU/Jetson inference characterization (ISPASS'25), CTA 
 
 ## Installation
 
-Requires **Python >= 3.10** on macOS or Linux.
+Requires **Python >= 3.11** on macOS or Linux.
 
 ```bash
-git clone https://github.com/cabhinaba3/compute-trace-analysis.git
+git clone --recurse-submodules https://github.com/cabhinaba3/compute-trace-analysis.git
 cd compute-trace-analysis
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # builds the pinned MLCommons Chakra submodule in third_party/chakra
 ```
+
+If you cloned without `--recurse-submodules`, run `git submodule update --init` first.
 
 ---
 

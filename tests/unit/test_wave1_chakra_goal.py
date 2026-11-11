@@ -102,3 +102,34 @@ def test_chakra_to_goal_equivalence_and_cli(tmp_path: Path) -> None:
 
     res_fail = runner.invoke(app, ["equiv", str(et_dir), str(bad_goal), "--cache-dir", str(cache)])
     assert res_fail.exit_code == 2
+
+
+def test_chakra_storage_and_data_op_nodes(tmp_path: Path) -> None:
+    from cta.adapters.chakra.reader import _parse_single_et
+    from cta.adapters.chakra.schema import (
+        DATA_OP_NODE,
+        STORAGE_NODE,
+        GlobalMetadataMsg,
+        NodeMsg,
+        encode_varint,
+    )
+
+    st = NodeMsg(id=1, name="pread", type=STORAGE_NODE, duration_micros=5)
+    st.storage.fs.op = st.storage.fs.FS_OP_PREAD
+    st.storage.fs.size_bytes = 4096
+    blk = NodeMsg(id=2, name="bio", type=STORAGE_NODE, duration_micros=1)
+    blk.storage.block.nr_sectors = 8
+    dop = NodeMsg(id=3, name="ckpt", type=DATA_OP_NODE, duration_micros=7, data_deps=[1])
+    buf = bytearray()
+    for msg in (GlobalMetadataMsg(version="0.0.4"), st, blk, dop):
+        b = msg.SerializeToString()
+        buf += encode_varint(len(b)) + b
+    f = tmp_path / "t.0.et"
+    f.write_bytes(bytes(buf))
+
+    nodes, edges = _parse_single_et((0, f))
+    by_name = {n["name"]: n for n in nodes}
+    assert (by_name["pread"]["op_class"], by_name["pread"]["size_bytes"]) == ("storage", 4096)
+    assert by_name["bio"]["size_bytes"] == 8 * 512
+    assert by_name["ckpt"]["op_class"] == "data_op"
+    assert len(edges) == 1

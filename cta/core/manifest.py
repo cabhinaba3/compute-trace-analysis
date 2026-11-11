@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -8,11 +8,6 @@ import yaml
 
 from cta.core.bundle import resolve_bundle
 from cta.core.models import CompareConfig, TrialGroup
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:  # pragma: no cover
-    import tomli as tomllib
 
 
 def load_manifest(path: str | Path) -> tuple[tuple[TrialGroup, ...], CompareConfig]:

@@ -10,7 +10,11 @@
 - Inapplicable plot kinds no longer leak open Matplotlib figures.
 - README plugin example matches the real registry API.
 
+### Changed
+- **Breaking:** requires Python >=3.11 and protobuf >=6.31.1. Chakra-ET parsing now uses the official `mlc-chakra` schema from the pinned `third_party/chakra` git submodule (PyPI 1.0.0 predates storage/data-op nodes) instead of the vendored copy. Clone with `--recurse-submodules`. A path dependency means this package cannot be uploaded to PyPI as is.
+
 ### Added
+- Chakra `STORAGE_NODE` and `DATA_OP_NODE` nodes are ingested as `op_class` `storage` / `data_op` (storage size taken from the typed fs/page/block detail).
 - `cta --version`, `python -m cta`, `cta list`, `--format json|rich` and `--alpha` on `compare`/`analyze`, `--warmup-steps`/`--max-steps` on `plot`.
 - `py.typed` marker, Python 3.13 in CI and classifiers.
 - Version is single-sourced from `cta/__init__.py` (hatch dynamic version).

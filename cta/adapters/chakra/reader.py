@@ -13,8 +13,10 @@ import polars as pl
 from cta.adapters.chakra.schema import (
     COLL_TYPE_NAMES,
     NODE_TYPE_CLASS,
+    STORAGE_NODE,
     extract_attr_value,
     iter_et_messages,
+    storage_size_bytes,
 )
 from cta.core.models import TraceArtifact
 from cta.core.registry import register_adapter
@@ -84,6 +86,8 @@ def _parse_single_et(args: tuple[int, Path]) -> tuple[list[dict[str, object]], l
             comm_type = ""
 
         size_bytes = int(attrs.get("comm_size", attrs.get("tensor_size", 0)) or 0)
+        if int(n.type) == STORAGE_NODE and size_bytes == 0:
+            size_bytes = storage_size_bytes(n)
         src_r = int(attrs.get("comm_src", rank if op_class == "comm_send" else -1))
         dst_r = int(attrs.get("comm_dst", rank if op_class == "comm_recv" else -1))
         tag = int(attrs.get("comm_tag", 0) or 0)
