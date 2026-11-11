@@ -19,7 +19,7 @@ def compute_artifact_digest(artifact: TraceArtifact, adapter_version: str) -> st
     hasher.update(f"{artifact.format}:{adapter_version}:{artifact.world_size}".encode())
     for p in sorted(artifact.paths):
         st = p.stat()
-        hasher.update(f"{p.name}:{st.st_size}:{st.st_mtime_ns}".encode())
+        hasher.update(f"{p.name}:{st.st_size}".encode())  # no mtime: copies/checkouts must hit the cache
         with p.open("rb") as fh:
             if st.st_size <= _FULL_HASH_LIMIT:
                 while chunk := fh.read(262144):

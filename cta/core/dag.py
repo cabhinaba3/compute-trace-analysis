@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections import deque
 from dataclasses import dataclass
 
@@ -116,6 +117,12 @@ def solve_distributed_dag(nodes: pl.DataFrame, edges: pl.DataFrame) -> DagStats:
                 q.append(v)
 
     if len(topo) < n_total:
+        warnings.warn(
+            f"Execution graph has a cycle ({n_total - len(topo)} of {n_total} nodes unordered); "
+            "critical-path results are approximate.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         # Cycle fallback: process remaining vertices in index order
         seen = set(topo)
         topo.extend(i for i in range(n_total) if i not in seen)
