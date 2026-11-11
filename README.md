@@ -114,3 +114,7 @@ The plotting scripts for the paper and the characterisation experiments are not 
 - Only tested on Linux.
 
 Bug reports and pull requests are welcome.
+
+## License
+
+GPL-2.0. See [LICENSE](LICENSE).
