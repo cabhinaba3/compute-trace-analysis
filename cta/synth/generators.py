@@ -467,3 +467,121 @@ def write_ncu_csv(
     ]
     path.write_text("\n".join(lines))
     return path
+
+
+def write_trtexec_timing(
+    path: Path,
+    *,
+    queries: int = 20,
+    h2d_ms: float = 0.4,
+    compute_ms: float = 2.0,
+    d2h_ms: float = 0.3,
+    overlap_ms: float = 0.2,
+    idle_gap_ms: float = 0.1,
+) -> Path:
+    """Write a `trtexec --exportTimes` JSON file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = []
+    cur = 10.0
+    for _ in range(queries):
+        sh2d = cur
+        eh2d = sh2d + h2d_ms
+        scmp = max(sh2d, eh2d - overlap_ms)
+        ecmp = scmp + compute_ms
+        sd2h = max(scmp, ecmp - overlap_ms * 0.5)
+        ed2h = sd2h + d2h_ms
+        rows.append(
+            {
+                "startH2dMs": sh2d,
+                "endH2dMs": eh2d,
+                "startComputeMs": scmp,
+                "endComputeMs": ecmp,
+                "startD2hMs": sd2h,
+                "endD2hMs": ed2h,
+                "h2dMs": h2d_ms,
+                "computeMs": compute_ms,
+                "d2hMs": d2h_ms,
+                "latencyMs": ed2h - sh2d,
+            }
+        )
+        cur = ed2h + idle_gap_ms
+    path.write_text(json.dumps(rows, indent=2))
+    return path
+
+
+def write_trtexec_layers(
+    profile_path: Path,
+    engine_path: Path,
+    *,
+    fused: bool = False,
+    precision: str = "FP16",
+) -> tuple[Path, Path]:
+    """Write companion `trtexec --exportProfile` and `--exportLayerInfo` JSON files."""
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    engine_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if fused:
+        prof = [
+            {"count": 100},
+            {"name": "Conv_0 + Bias_1 + Relu_2", "timeMs": 80.0, "averageMs": 0.8, "medianMs": 0.79, "percentage": 66.7},
+            {"name": "Linear_3", "timeMs": 40.0, "averageMs": 0.4, "medianMs": 0.4, "percentage": 33.3},
+        ]
+        eng = {
+            "Layers": [
+                {"Name": "Conv_0 + Bias_1 + Relu_2", "LayerType": "CaskConvolution", "Precision": precision, "TacticName": "sm87_xmma_fprop"},
+                {"Name": "Linear_3", "LayerType": "CaskGemm", "Precision": precision, "TacticName": "sm87_gemm"},
+            ]
+        }
+    else:
+        prof = [
+            {"count": 100},
+            {"name": "Conv_0", "timeMs": 110.0, "averageMs": 1.1, "medianMs": 1.1, "percentage": 55.0},
+            {"name": "Bias_1", "timeMs": 20.0, "averageMs": 0.2, "medianMs": 0.2, "percentage": 10.0},
+            {"name": "Relu_2", "timeMs": 15.0, "averageMs": 0.15, "medianMs": 0.15, "percentage": 7.5},
+            {"name": "Linear_3", "timeMs": 55.0, "averageMs": 0.55, "medianMs": 0.55, "percentage": 27.5},
+        ]
+        eng = {
+            "Layers": [
+                {"Name": "Conv_0", "LayerType": "Convolution", "Precision": precision, "TacticName": "cudnn_conv"},
+                {"Name": "Bias_1", "LayerType": "ElementWise", "Precision": precision, "TacticName": "ew_add"},
+                {"Name": "Relu_2", "LayerType": "Activation", "Precision": precision, "TacticName": "relu"},
+                {"Name": "Linear_3", "LayerType": "MatrixMultiply", "Precision": precision, "TacticName": "cublas_gemm"},
+            ]
+        }
+
+    profile_path.write_text(json.dumps(prof, indent=2))
+    engine_path.write_text(json.dumps(eng, indent=2))
+    return profile_path, engine_path
+
+
+def write_jtop_trace(
+    path: Path,
+    *,
+    duration_s: int = 5,
+    num_cores: int = 8,
+    power_mw: float = 15_000.0,
+    gpu_util: float = 85.0,
+    gpu_mem_mb: float = 2048.0,
+    temp_c: float | None = 62.0,
+) -> Path:
+    """Write a Jetson `jtop` JSON telemetry trace (nanosecond timestamps, milliwatt power rail)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    t0_ns = 1_700_000_000_000_000_000
+    samples = []
+    for sec in range(duration_s + 1):
+        rec: dict[str, object] = {
+            "time": t0_ns + sec * 1_000_000_000,
+            "GPU": gpu_util,
+            "gpu_memory_usage": gpu_mem_mb,
+            "RAM": 4096.0,
+            "SWAP": 128.0,
+            "Power TOT": power_mw,
+            "VDD_GPU_SOC": power_mw * 0.65,
+        }
+        for c in range(1, num_cores + 1):
+            rec[f"CPU{c}"] = 35.0
+        if temp_c is not None:
+            rec["Temp gpu"] = temp_c
+        samples.append(rec)
+    path.write_text(json.dumps(samples, indent=2))
+    return path
