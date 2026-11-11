@@ -90,8 +90,10 @@ def _plot_breakdown(report: ComparisonReport, fig: Figure) -> None:
 
 
 def _plot_tornado(report: ComparisonReport, fig: Figure, *, top_k: int = 10, table: str | None = None) -> None:
-    if len(report.groups) != 2:
-        raise ValueError("Tornado delta plot requires a 2-group (Baseline vs Candidate) comparison")
+    if len(report.groups) not in (1, 2):
+        raise ValueError("Tornado / Top-K plot requires 1 trace (hotspots) or 2 traces (Baseline vs Candidate)")
+    is_single = len(report.groups) == 1
+    val_col = report.groups[0].label if is_single else "delta"
     ax = fig.add_subplot(111)
 
     df: pl.DataFrame | None = None
@@ -107,26 +109,30 @@ def _plot_tornado(report: ComparisonReport, fig: Figure, *, top_k: int = 10, tab
     for asp_name, tbl_name, kcol, u in candidates:
         if asp_name in report.aspects and tbl_name in report.aspects[asp_name].details:
             cand_df = report.aspects[asp_name].details[tbl_name]
-            if cand_df.height > 0 and "delta" in cand_df.columns:
+            if cand_df.height > 0 and val_col in cand_df.columns:
                 df = cand_df.head(top_k)
                 key_col = kcol if kcol in df.columns else df.columns[0]
                 unit = u
                 break
 
     if df is None:
-        raise ValueError("No entity breakdown table with 'delta' available for tornado plot")
+        raise ValueError(f"No entity breakdown table with '{val_col}' available for Top-K / tornado plot")
 
     sub = df.reverse()
     names = [str(s)[:32] for s in sub[key_col].to_list()]
-    deltas = sub["delta"].to_numpy().astype(np.float64)
-    colors = [OKABE_ITO[1] if d > 0 else OKABE_ITO[2] for d in deltas]
+    vals = sub[val_col].to_numpy().astype(np.float64)
+    colors = [OKABE_ITO[0]] * len(vals) if is_single else [OKABE_ITO[1] if d > 0 else OKABE_ITO[2] for d in vals]
 
     y = np.arange(len(names))
-    ax.barh(y, deltas, color=colors, height=0.6)
+    ax.barh(y, vals, color=colors, height=0.6)
     ax.axvline(0.0, color="#333333", linewidth=0.8)
     ax.set_yticks(y, names)
-    ax.set_xlabel(f"Delta ({report.groups[1].label} - {report.groups[0].label}) [{unit}]")
-    ax.set_title("Top Contributors to Net Change")
+    if is_single:
+        ax.set_xlabel(f"{report.groups[0].label} [{unit}]")
+        ax.set_title(f"Top Hotspots ({report.groups[0].label})")
+    else:
+        ax.set_xlabel(f"Delta ({report.groups[1].label} - {report.groups[0].label}) [{unit}]")
+        ax.set_title("Top Contributors to Net Change")
 
 
 def _plot_traffic_heatmap(report: ComparisonReport, fig: Figure) -> None:
@@ -257,10 +263,13 @@ def _plot_scaling(report: ComparisonReport, fig: Figure, *, metric: str | None =
     unit = str(unit_row["unit"][0]) if unit_row.height else ""
 
     x = np.arange(len(labels))
-    ax.plot(x, vals, marker="o", linewidth=1.6, color=OKABE_ITO[0])
+    if len(labels) == 1:
+        ax.bar(x, vals, width=0.45, color=OKABE_ITO[0])
+    else:
+        ax.plot(x, vals, marker="o", linewidth=1.6, color=OKABE_ITO[0])
     ax.set_xticks(x, labels)
     ax.set_ylabel(f"{chosen_metric} ({unit})" if unit else chosen_metric)
-    ax.set_title(f"Scaling Comparison: {chosen_metric}")
+    ax.set_title(f"Metric Summary: {chosen_metric}" if len(labels) == 1 else f"Scaling Comparison: {chosen_metric}")
 
 
 def render_plot(
@@ -278,7 +287,7 @@ def render_plot(
         k = kind.lower()
         if k == "breakdown":
             _plot_breakdown(report, fig)
-        elif k == "tornado":
+        elif k in ("tornado", "topk", "top_k", "hotspots"):
             _plot_tornado(report, fig, **kwargs)
         elif k in ("traffic_delta", "heatmap", "traffic"):
             _plot_traffic_heatmap(report, fig)
@@ -291,7 +300,7 @@ def render_plot(
         else:
             plt.close(fig)
             raise ValueError(
-                f"Unknown plot kind '{kind}'. Supported: breakdown, tornado, traffic_delta, skew, roofline, scaling"
+                f"Unknown plot kind '{kind}'. Supported: breakdown, tornado, topk, traffic_delta, skew, roofline, scaling"
             )
 
         if path is not None:

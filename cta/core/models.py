@@ -97,7 +97,7 @@ class AspectResult:
 
 @dataclass(slots=True)
 class ComparisonReport:
-    mode: Literal["pair", "multi"]
+    mode: Literal["single", "pair", "multi"]
     groups: tuple[TrialGroup, ...]
     aspects: dict[str, AspectResult]
     diagnoses: list[BottleneckShift] = field(default_factory=list)

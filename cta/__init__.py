@@ -2,7 +2,7 @@
 
 from cta.aspects.distributed import EquivalenceVerdict, verify_chakra_goal_equivalence
 from cta.core.bundle import detect_format, resolve_bundle, resolve_trial_group
-from cta.core.engine import compare, inspect_trace, run_comparison
+from cta.core.engine import analyze, compare, inspect_trace, run_comparison
 from cta.core.manifest import load_manifest
 from cta.core.models import (
     AspectResult,
@@ -31,6 +31,7 @@ __all__ = [
     "TraceArtifact",
     "TrialGroup",
     "__version__",
+    "analyze",
     "compare",
     "detect_format",
     "equiv",

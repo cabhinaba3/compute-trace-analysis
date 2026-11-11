@@ -79,13 +79,27 @@ def diagnose_bottleneck_shifts(
     groups: tuple[TrialGroup, ...],
     aspects: dict[str, AspectResult],
 ) -> list[BottleneckShift]:
-    if len(groups) < 2:
+    if not groups:
         return []
     base_lbl = groups[0].label
     base_shares = _extract_shares(base_lbl, aspects)
     if not base_shares:
         return []
     base_regime = _classify_regime(base_shares)
+    top_b = ", ".join(f"{k} {v * 100:.1f}%" for k, v in sorted(base_shares.items(), key=lambda x: -x[1])[:2])
+
+    if len(groups) == 1:
+        return [
+            BottleneckShift(
+                baseline_label=base_lbl,
+                candidate_label=base_lbl,
+                baseline_regime=base_regime,
+                candidate_regime=base_regime,
+                shares_baseline=base_shares,
+                shares_candidate=base_shares,
+                summary=f"Bottleneck Regime: {base_lbl} [{base_regime}: {top_b}]",
+            )
+        ]
 
     shifts: list[BottleneckShift] = []
     for cand_grp in groups[1:]:
@@ -94,7 +108,6 @@ def diagnose_bottleneck_shifts(
         if not cand_shares:
             continue
         cand_regime = _classify_regime(cand_shares)
-        top_b = ", ".join(f"{k} {v * 100:.1f}%" for k, v in sorted(base_shares.items(), key=lambda x: -x[1])[:2])
         top_c = ", ".join(f"{k} {v * 100:.1f}%" for k, v in sorted(cand_shares.items(), key=lambda x: -x[1])[:2])
         prefix = "Regime Shift" if base_regime != cand_regime else "Regime Unchanged"
         msg = f"{prefix}: {base_lbl} [{base_regime}: {top_b}] -> {cand_lbl} [{cand_regime}: {top_c}]"

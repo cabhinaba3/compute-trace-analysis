@@ -6,7 +6,8 @@ from cta.core.models import ComparisonReport
 
 
 def export_markdown(report: ComparisonReport, path: Path | None = None) -> str:
-    lines = [f"# CTA Comparison Report ({' vs '.join(g.label for g in report.groups)})", ""]
+    heading = "CTA Trace Analysis Report" if report.mode == "single" else "CTA Comparison Report"
+    lines = [f"# {heading} ({' vs '.join(g.label for g in report.groups)})", ""]
     if report.diagnoses:
         lines.append("## Bottleneck Diagnostics")
         for d in report.diagnoses:

@@ -67,8 +67,8 @@ def run_comparison(
     config: CompareConfig | None = None,
 ) -> ComparisonReport:
     load_plugins()
-    if len(groups) < 2:
-        raise ValueError("Comparison requires at least 2 trace groups (baseline and candidate)")
+    if not groups:
+        raise ValueError("Analysis requires at least 1 trace group")
     cfg = config or CompareConfig()
     grp_tuple = tuple(groups)
     common_formats = set(grp_tuple[0].formats)
@@ -77,7 +77,7 @@ def run_comparison(
     if not common_formats:
         per_grp = {g.label: sorted(g.formats) for g in grp_tuple}
         raise ValueError(
-            f"Compared traces share no common trace format (same-format rule). Found: {per_grp}"
+            f"Traces share no supported/common trace format. Found: {per_grp}"
         )
 
     store = CacheStore(cfg.cache_dir)
@@ -90,9 +90,11 @@ def run_comparison(
         if not res.summary.is_empty() or res.details:
             results[name] = res
 
-    mode: Literal["pair", "multi"] = "pair" if len(grp_tuple) == 2 else "multi"
+    mode: Literal["single", "pair", "multi"] = (
+        "single" if len(grp_tuple) == 1 else ("pair" if len(grp_tuple) == 2 else "multi")
+    )
     diagnoses = diagnose_bottleneck_shifts(grp_tuple, results)
-    violations = evaluate_gates(results, cfg.gates)
+    violations = evaluate_gates(results, cfg.gates) if len(grp_tuple) >= 2 else []
     return ComparisonReport(
         mode=mode,
         groups=grp_tuple,
@@ -100,6 +102,30 @@ def run_comparison(
         diagnoses=diagnoses,
         violations=violations,
     )
+
+
+def analyze(
+    source: str | Path | RunBundle | TrialGroup | Iterable[str | Path | RunBundle],
+    *,
+    aspects: Sequence[str] | None = None,
+    warmup_steps: int = 0,
+    max_steps: int | None = None,
+    collective_algo: str = "ring",
+    alpha: float = 0.05,
+    cache_dir: str | Path = ".cta_cache",
+    label: str | None = None,
+) -> ComparisonReport:
+    """Analyze a single trace, RunBundle directory, or multi-trial single group."""
+    grp = resolve_trial_group(source, label=label)
+    cfg = CompareConfig(
+        aspects=tuple(aspects) if aspects else None,
+        warmup_steps=warmup_steps,
+        max_steps=max_steps,
+        collective_algo=collective_algo,
+        alpha=alpha,
+        cache_dir=Path(cache_dir),
+    )
+    return run_comparison((grp,), cfg)
 
 
 def compare(

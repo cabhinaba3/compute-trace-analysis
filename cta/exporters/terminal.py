@@ -10,7 +10,8 @@ from cta.core.models import ComparisonReport
 def render_terminal_report(report: ComparisonReport, console: Console | None = None) -> None:
     con = console or Console()
     lbls = " vs ".join(f"[bold cyan]{g.label}[/]" for g in report.groups)
-    con.print(Panel(f"CTA Comparison ({report.mode.upper()}): {lbls}", expand=False))
+    title_kind = "Analysis" if report.mode == "single" else f"Comparison ({report.mode.upper()})"
+    con.print(Panel(f"CTA {title_kind}: {lbls}", expand=False))
 
     for shift in report.diagnoses:
         color = "yellow" if shift.baseline_regime != shift.candidate_regime else "green"

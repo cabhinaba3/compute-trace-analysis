@@ -250,3 +250,67 @@ def test_quickstarts_tall_ncu_legacy_nsys_and_bundle_equiv(tmp_path: Path) -> No
     rep_eq = cta.compare(b0, b1, cache_dir=tmp_path / "cache")
     assert "schedule_equiv" in rep_eq.aspects
 
+
+def test_single_trace_analyze_and_single_trace_plots(tmp_path: Path) -> None:
+    cache_dir = tmp_path / "single_cache"
+    demo_dir = tmp_path / "demo_single"
+    assert runner.invoke(app, ["synth", str(demo_dir)]).exit_code == 0
+
+    # 1. SDK single-trace analysis on distributed Chakra-ET run + plots
+    rep_c = cta.analyze(demo_dir / "chakra_skewed", label="Skewed_4R", cache_dir=cache_dir)
+    assert rep_c.mode == "single"
+    assert len(rep_c.diagnoses) == 1
+    assert "Bottleneck Regime:" in rep_c.diagnoses[0].summary
+    by_comm = rep_c.to_polars("comm_collectives", table="by_comm_type")
+    assert "share_pct" in by_comm.columns
+    for kind in ("breakdown", "topk", "traffic", "skew", "scaling"):
+        fig_p = tmp_path / "sfigs" / f"c_{kind}.pdf"
+        rep_c.plot(kind=kind, path=fig_p)
+        assert fig_p.exists() and fig_p.stat().st_size > 500
+
+    # 2. SDK single-trace analysis on NCU roofline CSV
+    rep_ncu = cta.analyze(demo_dir / "ncu" / "baseline.csv", label="NCU_Single", cache_dir=cache_dir)
+    roof_p = tmp_path / "sfigs" / "ncu_roofline.pdf"
+    rep_ncu.plot(kind="roofline", path=roof_p)
+    assert roof_p.exists() and roof_p.stat().st_size > 500
+
+    # 3. CLI `cta analyze` + CLI single-trace `cta plot <single_trace>`
+    out_single = tmp_path / "cli_single_out"
+    r_an = runner.invoke(
+        app,
+        [
+            "analyze",
+            str(demo_dir / "gpu_bundle_fp16"),
+            "--warmup-steps",
+            "2",
+            "--out-dir",
+            str(out_single),
+            "--export",
+            "markdown,latex,csv,json,pdf",
+            "--cache-dir",
+            str(cache_dir),
+        ],
+    )
+    assert r_an.exit_code == 0, r_an.output
+    assert (out_single / "report.md").exists() and (out_single / "breakdown.pdf").exists()
+
+    splot_dir = tmp_path / "cli_single_plots"
+    r_sp = runner.invoke(
+        app,
+        [
+            "plot",
+            str(demo_dir / "gpu_bundle_fp16"),
+            "--kind",
+            "breakdown,topk",
+            "--format",
+            "svg",
+            "--out-dir",
+            str(splot_dir),
+            "--cache-dir",
+            str(cache_dir),
+        ],
+    )
+    assert r_sp.exit_code == 0, r_sp.output
+    assert (splot_dir / "breakdown.svg").exists() and (splot_dir / "topk.svg").exists()
+
+

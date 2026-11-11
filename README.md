@@ -34,10 +34,16 @@ pip install -e ".[dev]"
 
 ## CLI Quickstart
 
-### 1. Generate synthetic traces across all 7 ecosystems
+### 1. Generate synthetic traces & analyze a single trace / bundle
 ```bash
 cta synth demo_traces
 cta inspect demo_traces/gpu_bundle_fp16
+
+# Full single-trace analysis (critical path, overlap, hotspots, bottleneck regime, energy)
+cta analyze demo_traces/gpu_bundle_fp16 --warmup-steps 2 --out-dir reports/single_fp16 --export markdown,latex,csv,pdf
+
+# Single-trace visualization (breakdown, topk hotspots, traffic, skew, roofline)
+cta plot demo_traces/gpu_bundle_fp16 --kind breakdown,topk --format pdf --out-dir figures/single/
 ```
 
 ### 2. Compare two traces, `RunBundle` directories, or N-way sweeps
@@ -78,6 +84,10 @@ Supported plot kinds: `breakdown`, `tornado`, `traffic_delta`, `skew`, `roofline
 
 ```python
 import cta
+
+# 0. Analyze & plot a single trace or RunBundle directory
+single = cta.analyze("demo_traces/kineto/eager.json.gz", label="Eager_FP16", warmup_steps=1)
+single.plot(kind="topk", path="figures/eager_hotspots.pdf")
 
 # 1. Compare traces, globs, or multi-artifact RunBundle directories
 report = cta.compare(

@@ -11,6 +11,7 @@ from rich.table import Table
 from cta.aspects.distributed import verify_chakra_goal_equivalence
 from cta.core.cache import CacheStore
 from cta.core.diagnosis import parse_gate_spec
+from cta.core.engine import analyze as run_analyze_sdk
 from cta.core.engine import compare as run_compare_sdk
 from cta.core.engine import inspect_trace, run_comparison
 from cta.core.manifest import load_manifest
@@ -111,24 +112,58 @@ def equiv_cmd(
         raise typer.Exit(code=2)
 
 
+@app.command("analyze")
+def analyze_cmd(
+    trace: Annotated[str, typer.Argument(help="Single trace file, glob, or RunBundle directory.")],
+    aspects: Annotated[str | None, typer.Option("--aspects", "-a", help="Comma-separated aspect names.")] = None,
+    warmup_steps: Annotated[int, typer.Option("--warmup-steps", help="Skip initial warmup steps/iterations.")] = 0,
+    max_steps: Annotated[int | None, typer.Option("--max-steps", help="Max steps/iterations to analyze.")] = None,
+    collective_algo: Annotated[str, typer.Option("--collective-algo", help="Collective decomposition model (ring, tree, direct).")] = "ring",
+    label: Annotated[str | None, typer.Option("--label", "-l", help="Display label for the trace/bundle.")] = None,
+    out_dir: Annotated[Path | None, typer.Option("--out-dir", "-o", help="Directory to export reports/plots.")] = None,
+    export: Annotated[str, typer.Option("--export", help="Comma-separated export formats (markdown,latex,csv,json,pdf).")] = "markdown,csv,json",
+    cache_dir: Annotated[Path, typer.Option("--cache-dir", help="Cache directory.")] = Path(".cta_cache"),
+) -> None:
+    """Analyze and characterize a single trace, glob, or multi-artifact RunBundle directory."""
+    aspect_list = [x.strip() for x in aspects.split(",") if x.strip()] if aspects else None
+    report = run_analyze_sdk(
+        trace,
+        aspects=aspect_list,
+        warmup_steps=warmup_steps,
+        max_steps=max_steps,
+        collective_algo=collective_algo,
+        cache_dir=cache_dir,
+        label=label,
+    )
+    render_terminal_report(report, console=console)
+    if out_dir is not None:
+        fmts = [x.strip() for x in export.split(",") if x.strip()]
+        written = report.export(out_dir, formats=fmts)
+        for fmt_name, fpath in written.items():
+            console.print(f"[green]✓ Exported {fmt_name}:[/green] {fpath}")
+
+
 @app.command("plot")
 def plot_cmd(
-    traces: Annotated[list[str] | None, typer.Argument(help="Two or more trace files, globs, or RunBundle directories.")] = None,
+    traces: Annotated[list[str] | None, typer.Argument(help="One (single-trace) or more (comparative) trace files/bundles.")] = None,
     manifest: Annotated[Path | None, typer.Option("--manifest", "-m", help="Declarative YAML/TOML sweep manifest.")] = None,
-    kind: Annotated[str, typer.Option("--kind", "-k", help="Comma-separated plot kinds (breakdown,tornado,traffic_delta,skew,roofline,scaling).")] = "breakdown",
+    kind: Annotated[str, typer.Option("--kind", "-k", help="Comma-separated plot kinds (breakdown,topk,tornado,traffic_delta,skew,roofline,scaling).")] = "breakdown",
     out_dir: Annotated[Path, typer.Option("--out-dir", "-o", help="Output directory for generated figures.")] = Path("figures"),
     fmt: Annotated[str, typer.Option("--format", "-f", help="Figure file extension (pdf, svg, png).")] = "pdf",
     style: Annotated[str, typer.Option("--style", help="Preset style (paper_single_col, paper_double_col, presentation).")] = "paper_single_col",
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache"),
 ) -> None:
-    """Render publication-ready comparative plots to PDF, SVG, or PNG."""
+    """Render publication-ready single-trace or comparative plots to PDF, SVG, or PNG."""
     if manifest is not None:
         groups, cfg = load_manifest(manifest)
         report = run_comparison(groups, cfg)
     else:
-        if not traces or len(traces) < 2:
-            raise typer.BadParameter("Provide at least two trace paths/directories or --manifest.")
-        report = run_compare_sdk(traces[0], traces[1], *traces[2:], cache_dir=cache_dir)
+        if not traces:
+            raise typer.BadParameter("Provide at least one trace path/directory or --manifest.")
+        if len(traces) == 1:
+            report = run_analyze_sdk(traces[0], cache_dir=cache_dir)
+        else:
+            report = run_compare_sdk(traces[0], traces[1], *traces[2:], cache_dir=cache_dir)
 
     ext = fmt.lstrip(".").lower()
     for k in (x.strip() for x in kind.split(",") if x.strip()):

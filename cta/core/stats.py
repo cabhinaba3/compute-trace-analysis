@@ -91,6 +91,18 @@ def compare_scalar_metrics(
                     "significant": sig,
                 }
             )
+        elif len(group_labels) == 1:
+            lbl = group_labels[0]
+            rows.append(
+                {
+                    "metric": key,
+                    "unit": unit,
+                    lbl: b_mean,
+                    "std": b_std,
+                    "median": b_med,
+                    "ci95_single": b_ci,
+                }
+            )
         else:
             row: dict[str, object] = {"metric": key, "unit": unit}
             for lbl, gt in zip(group_labels, group_trials, strict=True):
@@ -143,6 +155,12 @@ def compare_entity_tables(
             .alias("delta_pct"),
             pl.when(c_col.abs() > 1e-12).then(b_col / c_col).otherwise(1.0).alias("speedup"),
         ).sort(pl.col("delta").abs(), descending=True)
+    elif len(group_labels) == 1:
+        col = pl.col(group_labels[0])
+        tot = float(merged[group_labels[0]].sum())
+        merged = merged.with_columns(
+            ((col / tot * 100.0) if abs(tot) > 1e-12 else pl.lit(0.0)).alias("share_pct")
+        ).sort(group_labels[0], descending=True)
     else:
         merged = merged.sort(group_labels[0], descending=True)
 

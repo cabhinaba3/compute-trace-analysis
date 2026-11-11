@@ -53,7 +53,7 @@ def export_bundle(
 
     for ext in ("pdf", "svg", "png"):
         if ext in fmt_set:
-            for kind in ("breakdown", "scaling"):
+            for kind in ("breakdown", "topk", "roofline", "scaling"):
                 try:
                     fig_path = out_dir / f"{kind}.{ext}"
                     report.plot(kind, path=fig_path)
