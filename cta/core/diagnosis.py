@@ -14,8 +14,22 @@ def parse_gate_spec(spec: str | None) -> dict[str, float]:
         if ":" not in item:
             raise ValueError(f"Invalid gate '{item}'. Expected '<metric>:<pct>%', e.g. 'p99_latency_ms:+5%'")
         k, v = item.split(":", 1)
-        gates[k.strip()] = float(v.strip().rstrip("%"))
+        try:
+            gates[k.strip()] = float(v.strip().rstrip("%"))
+        except ValueError:
+            raise ValueError(f"Invalid gate '{item}': '{v.strip()}' is not a number") from None
     return gates
+
+
+def missing_gate_metrics(aspects: dict[str, AspectResult], gates: dict[str, float]) -> list[str]:
+    """Gate metrics that no aspect reports (typos, or the owning aspect did not run)."""
+    known = {
+        str(m)
+        for res in aspects.values()
+        if "metric" in res.summary.columns
+        for m in res.summary["metric"].to_list()
+    }
+    return sorted(set(gates) - known)
 
 
 def evaluate_gates(aspects: dict[str, AspectResult], gates: dict[str, float]) -> list[RegressionViolation]:

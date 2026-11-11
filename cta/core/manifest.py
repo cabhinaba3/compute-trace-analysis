@@ -57,6 +57,7 @@ def load_manifest(path: str | Path) -> tuple[tuple[TrialGroup, ...], CompareConf
         warmup_steps=int(cfg_raw.get("warmup_steps", 0)),
         max_steps=int(cfg_raw["max_steps"]) if cfg_raw.get("max_steps") is not None else None,
         gates=gates,
+        allow_missing_gates=bool(cfg_raw.get("allow_missing_gates", False)),
         collective_algo=str(cfg_raw.get("collective_algo", "ring")),
         alpha=float(cfg_raw.get("alpha", 0.05)),
         cache_dir=cache_dir,

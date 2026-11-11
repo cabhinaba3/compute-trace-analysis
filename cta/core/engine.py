@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -8,11 +9,12 @@ import polars as pl
 
 from cta.core.bundle import resolve_bundle, resolve_trial_group
 from cta.core.cache import CacheStore
-from cta.core.diagnosis import diagnose_bottleneck_shifts, evaluate_gates
+from cta.core.diagnosis import diagnose_bottleneck_shifts, evaluate_gates, missing_gate_metrics
 from cta.core.models import (
     AspectResult,
     CompareConfig,
     ComparisonReport,
+    RegressionViolation,
     RunBundle,
     TrialGroup,
 )
@@ -94,7 +96,16 @@ def run_comparison(
         "single" if len(grp_tuple) == 1 else ("pair" if len(grp_tuple) == 2 else "multi")
     )
     diagnoses = diagnose_bottleneck_shifts(grp_tuple, results)
-    violations = evaluate_gates(results, cfg.gates) if len(grp_tuple) >= 2 else []
+    violations: list[RegressionViolation] = []
+    if len(grp_tuple) >= 2:
+        missing = missing_gate_metrics(results, cfg.gates)
+        if missing and not cfg.allow_missing_gates:
+            raise ValueError(
+                f"Gate metrics not found in report: {missing} "
+                "(typo, or the aspect that reports them did not run). "
+                "Use --allow-missing-gates / allow_missing_gates=True to ignore."
+            )
+        violations = evaluate_gates(results, cfg.gates)
     return ComparisonReport(
         mode=mode,
         groups=grp_tuple,
@@ -136,6 +147,7 @@ def compare(
     warmup_steps: int = 0,
     max_steps: int | None = None,
     gates: dict[str, float] | None = None,
+    allow_missing_gates: bool = False,
     collective_algo: str = "ring",
     alpha: float = 0.05,
     cache_dir: str | Path = ".cta_cache",
@@ -151,15 +163,15 @@ def compare(
     for g in groups:
         seen[g.label] = seen.get(g.label, 0) + 1
     if any(c > 1 for c in seen.values()):
-        for idx, g in enumerate(groups):
-            g.label = f"{g.label}_{idx}"
-            g.group_id = f"{g.group_id}_{idx}"
+        # Copy instead of mutating: callers may pass in (and reuse) their own TrialGroups.
+        groups = [replace(g, label=f"{g.label}_{i}", group_id=f"{g.group_id}_{i}") for i, g in enumerate(groups)]
 
     cfg = CompareConfig(
         aspects=tuple(aspects) if aspects else None,
         warmup_steps=warmup_steps,
         max_steps=max_steps,
         gates=dict(gates or {}),
+        allow_missing_gates=allow_missing_gates,
         collective_algo=collective_algo,
         alpha=alpha,
         cache_dir=Path(cache_dir),

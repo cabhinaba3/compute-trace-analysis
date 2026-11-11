@@ -53,6 +53,7 @@ class CompareConfig:
     gates: dict[str, float] = field(default_factory=dict)
     collective_algo: str = "ring"
     alpha: float = 0.05
+    allow_missing_gates: bool = False
     cache_dir: Path = field(default_factory=lambda: Path(".cta_cache"))
 
 
