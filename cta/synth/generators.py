@@ -279,3 +279,191 @@ def compile_goal_to_bin(goal_path: Path, bin_path: Path) -> Path:
         for b in rank_blobs:
             fh.write(b)
     return bin_path
+
+
+def write_nsys_sqlite(
+    path: Path,
+    *,
+    steps: int = 4,
+    gemm_us: int = 800,
+    comm_us: int = 400,
+    comm_overlap_us: int = 100,
+    warmup_penalty_us: int = 1200,
+    lock_wait_us: int = 50,
+    tensor_active_pct: float = 65.0,
+    legacy_gpu_metrics: bool = False,
+) -> Path:
+    """Create a realistic Nsight Systems `.sqlite` database (supports modern and legacy GPU_METRICS schemas)."""
+    import sqlite3
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE StringIds (id INTEGER PRIMARY KEY, value TEXT);
+            CREATE TABLE CUPTI_ACTIVITY_KIND_KERNEL (
+                demangledName INTEGER, shortName INTEGER, start INTEGER, end INTEGER, streamId INTEGER
+            );
+            CREATE TABLE CUPTI_ACTIVITY_KIND_MEMCPY (
+                copyKind INTEGER, start INTEGER, end INTEGER, bytes INTEGER, streamId INTEGER
+            );
+            CREATE TABLE CUPTI_ACTIVITY_KIND_RUNTIME (
+                nameId INTEGER, start INTEGER, end INTEGER
+            );
+            CREATE TABLE NVTX_EVENTS (
+                textId INTEGER, text TEXT, start INTEGER, end INTEGER
+            );
+            CREATE TABLE OSRT_API (
+                nameId INTEGER, start INTEGER, end INTEGER
+            );
+            """
+        )
+        strings = {
+            1: "void cutlass::Kernel<fp16>(half const*, int)",
+            2: "ncclDevKernel_AllReduce_Sum_f16_RING_LL",
+            3: "cudaLaunchKernel",
+            4: "pthread_mutex_lock",
+            5: "poll",
+            6: "TransformerBlock_0",
+        }
+        conn.executemany("INSERT INTO StringIds VALUES (?, ?)", list(strings.items()))
+
+        cur_ns = 1_000_000
+        for s in range(steps):
+            extra_ns = warmup_penalty_us * 1000 if s == 0 else 0
+            g_dur = gemm_us * 1000 + extra_ns
+            c_dur = comm_us * 1000
+            ov_ns = min(comm_overlap_us * 1000, g_dur)
+
+            s_start = cur_ns
+            g_start = cur_ns
+            g_end = g_start + g_dur
+            c_start = g_end - ov_ns
+            c_end = c_start + c_dur
+            s_end = max(g_end, c_end) + 50_000  # 50 us idle gap per step
+
+            conn.execute("INSERT INTO NVTX_EVENTS VALUES (NULL, ?, ?, ?)", (f"ProfilerStep#{s}", s_start, s_end))
+            conn.execute("INSERT INTO NVTX_EVENTS VALUES (6, NULL, ?, ?)", (g_start, g_end))
+            conn.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (1, 1, ?, ?, 7)", (g_start, g_end))
+            conn.execute("INSERT INTO CUPTI_ACTIVITY_KIND_KERNEL VALUES (2, 2, ?, ?, 8)", (c_start, c_end))
+            conn.execute("INSERT INTO CUPTI_ACTIVITY_KIND_MEMCPY VALUES (1, ?, ?, 65536, 9)", (g_start, g_start + 20_000))
+            conn.execute("INSERT INTO CUPTI_ACTIVITY_KIND_RUNTIME VALUES (3, ?, ?)", (g_start - 5_000, g_start))
+            conn.execute("INSERT INTO OSRT_API VALUES (4, ?, ?)", (g_start, g_start + lock_wait_us * 1000))
+            cur_ns = s_end
+
+        if legacy_gpu_metrics:
+            conn.execute("CREATE TABLE GPU_METRICS (rawTimestamp INTEGER, value TEXT)")
+            payload = str(
+                {
+                    "SMs Active [Throughput %]": str(tensor_active_pct + 10.0),
+                    "Tensor Active [Throughput %]": str(tensor_active_pct),
+                    "SM Issue [Throughput %]": str(tensor_active_pct - 5.0),
+                }
+            )
+            conn.executemany("INSERT INTO GPU_METRICS VALUES (?, ?)", [(1000, payload), (2000, payload)])
+        else:
+            conn.executescript(
+                """
+                CREATE TABLE TARGET_INFO_GPU_METRICS (metricId INTEGER PRIMARY KEY, metricName TEXT);
+                CREATE TABLE GPU_METRICS (metricId INTEGER, timestamp INTEGER, value REAL);
+                """
+            )
+            conn.executemany(
+                "INSERT INTO TARGET_INFO_GPU_METRICS VALUES (?, ?)",
+                [
+                    (1, "SMs Active [Throughput %]"),
+                    (2, "Tensor Active [Throughput %]"),
+                    (3, "SM Issue [Throughput %]"),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO GPU_METRICS VALUES (?, ?, ?)",
+                [
+                    (1, 1000, tensor_active_pct + 10.0),
+                    (2, 1000, tensor_active_pct),
+                    (3, 1000, tensor_active_pct - 5.0),
+                ],
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return path
+
+
+def write_kineto_trace(
+    path: Path,
+    *,
+    steps: int = 3,
+    attn_us: float = 400.0,
+    gemm_us: float = 600.0,
+    kernel_variant: str = "fp16",
+) -> Path:
+    """Write a PyTorch Profiler / Kineto Chrome trace (.json or .json.gz) with CPU-GPU correlation."""
+    import gzip
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    events: list[dict[str, object]] = []
+    ts = 1000.0
+    corr = 100
+
+    gemm_kname = "ampere_fp16_s16816gemm" if kernel_variant == "fp16" else "sm90_wgmma_fp8_gemm_kernel"
+    attn_kname = "fmha_cutlassF_f16" if kernel_variant == "fp16" else "flash_attn_fwd_fp8_kernel"
+
+    for s in range(steps):
+        step_dur = attn_us + gemm_us + 50.0
+        events.append({"ph": "X", "cat": "user_annotation", "name": f"ProfilerStep#{s}", "ts": ts, "dur": step_dur, "pid": 1, "tid": 1})
+
+        # Attention op -> launch -> GPU kernel
+        events.append({"ph": "X", "cat": "cpu_op", "name": "aten::scaled_dot_product_attention", "ts": ts + 2.0, "dur": 15.0, "pid": 1, "tid": 1})
+        events.append({"ph": "X", "cat": "cuda_runtime", "name": "cudaLaunchKernel", "ts": ts + 5.0, "dur": 5.0, "pid": 1, "tid": 1, "args": {"correlation": corr}})
+        events.append({"ph": "X", "cat": "kernel", "name": attn_kname, "ts": ts + 10.0, "dur": attn_us, "pid": 0, "tid": 7, "args": {"correlation": corr, "stream": 7}})
+        corr += 1
+
+        # Linear op -> launch -> GPU GEMM kernel
+        g_ts = ts + 10.0 + attn_us
+        events.append({"ph": "X", "cat": "cpu_op", "name": "aten::linear", "ts": ts + 20.0, "dur": 15.0, "pid": 1, "tid": 1})
+        events.append({"ph": "X", "cat": "cuda_runtime", "name": "cudaLaunchKernel", "ts": ts + 25.0, "dur": 5.0, "pid": 1, "tid": 1, "args": {"correlation": corr}})
+        events.append({"ph": "X", "cat": "kernel", "name": gemm_kname, "ts": g_ts, "dur": gemm_us, "pid": 0, "tid": 7, "args": {"correlation": corr, "stream": 7}})
+        corr += 1
+
+        ts += step_dur + 20.0
+
+    payload = json.dumps({"schemaVersion": 1, "traceEvents": events})
+    if path.suffix.lower() == ".gz":
+        with gzip.open(path, "wt", encoding="utf-8") as gz:
+            gz.write(payload)
+    else:
+        path.write_text(payload)
+    return path
+
+
+def write_ncu_csv(
+    path: Path,
+    *,
+    gemm_dur_ns: float = 500_000.0,
+    sm_pct: float = 40.0,
+    dram_pct: float = 82.0,
+    tensor_pct: float = 35.0,
+    flops: float = 2.0e10,
+    dram_bytes: float = 1.0e9,
+) -> Path:
+    """Write a realistic Nsight Compute raw CSV export (with ==PROF== banner and unit row)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        "==PROF== Connected to process 12345",
+        '"ID","Kernel Name","gpu__time_duration.sum","sm__throughput.avg.pct_of_peak_sustained_elapsed",'
+        '"gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed",'
+        '"sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active",'
+        '"sm__warps_active.avg.pct_of_peak_sustained_active","FLOPs","dram__bytes.sum",'
+        '"smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct",'
+        '"smsp__warp_issue_stalled_math_pipe_throttle_per_warp_active.pct"',
+        '"","","nsecond","%","%","%","%","","byte","%","%"',
+        f'"0","ampere_fp16_s16816gemm","{gemm_dur_ns}","{sm_pct}","{dram_pct}","{tensor_pct}","62.5","{flops}","{dram_bytes}","{dram_pct * 0.5}","{sm_pct * 0.4}"',
+        '"1","vectorized_elementwise_relu","100000.0","20.0","88.0","0.0","55.0","1e8","2e8","48.0","5.0"',
+    ]
+    path.write_text("\n".join(lines))
+    return path
