@@ -146,3 +146,25 @@ def test_dag_cycle_warns() -> None:
     edges = pl.DataFrame({"rank": [0, 0], "src_id": [1, 2], "dst_id": [2, 1]})
     with pytest.warns(RuntimeWarning, match="cycle"):
         solve_distributed_dag(nodes, edges)
+
+
+def test_hta_aspect_is_opt_in_and_wraps_hta(tmp_path: Path) -> None:
+    pytest.importorskip("hta")
+    from cta.synth.generators import write_kineto_trace
+
+    a, b = tmp_path / "a.json.gz", tmp_path / "b.json.gz"
+    write_kineto_trace(a, attn_us=450.0, gemm_us=600.0)
+    write_kineto_trace(b, attn_us=210.0, gemm_us=280.0, kernel_variant="fp8")
+    cache = tmp_path / "cache"
+
+    assert "hta_kineto" not in cta.compare(a, b, cache_dir=cache).aspects  # not run by default
+
+    rep = cta.compare(a, b, aspects=["hta_kineto"], cache_dir=cache)
+    summary = rep.to_polars("hta_kineto")
+    metrics = set(summary["metric"].to_list())
+    assert {"idle_host_wait_us", "launch_delay_mean_us", "queue_length_max"} <= metrics
+    assert any(k.startswith("launch_stats[") for k in rep.aspect("hta_kineto").details)
+
+    res = runner.invoke(app, ["compare", str(a), str(b), "-a", "hta_kineto", "--cache-dir", str(cache), "--format", "json"])
+    assert res.exit_code == 0, res.output
+    json.loads(res.stdout)  # HTA's progress logging must not leak into machine-readable stdout

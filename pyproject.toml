@@ -54,6 +54,7 @@ dependencies = [
 
 [project.optional-dependencies]
 pandas = ["pandas>=2.1.0"]
+hta = ["traceinsight>=0.6.1"]  # Meta Holistic Trace Analysis; enables the opt-in `hta_kineto` aspect
 dev = [
     "pandas>=2.1.0",
     "pytest>=8.0.0",
