@@ -55,6 +55,9 @@ def load_manifest(path: str | Path) -> tuple[tuple[TrialGroup, ...], CompareConf
         allow_missing_gates=bool(cfg_raw.get("allow_missing_gates", False)),
         collective_algo=str(cfg_raw.get("collective_algo", "ring")),
         alpha=float(cfg_raw.get("alpha", 0.05)),
+        plots=[dict(p) for p in data.get("plots", [])],
+        ranks=tuple(int(r) for r in cfg_raw["ranks"]) if cfg_raw.get("ranks") is not None else None,
+        devices=tuple(int(d) for d in cfg_raw["devices"]) if cfg_raw.get("devices") is not None else None,
         scope_depth=int(cfg_raw["scope_depth"]) if cfg_raw.get("scope_depth") is not None else None,
         cache_dir=cache_dir,
     )

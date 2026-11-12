@@ -114,6 +114,8 @@ def run_comparison(
         aspects=results,
         diagnoses=diagnoses,
         violations=violations,
+        sources=tables,
+        config=cfg,
     )
 
 
@@ -126,6 +128,8 @@ def analyze(
     collective_algo: str = "ring",
     alpha: float = 0.05,
     scope_depth: int | None = None,
+    ranks: Sequence[int] | None = None,
+    devices: Sequence[int] | None = None,
     cache_dir: str | Path = ".cta_cache",
     label: str | None = None,
 ) -> ComparisonReport:
@@ -138,6 +142,8 @@ def analyze(
         collective_algo=collective_algo,
         alpha=alpha,
         scope_depth=scope_depth,
+        ranks=tuple(ranks) if ranks else None,
+        devices=tuple(devices) if devices else None,
         cache_dir=Path(cache_dir),
     )
     return run_comparison((grp,), cfg)
@@ -155,6 +161,8 @@ def compare(
     collective_algo: str = "ring",
     alpha: float = 0.05,
     scope_depth: int | None = None,
+    ranks: Sequence[int] | None = None,
+    devices: Sequence[int] | None = None,
     cache_dir: str | Path = ".cta_cache",
     labels: Sequence[str] | None = None,
 ) -> ComparisonReport:
@@ -180,6 +188,8 @@ def compare(
         collective_algo=collective_algo,
         alpha=alpha,
         scope_depth=scope_depth,
+        ranks=tuple(ranks) if ranks else None,
+        devices=tuple(devices) if devices else None,
         cache_dir=Path(cache_dir),
     )
     return run_comparison(groups, cfg)

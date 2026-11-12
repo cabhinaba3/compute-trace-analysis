@@ -208,3 +208,14 @@ def test_chakra_node_type_numbers_match_generated_enum() -> None:
     pb2 = schema.et_def_pb2()
     for const in ("MEM_LOAD_NODE", "MEM_STORE_NODE", "COMP_NODE", "COMM_SEND_NODE", "COMM_RECV_NODE", "COMM_COLL_NODE", "STORAGE_NODE", "DATA_OP_NODE"):
         assert getattr(schema, const) == getattr(pb2, const), const
+
+
+def test_compare_entity_tables_survives_an_empty_untyped_group() -> None:
+    import polars as pl
+
+    from cta.core.stats import compare_entity_tables
+
+    empty = pl.DataFrame({"name": [], "duration_ms": [], "calls": []})  # e.g. a capture without OS-runtime rows
+    full = pl.DataFrame({"name": ["read"], "duration_ms": [2.0], "calls": [3]})
+    out = compare_entity_tables(["a", "b"], [empty, full], key_col="name", val_col="duration_ms", count_col="calls")
+    assert out["name"].to_list() == ["read"] and out["delta"].to_list() == [2.0]
