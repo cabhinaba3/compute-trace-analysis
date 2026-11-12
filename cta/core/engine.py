@@ -125,6 +125,7 @@ def analyze(
     max_steps: int | None = None,
     collective_algo: str = "ring",
     alpha: float = 0.05,
+    scope_depth: int | None = None,
     cache_dir: str | Path = ".cta_cache",
     label: str | None = None,
 ) -> ComparisonReport:
@@ -136,6 +137,7 @@ def analyze(
         max_steps=max_steps,
         collective_algo=collective_algo,
         alpha=alpha,
+        scope_depth=scope_depth,
         cache_dir=Path(cache_dir),
     )
     return run_comparison((grp,), cfg)
@@ -152,6 +154,7 @@ def compare(
     allow_missing_gates: bool = False,
     collective_algo: str = "ring",
     alpha: float = 0.05,
+    scope_depth: int | None = None,
     cache_dir: str | Path = ".cta_cache",
     labels: Sequence[str] | None = None,
 ) -> ComparisonReport:
@@ -176,6 +179,7 @@ def compare(
         allow_missing_gates=allow_missing_gates,
         collective_algo=collective_algo,
         alpha=alpha,
+        scope_depth=scope_depth,
         cache_dir=Path(cache_dir),
     )
     return run_comparison(groups, cfg)

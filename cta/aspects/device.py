@@ -118,6 +118,17 @@ def _pick_timeline_tables(tmap: dict[str, Path]) -> tuple[pl.DataFrame, pl.DataF
     raise KeyError("No timeline steps table found in bundle")
 
 
+def _with_scope_level(kdf: pl.DataFrame, depth: int | None) -> pl.DataFrame:
+    """Re-pick ``scope`` at a coarser level: the ``depth``-th enclosing range from the outermost (clamped to the innermost)."""
+    if depth is None or "scope_path" not in kdf.columns:
+        return kdf
+    if depth < 1:
+        raise ValueError(f"scope_depth must be >= 1, got {depth}")
+    parts = pl.col("scope_path").str.split(" > ")
+    picked = parts.list.get(depth - 1, null_on_oob=True).fill_null(parts.list.last())
+    return kdf.with_columns(pl.when(pl.col("scope_path") == "").then(pl.lit("")).otherwise(picked).alias("scope"))
+
+
 @register_aspect(
     "latency_throughput",
     title="End-to-End Latency, Tail Percentiles & Throughput",
@@ -260,6 +271,7 @@ class KernelDiffAspect:
                         pl.len().alias("launches"),
                     )
                 )
+                kdf = _with_scope_level(kdf, config.scope_depth)
                 scoped = kdf.filter(pl.col("scope") != "")
                 if scoped.height:
                     t_scope.append(

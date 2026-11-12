@@ -54,6 +54,7 @@ class CompareConfig:
     collective_algo: str = "ring"
     alpha: float = 0.05
     allow_missing_gates: bool = False
+    scope_depth: int | None = None  # None = innermost scope; N>=1 = N-th enclosing level from the outermost
     cache_dir: Path = field(default_factory=lambda: Path(".cta_cache"))
 
 

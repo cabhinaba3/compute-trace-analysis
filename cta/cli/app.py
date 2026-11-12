@@ -81,6 +81,7 @@ def compare_cmd(
     allow_missing_gates: Annotated[bool, typer.Option("--allow-missing-gates", help="Do not fail when a gate metric is absent from the report.")] = False,
     collective_algo: Annotated[str | None, typer.Option("--collective-algo", help="Collective decomposition model: ring, tree, direct (default ring; overrides manifest).")] = None,
     alpha: Annotated[float | None, typer.Option("--alpha", help="Significance level for Welch/Mann-Whitney tests (default 0.05; overrides manifest).")] = None,
+    scope_depth: Annotated[int | None, typer.Option("--scope-depth", min=1, help="Group kernels by the N-th enclosing op/range from the outermost (default: innermost).")] = None,
     labels: Annotated[str | None, typer.Option("--labels", "-l", help="Comma-separated group labels.")] = None,
     out_dir: Annotated[Path | None, typer.Option("--out-dir", "-o", help="Directory to export reports/plots.")] = None,
     export: Annotated[str, typer.Option("--export", help="Comma-separated export formats (markdown,latex,csv,json,pdf,svg,png).")] = "markdown,csv,json",
@@ -108,6 +109,7 @@ def compare_cmd(
                 "max_steps": max_steps,
                 "collective_algo": collective_algo,
                 "alpha": alpha,
+                "scope_depth": scope_depth,
                 "cache_dir": cache_dir,
             }
             for key, val in overrides.items():
@@ -130,6 +132,7 @@ def compare_cmd(
                 allow_missing_gates=allow_missing_gates,
                 collective_algo=collective_algo or "ring",
                 alpha=alpha if alpha is not None else 0.05,
+                scope_depth=scope_depth,
                 cache_dir=cache_dir or Path(".cta_cache"),
                 labels=_csv(labels),
             )
@@ -185,6 +188,7 @@ def analyze_cmd(
     max_steps: Annotated[int | None, typer.Option("--max-steps", help="Max steps/iterations to analyze.")] = None,
     collective_algo: Annotated[str, typer.Option("--collective-algo", help="Collective decomposition model (ring, tree, direct).")] = "ring",
     alpha: Annotated[float, typer.Option("--alpha", help="Significance level for statistical tests.")] = 0.05,
+    scope_depth: Annotated[int | None, typer.Option("--scope-depth", min=1, help="Group kernels by the N-th enclosing op/range from the outermost (default: innermost).")] = None,
     label: Annotated[str | None, typer.Option("--label", "-l", help="Display label for the trace/bundle.")] = None,
     out_dir: Annotated[Path | None, typer.Option("--out-dir", "-o", help="Directory to export reports/plots.")] = None,
     export: Annotated[str, typer.Option("--export", help="Comma-separated export formats (markdown,latex,csv,json,pdf,svg,png).")] = "markdown,csv,json",
@@ -201,6 +205,7 @@ def analyze_cmd(
         max_steps=max_steps,
         collective_algo=collective_algo,
         alpha=alpha,
+        scope_depth=scope_depth,
         cache_dir=cache_dir,
         label=label,
     )

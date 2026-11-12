@@ -1,6 +1,7 @@
 """Run a Python script or module under ``torch.profiler`` and write a Chrome/Kineto trace (``.json`` / ``.json.gz``).
 
     python -m cta.profile.kineto_runner --out trace.json.gz [--step-on optimizer|none] -- script.py [args...]
+    torchrun --nproc_per_node=2 -m cta.profile.kineto_runner --out dir/trace_rank{rank}.json.gz -- train.py   # 1 trace/rank
     python -m cta.profile.kineto_runner --out trace.json.gz -- -m package.module [args...]
 
 With ``--step-on optimizer`` every ``optimizer.step()`` advances the profiler, producing ``ProfilerStep#N`` ranges that
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import os
 import runpy
 import sys
 from pathlib import Path
@@ -18,7 +20,7 @@ from pathlib import Path
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--out", required=True, help="trace file to write (.json or .json.gz)")
+    ap.add_argument("--out", required=True, help="trace file to write (.json or .json.gz); {rank} expands to $RANK")
     ap.add_argument("--step-on", choices=("optimizer", "none"), default="optimizer")
     ap.add_argument("target", nargs=argparse.REMAINDER, help="script.py [args] or -m module [args]")
     ns = ap.parse_args(argv)
@@ -60,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
         finally:
             if handle is not None:
                 handle.remove()
-    out = Path(ns.out)
+    out = Path(ns.out.replace("{rank}", os.environ.get("RANK", "0")))
     out.parent.mkdir(parents=True, exist_ok=True)
     prof.export_chrome_trace(str(out))
     print(f"wrote {out}", file=sys.stderr)

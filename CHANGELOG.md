@@ -13,7 +13,12 @@
 ### Changed
 - **Breaking:** requires Python >=3.11 and protobuf >=6.31.1. Chakra-ET parsing now uses the official `mlc-chakra` schema from the pinned `third_party/chakra` git submodule (PyPI 1.0.0 predates storage/data-op nodes) instead of the vendored copy. Clone with `--recurse-submodules`. A path dependency means this package cannot be uploaded to PyPI as is.
 
+### Added
+- `--scope-depth N` (`compare`, `analyze`; `scope_depth=` in the SDK and manifest) groups the `by_scope` kernel table by the N-th enclosing op/range counted from the outermost (`1` = outermost, e.g. a `record_function` region), clamped to the innermost; the default stays the innermost. Backed by a new `scope_path` kernel column (`outer > ... > inner`) written by the Kineto (v2.2) and Nsight Systems (v2.1) readers, so cached results rebuild once.
+
 ### Kineto adapter
+- **Scope assignment (v2.1):** a kernel's scope is now the innermost CPU op that encloses its launch *on the launching thread* (runtime correlation id -> thread and time). The old lookup took the latest-starting op in the whole trace, so a finished sibling hid the enclosing op: on real H200 traces 15% (single GPU) and 56% (2-rank DDP) of kernels came out with no scope; now none do. The interval lookup is shared with the Nsight Systems reader (`cta.core.intervals`).
+- **Multi-rank traces (v2.0, cache rebuilds automatically):** every shard keeps its own clock and `rank` (from the trace's `distributedInfo.rank`, else a rank in the file name, else its position) and each GPU event its `device` (`args.device`). Step ranges are matched per rank and a kernel is assigned to the step whose CPU range *launched* it (via the runtime correlation id) instead of the step it runs in. Previously all shards were merged into one pile and step lookups mixed clocks. Verified on a 2-rank DDP run on two H200s. `cta.profile.kineto_runner --out dir/trace_rank{rank}.json.gz` writes one trace per rank under `torchrun`.
 - `ProfilerStep#N` is emitted by PyTorch both as a CPU `user_annotation` and as a `gpu_user_annotation`; the reader counted both, so a trace with N steps reported N+1 and its cold-start step was counted twice (inflating `total_steps`, the mean and the tail percentiles). Only the CPU annotation is used now. Found on a real H200 trace.
 
 ### Nsight Systems adapter (v2.0, cache rebuilds automatically)

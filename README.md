@@ -44,6 +44,9 @@ cta inspect demo_traces/gpu_bundle_fp16
 # Full single-trace analysis (critical path, overlap, hotspots, bottleneck regime, energy)
 cta analyze demo_traces/gpu_bundle_fp16 --warmup-steps 2 --out-dir reports/single_fp16 --export markdown,latex,csv,pdf
 
+# Group kernels by the outermost op/range (e.g. a record_function region) instead of the innermost op
+cta analyze trace.json.gz --scope-depth 1
+
 # Single-trace visualization (breakdown, topk hotspots, traffic, skew, roofline)
 cta plot demo_traces/gpu_bundle_fp16 --kind breakdown,topk --format pdf --out-dir figures/single/
 ```
