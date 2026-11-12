@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 from rich.console import Console
@@ -9,17 +9,14 @@ from rich.pretty import Pretty
 from rich.table import Table
 
 from cta import __version__
-from cta.aspects.distributed import verify_chakra_goal_equivalence
-from cta.core.cache import CacheStore
-from cta.core.diagnosis import parse_gate_spec
-from cta.core.engine import analyze as run_analyze_sdk
-from cta.core.engine import compare as run_compare_sdk
-from cta.core.engine import inspect_trace, run_comparison
-from cta.core.manifest import load_manifest
-from cta.core.models import ComparisonReport
-from cta.core.registry import ADAPTERS, ASPECTS, load_plugins
-from cta.exporters.tabular import report_to_json
-from cta.exporters.terminal import render_terminal_report
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from cta.core.models import ComparisonReport
+    from cta.profile.runners import ProfileResult
+
+# Heavy modules (polars, scipy, profilers) are imported inside each command so that `cta --help`/`--version` stay fast.
 
 app = typer.Typer(
     name="cta",
@@ -28,6 +25,11 @@ app = typer.Typer(
 )
 cache_app = typer.Typer(help="Manage the content-addressed Parquet trace cache.")
 app.add_typer(cache_app, name="cache")
+profile_app = typer.Typer(
+    help="Collect a profile with the vendor tool (nsys, ncu, kineto, trtexec, jtop) in a form `cta analyze` reads.",
+    no_args_is_help=True,
+)
+app.add_typer(profile_app, name="profile")
 console = Console()
 err_console = Console(stderr=True)
 
@@ -53,6 +55,9 @@ def _csv(value: str | None) -> list[str] | None:
 
 def _emit(report: ComparisonReport, output: str, out_dir: Path | None, export: str) -> None:
     """Render to stdout (rich|json) and optionally export files; status lines go to stderr in json mode."""
+    from cta.exporters.tabular import report_to_json
+    from cta.exporters.terminal import render_terminal_report
+
     if output not in ("rich", "json"):
         raise typer.BadParameter(f"Unknown --format '{output}' (expected 'rich' or 'json').")
     log = err_console if output == "json" else console
@@ -83,6 +88,11 @@ def compare_cmd(
     cache_dir: Annotated[Path | None, typer.Option("--cache-dir", help="Cache directory (default .cta_cache; overrides manifest).")] = None,
 ) -> None:
     """Compare two (Baseline vs Candidate) or N traces/bundles across performance aspects."""
+    from cta.core.diagnosis import parse_gate_spec
+    from cta.core.engine import compare as run_compare_sdk
+    from cta.core.engine import run_comparison
+    from cta.core.manifest import load_manifest
+
     try:
         gates = parse_gate_spec(gate)
     except ValueError as exc:
@@ -141,6 +151,8 @@ def equiv_cmd(
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache"),
 ) -> None:
     """Verify compute duration and decomposed collective byte equivalence between Chakra-ET and GOAL."""
+    from cta.aspects.distributed import verify_chakra_goal_equivalence
+
     verdict = verify_chakra_goal_equivalence(
         chakra_trace,
         goal_schedule,
@@ -180,6 +192,8 @@ def analyze_cmd(
     cache_dir: Annotated[Path, typer.Option("--cache-dir", help="Cache directory.")] = Path(".cta_cache"),
 ) -> None:
     """Analyze and characterize a single trace, glob, or multi-artifact RunBundle directory."""
+    from cta.core.engine import analyze as run_analyze_sdk
+
     report = run_analyze_sdk(
         trace,
         aspects=_csv(aspects),
@@ -206,6 +220,11 @@ def plot_cmd(
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache"),
 ) -> None:
     """Render publication-ready single-trace or comparative plots to PDF, SVG, or PNG."""
+    from cta.core.engine import analyze as run_analyze_sdk
+    from cta.core.engine import compare as run_compare_sdk
+    from cta.core.engine import run_comparison
+    from cta.core.manifest import load_manifest
+
     if manifest is not None:
         groups, cfg = load_manifest(manifest)
         report = run_comparison(groups, cfg)
@@ -285,6 +304,8 @@ def inspect_cmd(
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache"),
 ) -> None:
     """Inspect detected trace formats, world size, and normalized Parquet table schemas."""
+    from cta.core.engine import inspect_trace
+
     info = inspect_trace(source, cache_dir=cache_dir)
     console.print(Pretty(info))
 
@@ -292,6 +313,8 @@ def inspect_cmd(
 @app.command("list")
 def list_cmd() -> None:
     """List registered trace formats (adapters) and comparison aspects, including plugins."""
+    from cta.core.registry import ADAPTERS, ASPECTS, load_plugins
+
     load_plugins()
     tbl = Table(title="Trace formats")
     tbl.add_column("format")
@@ -308,14 +331,136 @@ def list_cmd() -> None:
     console.print(tbl)
 
 
+_PROFILE_CTX = {"allow_extra_args": True, "ignore_unknown_options": True}
+_OutDir = Annotated[Path, typer.Option("--out-dir", "-o", help="Parent directory; the profile goes to <out-dir>/<name>/.")]
+_Name = Annotated[str | None, typer.Option("--name", "-n", help="Bundle name (default: script or executable name).")]
+_Analyze = Annotated[bool, typer.Option("--analyze", help="Run `cta analyze` on the collected profile afterwards.")]
+
+
+def _finish(result: "ProfileResult", analyze: bool) -> None:  # noqa: UP037 (ProfileResult is imported lazily)
+    for art in result.artifacts:
+        console.print(f"[green]✓ {result.tool}:[/green] {art}")
+    if not result.artifacts:
+        err_console.print(f"[bold red]error:[/bold red] {result.tool} produced no artifacts in {result.bundle_dir}")
+        raise typer.Exit(code=result.returncode or 1)
+    if result.returncode != 0:
+        err_console.print(f"[yellow]warning: the profiled command exited with status {result.returncode}[/yellow]")
+    if analyze:
+        from cta.core.engine import analyze as run_analyze_sdk
+        from cta.exporters.terminal import render_terminal_report
+
+        render_terminal_report(run_analyze_sdk(result.bundle_dir), console=console)
+    if result.returncode != 0:
+        raise typer.Exit(code=result.returncode)
+
+
+def _run_profile(ctx: typer.Context, tool: str, run: "Callable[[list[str], str], ProfileResult]", name: str | None, analyze: bool) -> None:  # noqa: UP037
+    from cta.profile.runners import ProfilerError, default_name
+
+    command = list(ctx.args)
+    if not command:
+        raise typer.BadParameter(f"give the command to profile after '--', e.g. cta profile {tool} -- python train.py")
+    try:
+        result = run(command, name or default_name(command))
+    except ProfilerError as exc:
+        err_console.print(f"[bold red]error:[/bold red] {exc}")
+        raise typer.Exit(code=2) from exc
+    _finish(result, analyze)
+
+
+@profile_app.command("nsys", context_settings=_PROFILE_CTX)
+def profile_nsys(
+    ctx: typer.Context,
+    out_dir: _OutDir = Path("profiles"),
+    name: _Name = None,
+    trace: Annotated[str, typer.Option(help="nsys --trace list.")] = "cuda,nvtx,osrt",
+    gpu_metrics: Annotated[bool, typer.Option("--gpu-metrics", help="Sample GPU metrics (needs counter access).")] = False,
+    analyze: _Analyze = False,
+) -> None:
+    """Nsight Systems: `cta profile nsys -- python train.py` (writes .nsys-rep and the .sqlite export)."""
+    from cta.profile.runners import run_nsys
+
+    _run_profile(ctx, "nsys", lambda cmd, n: run_nsys(cmd, out_dir, n, trace=trace, gpu_metrics=gpu_metrics), name, analyze)
+
+
+@profile_app.command("ncu", context_settings=_PROFILE_CTX)
+def profile_ncu(
+    ctx: typer.Context,
+    out_dir: _OutDir = Path("profiles"),
+    name: _Name = None,
+    ncu_set: Annotated[str, typer.Option("--set", help="ncu section set (basic, detailed, full, roofline).")] = "full",
+    metrics: Annotated[str | None, typer.Option(help="Comma-separated metrics instead of a --set.")] = None,
+    launch_count: Annotated[int | None, typer.Option(help="Profile only the first N kernel launches.")] = None,
+    kernel: Annotated[str | None, typer.Option("--kernel", "-k", help="Regex of kernel names to profile.")] = None,
+    cache_control: Annotated[str, typer.Option(help="all (flush between replays) or none.")] = "all",
+    clock_control: Annotated[str, typer.Option(help="base (lock clocks) or none.")] = "none",
+    analyze: _Analyze = False,
+) -> None:
+    """Nsight Compute (hardware counters required): `cta profile ncu --launch-count 50 -- python train.py`."""
+    from cta.profile.runners import run_ncu
+
+    mlist = tuple(m.strip() for m in metrics.split(",") if m.strip()) if metrics else ()
+    _run_profile(
+        ctx, "ncu",
+        lambda cmd, n: run_ncu(cmd, out_dir, n, ncu_set=ncu_set, metrics=mlist, launch_count=launch_count,
+                               kernel_regex=kernel, cache_control=cache_control, clock_control=clock_control),
+        name, analyze,
+    )  # fmt: skip
+
+
+@profile_app.command("kineto", context_settings=_PROFILE_CTX)
+def profile_kineto(
+    ctx: typer.Context,
+    out_dir: _OutDir = Path("profiles"),
+    name: _Name = None,
+    step_on: Annotated[str, typer.Option(help="optimizer: each optimizer.step() starts a ProfilerStep; none: one step.")] = "optimizer",
+    analyze: _Analyze = False,
+) -> None:
+    """PyTorch profiler (Kineto trace): `cta profile kineto -- python train.py` or `-- -m package.module`."""
+    from cta.profile.runners import run_kineto
+
+    _run_profile(ctx, "kineto", lambda cmd, n: run_kineto(cmd, out_dir, n, step_on=step_on), name, analyze)
+
+
+@profile_app.command("trtexec", context_settings=_PROFILE_CTX)
+def profile_trtexec(
+    ctx: typer.Context,
+    out_dir: _OutDir = Path("profiles"),
+    name: _Name = None,
+    analyze: _Analyze = False,
+) -> None:
+    """TensorRT: `cta profile trtexec -- --loadEngine=model.plan --iterations=200` (export flags are added)."""
+    from cta.profile.runners import run_trtexec
+
+    _run_profile(ctx, "trtexec", lambda args, n: run_trtexec(args, out_dir, n), name or "trtexec", analyze)
+
+
+@profile_app.command("jtop", context_settings=_PROFILE_CTX)
+def profile_jtop(
+    ctx: typer.Context,
+    out_dir: _OutDir = Path("profiles"),
+    name: _Name = None,
+    interval: Annotated[float, typer.Option(help="Sampling interval in seconds.")] = 0.5,
+    analyze: _Analyze = False,
+) -> None:
+    """Jetson power/utilisation telemetry while a command runs: `cta profile jtop -- python infer.py`."""
+    from cta.profile.runners import run_jtop
+
+    _run_profile(ctx, "jtop", lambda cmd, n: run_jtop(cmd, out_dir, n, interval=interval), name, analyze)
+
+
 @cache_app.command("status")
 def cache_status(cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache")) -> None:
+    from cta.core.cache import CacheStore
+
     st = CacheStore(cache_dir).status()
     console.print(f"Cache entries: [bold]{st['entries']}[/bold], Size: [bold]{st['bytes'] / 1e6:.2f} MB[/bold]")
 
 
 @cache_app.command("clear")
 def cache_clear(cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache")) -> None:
+    from cta.core.cache import CacheStore
+
     removed = CacheStore(cache_dir).clear()
     console.print(f"Cleared [bold]{removed}[/bold] cached trace entries.")
 

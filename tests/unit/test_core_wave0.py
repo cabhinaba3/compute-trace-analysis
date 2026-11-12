@@ -186,3 +186,25 @@ def test_op_family_classification(name: str, family: str) -> None:
 
     got = pl.DataFrame({"name": [name]}).select(op_family_expr("name").alias("f"))["f"][0]
     assert got == family
+
+
+def test_import_cta_is_lazy() -> None:
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, cta; "
+        "heavy = [m for m in ('polars', 'scipy', 'pandas', 'hta', 'matplotlib', 'google.protobuf', 'chakra') "
+        "if m in sys.modules]; "
+        "assert not heavy, heavy; "
+        "cta.compare; assert 'polars' in sys.modules"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+
+
+def test_chakra_node_type_numbers_match_generated_enum() -> None:
+    from cta.adapters.chakra import schema
+
+    pb2 = schema.et_def_pb2()
+    for const in ("MEM_LOAD_NODE", "MEM_STORE_NODE", "COMP_NODE", "COMM_SEND_NODE", "COMM_RECV_NODE", "COMM_COLL_NODE", "STORAGE_NODE", "DATA_OP_NODE"):
+        assert getattr(schema, const) == getattr(pb2, const), const

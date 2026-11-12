@@ -25,6 +25,12 @@ def detect_format(path: Path) -> str | None:
     return None
 
 
+def infer_rank(path: Path, fallback: int) -> int:
+    """Rank encoded in a per-rank trace filename (``..._rank3.sqlite``, ``trace.r3.json``), else ``fallback``."""
+    m = _RANK_RE.search(path.name)
+    return int(m.group(1)) if m else fallback
+
+
 def _infer_world_size(paths: list[Path]) -> int:
     if len(paths) <= 1:
         return 1

@@ -11,9 +11,9 @@ import numpy as np
 import polars as pl
 
 from cta.adapters.chakra.schema import (
-    COLL_TYPE_NAMES,
     NODE_TYPE_CLASS,
     STORAGE_NODE,
+    coll_type_names,
     extract_attr_value,
     iter_et_messages,
     storage_size_bytes,
@@ -70,12 +70,13 @@ def _parse_single_et(args: tuple[int, Path]) -> tuple[list[dict[str, object]], l
     node_rows: list[dict[str, object]] = []
     edge_rows: list[dict[str, object]] = []
 
+    coll_names = coll_type_names()
     for n in nodes_iter:
         attrs = {a.name: extract_attr_value(a) for a in n.attr}
         op_class = NODE_TYPE_CLASS.get(int(n.type), "other")
         raw_ct = attrs.get("comm_type")
         if isinstance(raw_ct, int):
-            comm_type = COLL_TYPE_NAMES.get(raw_ct, f"COLL_{raw_ct}")
+            comm_type = coll_names.get(raw_ct, f"COLL_{raw_ct}")
         elif isinstance(raw_ct, str):
             comm_type = raw_ct.upper()
         elif op_class == "comm_send":

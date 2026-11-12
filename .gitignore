@@ -11,3 +11,7 @@ build/
 .coverage
 htmlcov/
 .DS_Store
+
+# Real profiler fixtures generated on GPULab (large/binary, kept local)
+tests/data_real/
+scripts/
