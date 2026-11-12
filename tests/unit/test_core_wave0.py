@@ -155,3 +155,34 @@ def test_alignment_and_entity_comparison() -> None:
     diff = compare_entity_tables(["Base", "Cand"], [d0, d1], key_col="op_family", val_col="dur_ms", count_col="calls")
     assert set(diff["op_family"].to_list()) == {"GEMM", "NCCL_AllReduce", "FlashAttention"}
     assert parse_gate_spec("p99:+5%, throughput:-10%") == {"p99": 5.0, "throughput": -10.0}
+
+
+@pytest.mark.parametrize(
+    ("name", "family"),
+    [
+        ("ncclDevKernel_AllReduce_Sum_f32_RING_LL", "NCCL_AllReduce"),
+        ("ncclDevKernel_ReduceScatter_Sum_f16_RING", "NCCL_ReduceScatter"),
+        ("ncclDevKernel_SendRecv", "Comm_P2P"),
+        ("sm80_xmma_gemm_f16f16_f16f32_f32_nn_n_tilesize128x128x32", "GEMM"),
+        ("ampere_h884gemm_256x128_ldg8_nn", "GEMM"),
+        ("void gemv2T_kernel_val<int, int, float>", "GEMM"),
+        ("cublasLt::splitKreduce_kernel", "GEMM"),
+        ("void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128>>", "FlashAttention"),
+        ("sm80_xmma_fprop_implicit_gemm_f16f16_f16f32_f32_nhwckrsc_nhwc_tilesize64x64x32", "Convolution"),
+        ("aten::_convolution", "Convolution"),
+        ("void cudnn::bn_fw_inf_1C11_kernel_NCHW", "Normalization"),
+        ("void at::native::(anonymous namespace)::indexSelectLargeIndex<float>", "Embedding"),
+        ("void at::native::reduce_kernel<512, 1, at::native::ReduceOp<float, MeanOps>>", "Reduction"),
+        ("void cub::DeviceReduceKernel<float>", "Reduction"),
+        ("triton_red_fused_sum_1", "Reduction"),
+        ("void at::native::vectorized_elementwise_kernel<4, at::native::AddFunctor<float>>", "Elementwise"),
+        ("Memcpy HtoD (Pageable -> Device)", "Memcpy_H2D"),
+        ("void comma_separated_kernel", "Other"),
+        ("dilemma_kernel", "Other"),
+    ],
+)
+def test_op_family_classification(name: str, family: str) -> None:
+    from cta.core.alignment import op_family_expr
+
+    got = pl.DataFrame({"name": [name]}).select(op_family_expr("name").alias("f"))["f"][0]
+    assert got == family
