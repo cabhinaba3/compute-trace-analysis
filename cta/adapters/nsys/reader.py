@@ -9,7 +9,6 @@ import shutil
 import sqlite3
 import subprocess
 import warnings
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +16,7 @@ import polars as pl
 
 from cta.core.alignment import enrich_ops_df
 from cta.core.bundle import infer_rank
+from cta.core.intervals import assign_ranges, build_thread_ranges, range_paths
 from cta.core.models import TraceArtifact
 from cta.core.registry import register_adapter
 
@@ -24,6 +24,7 @@ KERNELS_SCHEMA = pl.Schema(
     {
         "step": pl.Int32(),
         "scope": pl.String(),
+        "scope_path": pl.String(),  # enclosing ranges, outermost > ... > innermost (== scope for the last level)
         "name": pl.String(),
         "demangled_name": pl.String(),
         "canonical_name": pl.String(),
@@ -49,7 +50,7 @@ STEPS_SCHEMA = pl.Schema(
     }
 )
 
-_SCHEMA_DEFAULTS: dict[str, object] = {"rank": 0, "device": 0}
+_SCHEMA_DEFAULTS: dict[str, object] = {"rank": 0, "device": 0, "scope_path": ""}
 
 
 def conform(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
@@ -102,87 +103,6 @@ def _list_tables(conn: sqlite3.Connection) -> set[str]:
 
 def _table_cols(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-@dataclass(slots=True)
-class _ThreadRanges:
-    """NVTX ranges of one thread, sorted by start, with a parent link to the enclosing range."""
-
-    starts: np.ndarray
-    ends: np.ndarray
-    gids: np.ndarray
-    parent: np.ndarray
-
-
-def _build_thread(rows: list[tuple[int, int, int]]) -> _ThreadRanges:
-    rows.sort(key=lambda r: (r[0], -r[1]))
-    starts = np.array([r[0] for r in rows], dtype=np.int64)
-    ends = np.array([r[1] for r in rows], dtype=np.int64)
-    gids = np.array([r[2] for r in rows], dtype=np.int64)
-    parent = np.full(len(rows), -1, dtype=np.int64)
-    stack: list[int] = []
-    for i in range(len(rows)):
-        while stack and ends[stack[-1]] <= starts[i]:
-            stack.pop()
-        parent[i] = stack[-1] if stack else -1
-        stack.append(i)
-    return _ThreadRanges(starts, ends, gids, parent)
-
-
-def _innermost(th: _ThreadRanges, q: np.ndarray) -> np.ndarray:
-    """Global id of the innermost range of this thread containing each query time (-1 if none).
-
-    ``searchsorted`` finds the latest-starting range; if it has already ended, walk up to the enclosing range
-    (this is what a plain "latest start" lookup gets wrong for sibling-then-outer cases).
-    """
-    out = np.full(len(q), -1, dtype=np.int64)
-    idx = np.searchsorted(th.starts, q, side="right") - 1
-    ok = idx >= 0
-    safe = np.where(ok, idx, 0)
-    inside = ok & (q <= th.ends[safe])
-    out[inside] = th.gids[idx[inside]]
-    for i in np.flatnonzero(ok & ~inside):
-        k = int(th.parent[idx[i]])
-        while k >= 0 and q[i] > th.ends[k]:
-            k = int(th.parent[k])
-        if k >= 0:
-            out[i] = th.gids[k]
-    return out
-
-
-def _assign_ranges(
-    threads: dict[int, _ThreadRanges],
-    gstart: np.ndarray,
-    launch_t: np.ndarray,
-    launch_tid: np.ndarray,
-    gpu_t: np.ndarray,
-) -> np.ndarray:
-    """Range id per GPU activity: the innermost range on the *launching* thread at launch time.
-
-    Launches are asynchronous, so the GPU start time says nothing about which CPU range issued the work. When
-    the launch is unknown (no runtime row) or its thread has no enclosing range, fall back to the latest-starting
-    containing range on any thread (queried at launch time if known, else at GPU start time).
-    """
-    n = len(gpu_t)
-    out = np.full(n, -1, dtype=np.int64)
-    for tid, th in threads.items():
-        sel = launch_tid == tid
-        if sel.any():
-            out[sel] = _innermost(th, launch_t[sel])
-    todo = out < 0
-    if todo.any() and threads:
-        q = np.where(np.isnan(launch_t[todo]), gpu_t[todo], launch_t[todo]).astype(np.int64)
-        best = np.full(len(q), -1, dtype=np.int64)
-        best_start = np.full(len(q), -1, dtype=np.int64)
-        for th in threads.values():
-            cand = _innermost(th, q)
-            hit = cand >= 0
-            starts = np.where(hit, gstart[np.where(hit, cand, 0)], -1)
-            better = hit & (starts > best_start)
-            best[better] = cand[better]
-            best_start[better] = starts[better]
-        out[np.flatnonzero(todo)] = best
-    return out
 
 
 def _nvtx_ranges(conn: sqlite3.Connection, tbls: set[str]) -> list[tuple[str, int, int, int]]:
@@ -317,15 +237,17 @@ def _label_events(
                 arr[g] = s
         return arr
 
-    step_threads = {tid: _build_thread(list(r)) for tid, r in step_by_tid.items()}
-    scope_threads = {tid: _build_thread(list(r)) for tid, r in scope_by_tid.items()}
-    step_gid = _assign_ranges(step_threads, gstarts(step_by_tid, len(step_ids)), launch_q.astype(np.float64), launch_tid, gpu_t)
-    scope_gid = _assign_ranges(scope_threads, gstarts(scope_by_tid, len(scope_names)), launch_q.astype(np.float64), launch_tid, gpu_t)
+    step_threads = {tid: build_thread_ranges(list(r)) for tid, r in step_by_tid.items()}
+    scope_threads = {tid: build_thread_ranges(list(r)) for tid, r in scope_by_tid.items()}
+    step_gid = assign_ranges(step_threads, gstarts(step_by_tid, len(step_ids)), launch_q.astype(np.float64), launch_tid, gpu_t)
+    scope_gid = assign_ranges(scope_threads, gstarts(scope_by_tid, len(scope_names)), launch_q.astype(np.float64), launch_tid, gpu_t)
 
     step_arr = np.array(step_ids + [-1], dtype=np.int32)[step_gid]  # gid -1 indexes the trailing -1
     scope_arr = np.array(scope_names + [""], dtype=object)[scope_gid]
     labelled = ev.drop("launch_tid", "launch_ns").with_columns(
-        pl.Series("step", step_arr, dtype=pl.Int32), pl.Series("scope", scope_arr, dtype=pl.String)
+        pl.Series("step", step_arr, dtype=pl.Int32),
+        pl.Series("scope", scope_arr, dtype=pl.String),
+        pl.Series("scope_path", range_paths(scope_threads, scope_gid, scope_names), dtype=pl.String),
     )
     steps = (
         pl.DataFrame(
@@ -424,10 +346,10 @@ def _ingest_report(db_path: Path, rank: int) -> dict[str, pl.DataFrame]:
     return {"kernels": kernels, "steps": steps, "runtime": runtime, "osrt": osrt, "gpu_metrics": metrics}
 
 
-@register_adapter("nsys", version="2.0")
+@register_adapter("nsys", version="2.1")
 class NsysAdapter:
     format_name = "nsys"
-    version = "2.0"
+    version = "2.1"
 
     def detect(self, path: Path) -> bool:
         suf = path.suffix.lower()

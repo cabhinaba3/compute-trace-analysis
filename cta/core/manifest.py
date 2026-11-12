@@ -55,6 +55,7 @@ def load_manifest(path: str | Path) -> tuple[tuple[TrialGroup, ...], CompareConf
         allow_missing_gates=bool(cfg_raw.get("allow_missing_gates", False)),
         collective_algo=str(cfg_raw.get("collective_algo", "ring")),
         alpha=float(cfg_raw.get("alpha", 0.05)),
+        scope_depth=int(cfg_raw["scope_depth"]) if cfg_raw.get("scope_depth") is not None else None,
         cache_dir=cache_dir,
     )
     return tuple(groups), cfg
