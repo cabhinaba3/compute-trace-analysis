@@ -54,6 +54,9 @@ class CompareConfig:
     collective_algo: str = "ring"
     alpha: float = 0.05
     allow_missing_gates: bool = False
+    plots: list[dict[str, Any]] = field(default_factory=list)  # declarative plot specs (manifest `plots:`)
+    ranks: tuple[int, ...] | None = None  # analyse only these ranks / GPU devices (None = all)
+    devices: tuple[int, ...] | None = None
     scope_depth: int | None = None  # None = innermost scope; N>=1 = N-th enclosing level from the outermost
     cache_dir: Path = field(default_factory=lambda: Path(".cta_cache"))
 
@@ -104,6 +107,9 @@ class ComparisonReport:
     aspects: dict[str, AspectResult]
     diagnoses: list[BottleneckShift] = field(default_factory=list)
     violations: list[RegressionViolation] = field(default_factory=list)
+    # Plot inputs, not part of the exported report: per group, one cache-table map per trial, and the run config.
+    sources: dict[str, list[dict[str, Path]]] = field(default_factory=dict, repr=False)
+    config: CompareConfig | None = field(default=None, repr=False)
 
     def aspect(self, name: str) -> AspectResult:
         if name not in self.aspects:
@@ -120,6 +126,15 @@ class ComparisonReport:
         from cta.viz import render_plot
 
         return render_plot(self, kind=kind, path=Path(path) if path else None, **kwargs)
+
+    def dashboard(self, path: str | Path, *, title: str = "CTA report", cdn: bool = False, kinds: Iterable[str] | None = None, **options: Any) -> Path:
+        """Write one interactive HTML dashboard (needs ``pip install cta[viz]``). ``kinds`` limits it to those plot kinds."""
+        from cta.viz.dashboard import build_dashboard
+        from cta.viz.data import DataContext
+        from cta.viz.spec import PlotSpec
+
+        specs = [PlotSpec(k, dict(options)) for k in kinds] if kinds else None
+        return build_dashboard(DataContext(self), specs, Path(path), title=title, cdn=cdn).path
 
     def to_latex(self, path: str | Path | None = None, **kwargs: Any) -> str:
         from cta.exporters.latex import export_latex

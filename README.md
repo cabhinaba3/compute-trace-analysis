@@ -74,16 +74,33 @@ Gates fail the run (exit code 2) when a metric's `delta_pct` exceeds the thresho
 cta equiv demo_traces/chakra_ring demo_traces/goal/ring.bin --collective-algo ring --rel-tol 0.02
 ```
 
-### 4. Render publication-ready vector figures (Type-42 PDF / SVG / PNG)
+### 4. Plots: static figures, interactive HTML, one dashboard
 ```bash
-cta plot demo_traces/chakra_ring demo_traces/chakra_skewed \
-  --kind breakdown,skew,traffic_delta \
-  --style paper_single_col \
-  --format pdf \
-  --out-dir figures/
+cta plot --list-kinds                                   # every kind, what data it needs, its options
+cta plot a.json b.json --kind breakdown,topk -f pdf     # Type-42 PDF / SVG / PNG for papers
+cta plot a.json b.json --html report.html               # ONE interactive dashboard (needs `pip install cta[viz]`)
+cta plot run/ --kind step_trace,kernel_drift -O steps=1:20 -O rolling=7
+cta plot run/ --kind all -f png                         # every plot the data supports
+cta plot --kind history --history 'reports/*/report.json' --metric mean_step_ms   # a metric across saved runs
 ```
+**Kinds, by use case.** Overview: `breakdown`, `family_share`. Timeline: `timeline` (GPU Gantt), `overlap_timeline`, `stream_util`, `pareto`. Steps and drift: `step_trace` (rolling median, Theil-Sen trend, outliers), `step_dist`, `kernel_drift`, `history` (control chart over saved `report.json` files). A/B: `topk` (alias `tornado`), `waterfall`, `kernel_scatter`, `step_compare`, `scorecard`, `gates`. Sweeps: `scaling`, `sweep`. Distributed: `rank_heatmap`, `straggler`, `skew`, `traffic_delta`. Kernels: `roofline`, `occupancy`, `ncu_util`, `stalls`. Edge/energy: `power_trace`, `gpu_metrics_trace`, `energy_pareto`. Custom: `custom`. A kind that does not apply to your data says why instead of drawing an empty chart.
 
-Supported plot kinds: `breakdown`, `topk` (alias `tornado`), `traffic_delta`, `skew`, `roofline`, `scaling`.
+**Dashboard filters.** `cta plot TRACE --serve` opens the dashboard *live* on a loopback server (stdlib only; `--port`, `--no-open`): each change of group, rank, GPU device or step window re-runs the analysis for that slice and redraws every plot, so all aggregates are exact (a device filter halves a 2-GPU breakdown, a step window changes `total_steps`). A saved `--html` file is static and offline, so its filters only hide or restyle what is drawn: group (also bars/heatmap columns on a category axis), rank, and a step-range zoom; use `--serve` or `--devices/--ranks/--warmup-steps/--max-steps` when you need recomputed numbers. There is no cross-plot linking yet.
+
+The same slicing is available for any analysis: `cta analyze run/ --devices 0` and `--ranks 0,1` (manifest: `ranks:`/`devices:` under `config`, SDK: `devices=[0]`).
+
+**Your own plots.** Raw tables (`kernels`, `steps`, `gpu_metrics`, `runtime`, `ncu_kernels`, `ncu_findings`, `jtop`, `osrt`; `cta plot TRACE --list-sources` shows columns) are available besides the report tables. Times are in ms relative to each rank's first step, and `--warmup-steps/--max-steps` apply exactly as in the analysis. Draw them with a few fields or with DuckDB SQL:
+```bash
+cta plot run/ --sql "SELECT idx, rank, sum(duration_ms) AS ms FROM kernels WHERE category='comm' GROUP BY ALL" \
+  --mark line --x idx --y ms --color rank
+```
+or declaratively, in a file (`cta plot run/ --spec plots.yaml`) or a manifest `plots:` block:
+```yaml
+plots:
+  - {kind: step_trace, rolling: 7, steps: "2:50", theme: dark}
+  - {kind: custom, name: comm_by_step, source: kernels, where: "category = 'comm'", mark: bar, x: idx, y: duration_ms, agg: sum}
+```
+Every kind declares typed options (shown by `--list-kinds`); unknown options are an error with a suggestion. Common ones: `title`, `theme` (light/dark), `palette`, `width`/`height`, `labels`, `rank`, `device`, `steps`, `where`. In Python: `report.plot("step_trace", path="x.png", rolling=7)`, `report.dashboard("report.html")`, and `cta.viz.register_plot` adds a kind that both backends and the dashboard pick up.
 
 ### 5. Collect profiles with the vendor tools (`cta profile`)
 ```bash
@@ -174,7 +191,7 @@ cta/
   adapters/      Format readers: chakra/, goal/, nsys/, kineto/, jax/, ncu/, tensorrt/, jtop/
   aspects/       Comparison aspects: distributed.py, device.py, edge.py
   exporters/     Rich terminal, Markdown, LaTeX booktabs, CSV/JSON bundle exporters
-  viz/           Okabe-Ito Type-42 Matplotlib publication figure suite
+  viz/           Plot kinds (registry + typed options), raw-table/SQL data layer, Matplotlib and Plotly renderers, dashboard
   synth/         Deterministic synthetic trace generators for all 7 ecosystems
   profile/       Thin runners for nsys, ncu, torch.profiler, jax.profiler, trtexec and jtop (`cta profile`)
   cli/           Typer CLI (`cta compare`, `analyze`, `profile`, `equiv`, `plot`, `inspect`, `list`, `synth`, `cache`)

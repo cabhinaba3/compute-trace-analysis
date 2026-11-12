@@ -136,6 +136,8 @@ def compare_entity_tables(
         if count_col and count_col in df.columns:
             cols.append(pl.col(count_col).alias(f"{lbl}_count"))
         sub = df.select(cols)
+        if sub.schema[key_col] == pl.Null:  # an empty group built as pl.DataFrame({key: []}) has no dtype to join on
+            sub = sub.with_columns(pl.col(key_col).cast(pl.String))
         merged = sub if idx == 0 else merged.join(sub, on=key_col, how="full", coalesce=True)  # type: ignore[union-attr]
 
     if merged is None or merged.is_empty():

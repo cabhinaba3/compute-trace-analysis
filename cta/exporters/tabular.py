@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import subprocess
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -13,9 +16,26 @@ from cta.exporters.markdown import export_markdown
 PLOT_KINDS = ("breakdown", "topk", "traffic_delta", "skew", "roofline", "scaling")
 
 
+def _version() -> str:
+    from cta import __version__
+
+    return __version__
+
+
+def _git_commit() -> str | None:
+    try:
+        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=2, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None if out.returncode == 0 else None
+
+
 def report_to_dict(report: ComparisonReport) -> dict[str, Any]:
     """JSON-serialisable view of a report. `aspects` keeps the legacy summary-only shape."""
     return {
+        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),  # lets `cta plot --kind history` order saved runs
+        "cta_version": _version(),
+        "git_commit": _git_commit(),
         "mode": report.mode,
         "groups": [g.label for g in report.groups],
         "diagnoses": [d.summary for d in report.diagnoses],
@@ -65,6 +85,10 @@ def export_bundle(
         jp = out_dir / "report.json"
         jp.write_text(report_to_json(report))
         written["json"] = jp
+
+    if "html" in fmt_set:
+        with contextlib.suppress(ImportError, ValueError):  # plotly not installed, or nothing drawable: the dashboard is optional
+            written["html"] = report.dashboard(out_dir / "dashboard.html")
 
     for ext in ("pdf", "svg", "png"):
         if ext in fmt_set:

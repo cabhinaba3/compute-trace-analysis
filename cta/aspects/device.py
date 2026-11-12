@@ -22,7 +22,13 @@ def _slice_steps_and_kernels(
     kernels_df: pl.DataFrame,
     config: CompareConfig,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Apply --warmup-steps/--max-steps per rank (ranks have independent clocks) and keep the matching kernels."""
+    """Apply --ranks/--devices, then --warmup-steps/--max-steps per rank (ranks have independent clocks); keep the matching kernels."""
+    if config.ranks is not None:
+        steps_df = steps_df.filter(pl.col("rank").is_in(list(config.ranks)))
+        if kernels_df.height:
+            kernels_df = kernels_df.filter(pl.col("rank").is_in(list(config.ranks)))
+    if config.devices is not None and kernels_df.height:
+        kernels_df = kernels_df.filter(pl.col("device").is_in(list(config.devices)))
     if steps_df.is_empty():
         return steps_df, kernels_df
     ordered = steps_df.sort("rank", "start_ns").with_columns(pl.col("start_ns").cum_count().over("rank").alias("_i"))

@@ -82,9 +82,11 @@ def compare_cmd(
     collective_algo: Annotated[str | None, typer.Option("--collective-algo", help="Collective decomposition model: ring, tree, direct (default ring; overrides manifest).")] = None,
     alpha: Annotated[float | None, typer.Option("--alpha", help="Significance level for Welch/Mann-Whitney tests (default 0.05; overrides manifest).")] = None,
     scope_depth: Annotated[int | None, typer.Option("--scope-depth", min=1, help="Group kernels by the N-th enclosing op/range from the outermost (default: innermost).")] = None,
+    ranks: Annotated[str | None, typer.Option("--ranks", help="Analyse only these ranks, e.g. 0,1 (default: all).")] = None,
+    devices: Annotated[str | None, typer.Option("--devices", help="Analyse only these GPU devices, e.g. 0 (default: all).")] = None,
     labels: Annotated[str | None, typer.Option("--labels", "-l", help="Comma-separated group labels.")] = None,
     out_dir: Annotated[Path | None, typer.Option("--out-dir", "-o", help="Directory to export reports/plots.")] = None,
-    export: Annotated[str, typer.Option("--export", help="Comma-separated export formats (markdown,latex,csv,json,pdf,svg,png).")] = "markdown,csv,json",
+    export: Annotated[str, typer.Option("--export", help="Comma-separated export formats (markdown,latex,csv,json,pdf,svg,png,html).")] = "markdown,csv,json",
     output: Annotated[str, typer.Option("--format", help=_FORMAT_HELP)] = "rich",
     cache_dir: Annotated[Path | None, typer.Option("--cache-dir", help="Cache directory (default .cta_cache; overrides manifest).")] = None,
 ) -> None:
@@ -110,6 +112,8 @@ def compare_cmd(
                 "collective_algo": collective_algo,
                 "alpha": alpha,
                 "scope_depth": scope_depth,
+                "ranks": tuple(int(r) for r in _csv(ranks) or ()) or None,
+                "devices": tuple(int(d) for d in _csv(devices) or ()) or None,
                 "cache_dir": cache_dir,
             }
             for key, val in overrides.items():
@@ -133,6 +137,8 @@ def compare_cmd(
                 collective_algo=collective_algo or "ring",
                 alpha=alpha if alpha is not None else 0.05,
                 scope_depth=scope_depth,
+                ranks=[int(r) for r in _csv(ranks) or []],
+                devices=[int(d) for d in _csv(devices) or []],
                 cache_dir=cache_dir or Path(".cta_cache"),
                 labels=_csv(labels),
             )
@@ -189,9 +195,11 @@ def analyze_cmd(
     collective_algo: Annotated[str, typer.Option("--collective-algo", help="Collective decomposition model (ring, tree, direct).")] = "ring",
     alpha: Annotated[float, typer.Option("--alpha", help="Significance level for statistical tests.")] = 0.05,
     scope_depth: Annotated[int | None, typer.Option("--scope-depth", min=1, help="Group kernels by the N-th enclosing op/range from the outermost (default: innermost).")] = None,
+    ranks: Annotated[str | None, typer.Option("--ranks", help="Analyse only these ranks, e.g. 0,1 (default: all).")] = None,
+    devices: Annotated[str | None, typer.Option("--devices", help="Analyse only these GPU devices, e.g. 0 (default: all).")] = None,
     label: Annotated[str | None, typer.Option("--label", "-l", help="Display label for the trace/bundle.")] = None,
     out_dir: Annotated[Path | None, typer.Option("--out-dir", "-o", help="Directory to export reports/plots.")] = None,
-    export: Annotated[str, typer.Option("--export", help="Comma-separated export formats (markdown,latex,csv,json,pdf,svg,png).")] = "markdown,csv,json",
+    export: Annotated[str, typer.Option("--export", help="Comma-separated export formats (markdown,latex,csv,json,pdf,svg,png,html).")] = "markdown,csv,json",
     output: Annotated[str, typer.Option("--format", help=_FORMAT_HELP)] = "rich",
     cache_dir: Annotated[Path, typer.Option("--cache-dir", help="Cache directory.")] = Path(".cta_cache"),
 ) -> None:
@@ -206,48 +214,175 @@ def analyze_cmd(
         collective_algo=collective_algo,
         alpha=alpha,
         scope_depth=scope_depth,
+        ranks=[int(r) for r in _csv(ranks) or []],
+        devices=[int(d) for d in _csv(devices) or []],
         cache_dir=cache_dir,
         label=label,
     )
     _emit(report, output, out_dir, export)
 
 
+def _parse_opts(pairs: list[str] | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for p in pairs or []:
+        k, sep, v = p.partition("=")
+        if not sep or not k.strip():
+            raise typer.BadParameter(f"expected key=value, got {p!r}", param_hint="--opt")
+        out[k.strip()] = v
+    return out
+
+
+def _print_kinds() -> None:
+    from rich.table import Table
+
+    from cta.viz.spec import COMMON_OPTIONS, kind_catalog
+
+    tbl = Table(title="Plot kinds (cta plot --kind NAME; options via --opt key=value or a --spec file)", show_lines=False)
+    for col in ("kind", "group", "needs", "options"):
+        tbl.add_column(col, overflow="fold")
+    for k in kind_catalog():
+        alias = f" ({', '.join(k.aliases)})" if k.aliases else ""
+        tbl.add_row(k.name + alias, k.group, k.needs, ", ".join(f"{n}={o.default}" if o.default is not None else n for n, o in k.options.items()))
+    console.print(tbl)
+    console.print("[dim]Every kind also accepts: " + ", ".join(COMMON_OPTIONS) + "[/dim]")
+
+
 @app.command("plot")
 def plot_cmd(
     traces: Annotated[list[str] | None, typer.Argument(help="One (single-trace) or more (comparative) trace files/bundles.")] = None,
-    manifest: Annotated[Path | None, typer.Option("--manifest", "-m", help="Declarative YAML/TOML sweep manifest.")] = None,
-    kind: Annotated[str, typer.Option("--kind", "-k", help="Comma-separated plot kinds (breakdown,topk,traffic_delta,skew,roofline,scaling; tornado = alias of topk).")] = "breakdown",
+    manifest: Annotated[Path | None, typer.Option("--manifest", "-m", help="Declarative YAML/TOML sweep manifest (its `plots:` block is used when no --kind/--spec is given).")] = None,
+    kind: Annotated[str | None, typer.Option("--kind", "-k", help="Comma-separated plot kinds, or 'all' for every applicable kind (see --list-kinds). Default: breakdown.")] = None,
+    spec: Annotated[Path | None, typer.Option("--spec", help="YAML file of plot specs (a list, or a `plots:` list).")] = None,
+    sql: Annotated[str | None, typer.Option("--sql", help="DuckDB SQL over the named tables (see --list-sources); drawn with --mark/--x/--y/--color/--facet.")] = None,
+    source: Annotated[str | None, typer.Option("--source", help="Raw table (kernels, steps, ...) or report:<aspect>[.<table>] for a custom plot.")] = None,
+    mark: Annotated[str | None, typer.Option("--mark", help="Custom plot mark: line, step, bar, barh, scatter, box, hist, heatmap.")] = None,
+    x: Annotated[str | None, typer.Option("--x", help="Custom plot: column on x.")] = None,
+    y: Annotated[str | None, typer.Option("--y", help="Custom plot: column on y.")] = None,
+    color: Annotated[str | None, typer.Option("--color", help="Custom plot: column that splits coloured series.")] = None,
+    facet: Annotated[str | None, typer.Option("--facet", help="Custom plot: column that splits panels.")] = None,
+    opt: Annotated[list[str] | None, typer.Option("--opt", "-O", help="Plot option key=value, repeatable (e.g. -O top_k=20 -O steps=2:10 -O where=\"category='comm'\").")] = None,
     out_dir: Annotated[Path, typer.Option("--out-dir", "-o", help="Output directory for generated figures.")] = Path("figures"),
-    fmt: Annotated[str, typer.Option("--format", "-f", help="Figure file extension (pdf, svg, png).")] = "pdf",
-    style: Annotated[str, typer.Option("--style", help="Preset style (paper_single_col, paper_double_col, presentation).")] = "paper_single_col",
+    fmt: Annotated[str, typer.Option("--format", "-f", help="Figure file extension: pdf, svg, png (static) or html (one interactive file per plot).")] = "pdf",
+    html: Annotated[Path | None, typer.Option("--html", help="Write ONE interactive dashboard (tabs, group/rank/step filters) to this file; needs cta[viz].")] = None,
+    serve: Annotated[bool, typer.Option("--serve", help="Open the dashboard LIVE on a local server: every filter (group, rank, GPU device, step range) recomputes the analysis. Ctrl-C stops it.")] = False,
+    port: Annotated[int, typer.Option("--port", help="Port for --serve (0 = pick a free one).")] = 0,
+    no_open: Annotated[bool, typer.Option("--no-open", help="With --serve, print the URL instead of opening a browser.")] = False,
+    cdn: Annotated[bool, typer.Option("--cdn", help="Dashboard/HTML loads plotly.js from a CDN instead of embedding it (smaller file, needs internet).")] = False,
+    history: Annotated[str | None, typer.Option("--history", help="Glob of saved report.json files for --kind history, e.g. 'reports/*/report.json'.")] = None,
+    metric: Annotated[str | None, typer.Option("--metric", help="Shortcut for -O metric=... (history, sweep, scaling).")] = None,
+    theme: Annotated[str | None, typer.Option("--theme", help="light or dark.")] = None,
+    palette: Annotated[str | None, typer.Option("--palette", help="okabe_ito, tableau, pastel, or comma-separated colours.")] = None,
+    title: Annotated[str | None, typer.Option("--title", help="Override the figure title.")] = None,
+    style: Annotated[str, typer.Option("--style", help="Static size preset (paper_single_col, paper_double_col, presentation, web).")] = "paper_single_col",
+    dpi: Annotated[int, typer.Option("--dpi", help="Raster resolution for png.")] = 300,
     warmup_steps: Annotated[int, typer.Option("--warmup-steps", help="Skip initial warmup steps/iterations (ignored with --manifest).")] = 0,
     max_steps: Annotated[int | None, typer.Option("--max-steps", help="Max steps/iterations to analyze (ignored with --manifest).")] = None,
     cache_dir: Annotated[Path, typer.Option("--cache-dir")] = Path(".cta_cache"),
+    list_kinds: Annotated[bool, typer.Option("--list-kinds", help="List every plot kind with its data needs and options, then exit.")] = False,
+    list_sources: Annotated[bool, typer.Option("--list-sources", help="List the tables (and columns) usable in --sql/--source for these traces, then exit.")] = False,
 ) -> None:
-    """Render publication-ready single-trace or comparative plots to PDF, SVG, or PNG."""
+    """Render plots: static PDF/SVG/PNG, per-plot interactive HTML, or one interactive dashboard (--html)."""
     from cta.core.engine import analyze as run_analyze_sdk
     from cta.core.engine import compare as run_compare_sdk
     from cta.core.engine import run_comparison
     from cta.core.manifest import load_manifest
+    from cta.viz.data import DataContext
+    from cta.viz.spec import NotApplicable, PlotSpec, get_kind, load_specs
 
-    if manifest is not None:
-        groups, cfg = load_manifest(manifest)
-        report = run_comparison(groups, cfg)
-    else:
-        if not traces:
-            raise typer.BadParameter("Provide at least one trace path/directory or --manifest.")
-        if len(traces) == 1:
-            report = run_analyze_sdk(traces[0], warmup_steps=warmup_steps, max_steps=max_steps, cache_dir=cache_dir)
-        else:
-            report = run_compare_sdk(
-                traces[0], traces[1], *traces[2:], warmup_steps=warmup_steps, max_steps=max_steps, cache_dir=cache_dir
-            )
+    if list_kinds:
+        _print_kinds()
+        return
 
-    ext = fmt.lstrip(".").lower()
-    for k in (x.strip() for x in kind.split(",") if x.strip()):
-        dst = out_dir / f"{k}.{ext}"
-        report.plot(kind=k, path=dst, style=style)
-        console.print(f"[green]✓ Saved figure:[/green] {dst}")
+    manifest_plots: list[dict[str, object]] = []
+    report = None
+    try:
+        if manifest is not None:
+            groups, cfg = load_manifest(manifest)
+            manifest_plots = cfg.plots
+            report = run_comparison(groups, cfg)
+        elif traces:
+            if len(traces) == 1:
+                report = run_analyze_sdk(traces[0], warmup_steps=warmup_steps, max_steps=max_steps, cache_dir=cache_dir)
+            else:
+                report = run_compare_sdk(traces[0], traces[1], *traces[2:], warmup_steps=warmup_steps, max_steps=max_steps, cache_dir=cache_dir)
+        elif not history:
+            raise typer.BadParameter("Provide at least one trace path/directory, --manifest, or --history GLOB.")
+        ctx = DataContext(report, history=history)
+        if list_sources:
+            for name, cols in ctx.describe().items():
+                console.print(f"[bold]{name}[/bold]: {', '.join(cols)}")
+            return
+
+        shared: dict[str, str] = {k: v for k, v in {"metric": metric, "theme": theme, "palette": palette, "title": title}.items() if v is not None}
+        shared.update(_parse_opts(opt))
+        if history:
+            shared.setdefault("history", history)
+        specs: list[PlotSpec] = []
+        picked = any(v is not None for v in (spec, kind, sql, source, mark, x, y, color, facet)) or bool(manifest_plots)
+        if spec is not None:
+            specs += load_specs(spec)
+        custom_given = any(v is not None for v in (sql, source, mark, x, y, color, facet))
+        if custom_given:
+            custom = {k: v for k, v in {"sql": sql, "source": source, "mark": mark or "line", "x": x, "y": y, "color": color, "facet": facet}.items() if v is not None}
+            specs.append(PlotSpec("custom", custom, name="custom"))
+        kinds = [k.strip() for k in (kind or "").split(",") if k.strip()]
+        want_all = "all" in kinds
+        if not want_all:
+            specs += [PlotSpec(k) for k in kinds]
+        if not specs and not want_all:
+            specs = [PlotSpec.from_dict(p) for p in manifest_plots] or [PlotSpec("breakdown" if not history else "history")]
+
+        def with_shared(sp: PlotSpec) -> PlotSpec:
+            declared = get_kind(sp.kind).all_options()
+            return PlotSpec(sp.kind, {**{k: v for k, v in shared.items() if k in declared}, **sp.options}, sp.name)
+
+        unused = [k for k in shared if specs and not any(k in get_kind(s.kind).all_options() for s in specs)]
+        if unused:
+            raise ValueError(f"option(s) {unused} are not accepted by any selected plot kind (see --list-kinds)")
+        specs = [with_shared(s) for s in specs]
+
+        if serve:
+            from cta.viz.server import serve as serve_live
+
+            if report is None:
+                raise ValueError("--serve needs traces or --manifest")
+            serve_live(report, specs if picked and specs else None, port=port, title=title or "CTA report", theme=shared.get("theme", "light"),
+                       palette=shared.get("palette"), open_browser=not no_open, on_ready=lambda u: console.print(f"[green]✓ Live dashboard:[/green] {u}  (Ctrl-C to stop)"))  # fmt: skip
+            return
+
+        if html is not None:
+            from cta.viz.dashboard import build_dashboard
+
+            res = build_dashboard(ctx, specs if picked and specs else None, html, title=title or "CTA report", cdn=cdn,
+                                  theme=shared.get("theme", "light"), palette=shared.get("palette"))  # fmt: skip
+            console.print(f"[green]✓ Dashboard:[/green] {res.path} ({len(res.drawn)} plots)")
+            for k, why in res.skipped.items():
+                console.print(f"[dim]  skipped {k}: {why}[/dim]")
+            return
+
+        from cta.viz.dashboard import default_specs
+        from cta.viz.plots import render_spec
+
+        explicit = bool(specs)
+        todo = specs if specs else [with_shared(s) for s in default_specs(ctx)] if want_all else []
+        ext = fmt.lstrip(".").lower()
+        drawn = 0
+        for sp in todo:
+            dst = out_dir / f"{sp.stem}.{ext}"
+            try:
+                render_spec(ctx, sp, dst, style=style, dpi=dpi)
+            except NotApplicable as exc:
+                if explicit:
+                    raise
+                console.print(f"[dim]  skipped {sp.stem}: {exc}[/dim]")
+                continue
+            drawn += 1
+            console.print(f"[green]✓ Saved figure:[/green] {dst}")
+        if not drawn:
+            raise ValueError("no plot could be drawn for these traces")
+    except (ValueError, ImportError, FileNotFoundError) as exc:
+        err_console.print(f"[bold red]error:[/bold red] {exc}")
+        raise typer.Exit(code=2) from exc
 
 
 @app.command("synth")
