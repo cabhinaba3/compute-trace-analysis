@@ -145,6 +145,25 @@ def run_kineto(command: Sequence[str], out_dir: Path, name: str, *, step_on: str
     return ProfileResult("kineto", bdir, argv, rc, [trace] if trace.exists() else [])
 
 
+def jax_command(command: Sequence[str], logdir: Path, *, perfetto: bool = True) -> list[str]:
+    """Run the script under ``jax.profiler.trace`` through cta.profile.jax_runner (same interpreter)."""
+    toks = list(command)
+    if toks and Path(toks[0]).name.startswith("python"):
+        toks = toks[1:]
+    if not toks:
+        raise ProfilerError("jax needs a Python script or '-m module' to run, e.g. -- python train.py")
+    flag = [] if perfetto else ["--no-perfetto"]
+    return [sys.executable, "-m", "cta.profile.jax_runner", "--out", str(logdir), *flag, "--", *toks]
+
+
+def run_jax(command: Sequence[str], out_dir: Path, name: str, *, perfetto: bool = True) -> ProfileResult:
+    bdir = _bundle(out_dir, name)
+    argv = jax_command(command, bdir, perfetto=perfetto)
+    rc = _run(argv)
+    arts = sorted(bdir.glob("plugins/profile/*/*"))
+    return ProfileResult("jax", bdir, argv, rc, arts)
+
+
 def trtexec_command(args: Sequence[str], bundle: Path, *, trtexec: str = "trtexec") -> list[str]:
     exports = [
         f"--exportTimes={bundle / 'times.json'}",
