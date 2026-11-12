@@ -51,6 +51,8 @@ def _select_aspects(common_formats: set[str], requested: tuple[str, ...] | None)
     for name, aspect in ASPECTS.items():
         if requested is not None and name not in requested:
             continue
+        if requested is None and not aspect.default_enabled:
+            continue
         reqs = set(aspect.required_formats)
         ok = bool(common_formats & reqs) if aspect.any_of_formats else reqs.issubset(common_formats)
         if ok:

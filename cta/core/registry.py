@@ -22,6 +22,7 @@ class ComparisonAspect(Protocol):
     title: str
     required_formats: tuple[str, ...]
     any_of_formats: bool  # If True, requires at least one of required_formats rather than all
+    default_enabled: bool  # If False, only runs when explicitly requested via aspects=/--aspects
 
     def run(
         self,
@@ -56,6 +57,7 @@ def register_aspect(
     title: str,
     required_formats: tuple[str, ...],
     any_of_formats: bool = False,
+    default_enabled: bool = True,
 ) -> Callable[[TAspect], TAspect]:
     def decorator(cls: TAspect) -> TAspect:
         instance = cls()
@@ -63,6 +65,7 @@ def register_aspect(
         instance.title = title
         instance.required_formats = required_formats
         instance.any_of_formats = any_of_formats
+        instance.default_enabled = default_enabled
         ASPECTS[name] = instance
         return cls
 
