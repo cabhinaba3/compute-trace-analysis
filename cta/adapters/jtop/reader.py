@@ -16,6 +16,7 @@ from cta.core.registry import register_adapter
 
 JTOP_SAMPLES_SCHEMA = pl.Schema(
     {
+        "device": pl.UInt32(),
         "elapsed_s": pl.Float64(),
         "cpu_util_pct": pl.Float64(),
         "gpu_util_pct": pl.Float64(),
@@ -69,10 +70,10 @@ def _pick_power_watts(item: dict[str, Any], keys: tuple[str, ...]) -> float:
     return 0.0
 
 
-@register_adapter("jtop", version="1.0")
+@register_adapter("jtop", version="1.1")
 class JtopAdapter:
     format_name = "jtop"
-    version = "1.0"
+    version = "1.1"
 
     def detect(self, path: Path) -> bool:
         if path.suffix.lower() != ".json":
@@ -86,7 +87,7 @@ class JtopAdapter:
 
     def ingest(self, artifact: TraceArtifact, out_dir: Path) -> dict[str, Path]:
         frames: list[pl.DataFrame] = []
-        for path in sorted(artifact.paths):
+        for dev, path in enumerate(sorted(artifact.paths)):
             records = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(records, list) or not records:
                 continue
@@ -128,6 +129,7 @@ class JtopAdapter:
             frames.append(
                 pl.DataFrame(
                     {
+                        "device": np.full(n, dev, dtype=np.uint32),
                         "elapsed_s": elapsed,
                         "cpu_util_pct": cpu_u,
                         "gpu_util_pct": gpu_u,

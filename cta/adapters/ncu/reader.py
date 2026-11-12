@@ -18,7 +18,6 @@ Metric semantics (verified against real H200 reports):
 from __future__ import annotations
 
 import csv
-import io
 import os
 import shutil
 import subprocess
@@ -253,6 +252,9 @@ def _rows_from_report(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, 
 
 
 # --------------------------------------------------------------------------------------------------- CSV
+_CONVERTER_TIMEOUT_S = float(os.environ.get("CTA_CONVERTER_TIMEOUT_S", "3600"))
+
+
 def _read_csv_text(path: Path) -> str:
     if path.suffix.lower() in (".ncu-rep", ".ncu-repz"):
         ncu_bin = shutil.which("ncu") or os.environ.get("NCU_PATH")
@@ -264,14 +266,14 @@ def _read_csv_text(path: Path) -> str:
                 f"Cannot read '{path.name}': install the reader with pip install 'compute-trace-analysis[ncu]', "
                 f"put the 'ncu' CLI on PATH, or provide '{sibling.name}'."
             )
-        proc = subprocess.run([ncu_bin, "--import", str(path), "--csv", "--page", "raw"], check=True, capture_output=True, text=True)
+        proc = subprocess.run([ncu_bin, "--import", str(path), "--csv", "--page", "raw"], check=True, capture_output=True, text=True, timeout=_CONVERTER_TIMEOUT_S)
         return proc.stdout
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
 def _rows_from_csv(text: str) -> list[dict[str, Any]]:
-    lines = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith("==")]
-    table = list(csv.reader(io.StringIO("\n".join(lines))))
+    lines = (ln for ln in text.splitlines() if ln.strip() and not ln.startswith("=="))
+    table = list(csv.reader(lines))
     if len(table) < 2:
         return []
     header = [h.strip() for h in table[0]]

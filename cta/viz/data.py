@@ -172,7 +172,7 @@ class DataContext:
                         view = f"report_{asp_name}{tname}"
                         if re.search(rf"\b{view}\b", query) and df.height:
                             con.register(view, df.to_arrow())
-            return _to_polars(con.execute(query))
+            return _to_polars(con.sql(query))
         except duckdb.Error as exc:
             raise ValueError(f"SQL error: {exc}\nTables: {', '.join(SOURCES)}, report_<aspect>[_<table>]") from exc
         finally:
@@ -214,7 +214,7 @@ def _sql_filter(df: pl.DataFrame, predicate: str) -> pl.DataFrame:
     con = duckdb.connect()
     try:
         con.register("t", df.to_arrow())
-        return _to_polars(con.execute(f"SELECT * FROM t WHERE {predicate}"))
+        return _to_polars(con.sql(f"SELECT * FROM t WHERE {predicate}"))
     except duckdb.Error as exc:
         raise ValueError(f"invalid 'where' predicate {predicate!r}: {exc}") from exc
     finally:

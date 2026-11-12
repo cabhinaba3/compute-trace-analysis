@@ -73,6 +73,9 @@ _MEMCPY_KIND_NAMES = {1: "Memcpy_H2D", 2: "Memcpy_D2H", 8: "Memcpy_D2D", 9: "Mem
 _NVTX_RANGE_EVENT_TYPES = (59, 60)  # NvtxPushPopRange, NvtxStartEndRange
 
 
+_CONVERTER_TIMEOUT_S = float(os.environ.get("CTA_CONVERTER_TIMEOUT_S", "3600"))
+
+
 def _resolve_sqlite(path: Path, out_dir: Path) -> Path:
     if path.suffix.lower() == ".sqlite":
         return path
@@ -87,6 +90,7 @@ def _resolve_sqlite(path: Path, out_dir: Path) -> Path:
             check=True,
             capture_output=True,
             text=True,
+            timeout=_CONVERTER_TIMEOUT_S,
         )
         return dst_sqlite
     if sibling.exists():
@@ -140,7 +144,7 @@ def _gpu_events(conn: sqlite3.Connection, tbls: set[str]) -> pl.DataFrame:
             f"SELECT {nm}, t.start, t.end, {col(kc, 'deviceId', '0')}, {col(kc, 'streamId', '0')}, "
             f"{col(kc, 'correlationId', '-1')} FROM CUPTI_ACTIVITY_KIND_KERNEL t {join} WHERE t.end > t.start"
         )
-        for nm_, st, en, dev, strm, corr in conn.execute(sql).fetchall():
+        for nm_, st, en, dev, strm, corr in conn.execute(sql):
             cat = "comm" if "nccl" in str(nm_).lower() else "compute"
             rows.append(
                 {"name": str(nm_), "category": cat, "start_ns": st, "end_ns": en, "bytes": 0,
@@ -154,7 +158,7 @@ def _gpu_events(conn: sqlite3.Connection, tbls: set[str]) -> pl.DataFrame:
             f"{col(mc, 'streamId', '0')}, {col(mc, 'correlationId', '-1')} "
             f"FROM CUPTI_ACTIVITY_KIND_MEMCPY t WHERE t.end > t.start"
         )
-        for ck, st, en, nbytes, dev, strm, corr in conn.execute(sql).fetchall():
+        for ck, st, en, nbytes, dev, strm, corr in conn.execute(sql):
             rows.append(
                 {"name": _MEMCPY_KIND_NAMES.get(int(ck or 0), "Memcpy_Other"), "category": "memcpy", "start_ns": st,
                  "end_ns": en, "bytes": nbytes, "stream": strm, "device": dev, "correlation_id": corr}
@@ -166,7 +170,7 @@ def _gpu_events(conn: sqlite3.Connection, tbls: set[str]) -> pl.DataFrame:
             f"SELECT t.start, t.end, {col(sc, 'bytes', '0')}, {col(sc, 'deviceId', '0')}, {col(sc, 'streamId', '0')}, "
             f"{col(sc, 'correlationId', '-1')} FROM CUPTI_ACTIVITY_KIND_MEMSET t WHERE t.end > t.start"
         )
-        for st, en, nbytes, dev, strm, corr in conn.execute(sql).fetchall():
+        for st, en, nbytes, dev, strm, corr in conn.execute(sql):
             rows.append(
                 {"name": "Memset", "category": "memcpy", "start_ns": st, "end_ns": en, "bytes": nbytes,
                  "stream": strm, "device": dev, "correlation_id": corr}

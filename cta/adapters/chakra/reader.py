@@ -251,9 +251,9 @@ class ChakraHostEtAdapter:
                         "comm_type": comm_type,
                         "duration_ns": max(0, dur_ns),
                         "size_bytes": max(0, sz),
-                        "src_rank": rank if op_class == "comm_send" else -1,
-                        "dst_rank": rank if op_class == "comm_recv" else -1,
-                        "tag": 0,
+                        "src_rank": int(n.get("comm_src", n.get("src_rank", rank if op_class == "comm_send" else -1))),
+                        "dst_rank": int(n.get("comm_dst", n.get("dst_rank", rank if op_class == "comm_recv" else -1))),
+                        "tag": max(0, int(n.get("comm_tag", n.get("tag", 0)) or 0)),
                         "num_ops": 0,
                     }
                 )

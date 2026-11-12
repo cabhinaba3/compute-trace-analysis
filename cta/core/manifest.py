@@ -13,7 +13,7 @@ from cta.core.models import CompareConfig, TrialGroup
 def load_manifest(path: str | Path) -> tuple[tuple[TrialGroup, ...], CompareConfig]:
     manifest_path = Path(path).resolve()
     base_dir = manifest_path.parent
-    raw_text = manifest_path.read_text()
+    raw_text = manifest_path.read_text(encoding="utf-8")
     data: dict[str, Any] = (
         tomllib.loads(raw_text)
         if manifest_path.suffix.lower() == ".toml"

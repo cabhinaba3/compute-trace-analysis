@@ -83,8 +83,8 @@ def resolve_bundle(
                     meta = {**loaded, **meta}
         files = sorted(f for f in p.rglob("*") if f.is_file() and not f.name.startswith("."))
         # Prefer .sqlite over .nsys-rep when both exist for the same stem in a directory
-        sqlite_stems = {f.with_suffix("").name for f in files if f.suffix == ".sqlite"}
-        files = [f for f in files if not (f.suffix == ".nsys-rep" and f.with_suffix("").name in sqlite_stems)]
+        sqlite_stems = {f.with_suffix("") for f in files if f.suffix == ".sqlite"}
+        files = [f for f in files if not (f.suffix == ".nsys-rep" and f.with_suffix("") in sqlite_stems)]
         run_label = label or str(meta.get("label", p.name))
         return _bundle_from_files(files, run_id=p.name, label=run_label, meta=meta)
 

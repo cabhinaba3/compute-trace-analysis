@@ -46,7 +46,7 @@ def render(chart: Chart, *, theme: str = "light", colors: str | None = None, wid
     w = int((width or (chart.size[0] if chart.size else 6.0 * chart.cols)) * 100) if (width or chart.size) else None
     h = int((height or (chart.size[1] if chart.size else 4.2 * chart.rows)) * 100) if (height or chart.size) else None
     fig.update_layout(
-        title=chart.title if n > 1 or not chart.panels[0].title else chart.panels[0].title,
+        title=chart.title if n != 1 or not chart.panels[0].title else chart.panels[0].title,
         template="plotly_dark" if theme == "dark" else "plotly_white",
         barmode=barmode,
         width=w if width or chart.size else None,
@@ -124,7 +124,7 @@ def _dash(d: Any) -> str:
 
 def _rgba(hex_color: Any, alpha: float) -> str:
     h = str(hex_color).lstrip("#")
-    if len(h) != 6:
+    if len(h) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in h):
         return str(hex_color)
     r, g, b = (int(h[i : i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r},{g},{b},{alpha})"

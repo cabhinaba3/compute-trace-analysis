@@ -42,6 +42,9 @@ def main(argv: list[str] | None = None) -> int:
                 runpy.run_path(target[0], run_name="__main__")
         except SystemExit as exc:
             status = exc.code if isinstance(exc.code, int) else 1
+        except Exception as exc:  # keep the trace collected up to the crash
+            print(f"cta profile: target raised {type(exc).__name__}: {exc}", file=sys.stderr)
+            status = 1
     print(f"wrote {out}", file=sys.stderr)
     return status
 

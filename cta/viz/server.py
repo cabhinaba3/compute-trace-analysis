@@ -69,19 +69,20 @@ class LiveSession:
             if f in self._cache:
                 self._cache.move_to_end(f)
                 return self._cache[f]
-            groups = tuple(g for g in self.base.groups if f.labels is None or g.label in f.labels)
-            if not groups:
-                raise ValueError("no group selected")
-            n = self.choices["nsteps"]
-            new_cfg = replace(
-                cfg, ranks=f.ranks if f.ranks is not None else cfg.ranks, devices=f.devices if f.devices is not None else cfg.devices,
-                warmup_steps=cfg.warmup_steps + lo, max_steps=(hi - lo) if hi < n else cfg.max_steps,
-            )  # fmt: skip
-            rep = run_comparison(groups, new_cfg)
+        groups = tuple(g for g in self.base.groups if f.labels is None or g.label in f.labels)
+        if not groups:
+            raise ValueError("no group selected")
+        n = self.choices["nsteps"]
+        new_cfg = replace(
+            cfg, ranks=f.ranks if f.ranks is not None else cfg.ranks, devices=f.devices if f.devices is not None else cfg.devices,
+            warmup_steps=cfg.warmup_steps + lo, max_steps=(hi - lo) if hi < n else cfg.max_steps,
+        )  # fmt: skip
+        rep = run_comparison(groups, new_cfg)  # heavy: runs outside the lock so other cards are not serialized
+        with self._lock:
             self._cache[f] = rep
             while len(self._cache) > 8:
                 self._cache.popitem(last=False)
-            return rep
+        return rep
 
     def plot(self, card: Card, f: Filters) -> dict[str, Any]:
         try:

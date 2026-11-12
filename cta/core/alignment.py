@@ -28,8 +28,12 @@ def demangle_unique(names: Iterable[str]) -> dict[str, str]:
                 check=True,
                 timeout=5,
             )
-            for src, dst in zip(mangled, proc.stdout.splitlines(), strict=False):
-                resolved[src] = dst.strip() or src
+            lines = proc.stdout.split("\n")
+            if lines and lines[-1] == "":
+                lines.pop()
+            if len(lines) == len(mangled):
+                for src, dst in zip(mangled, lines, strict=True):
+                    resolved[src] = dst.strip() or src
         except (subprocess.SubprocessError, OSError):
             pass
     return resolved
@@ -84,7 +88,7 @@ def op_family_expr(col: str = "name") -> pl.Expr:
         .then(pl.lit("Embedding"))
         .when(c.str.contains(r"reduce|triton_red|devicescan|\bscan\b"))
         .then(pl.lit("Reduction"))
-        .when(c.str.contains(r"relu|gelu|silu|swish|elementwise|vectorized_elementwise|add|mul|cast|copy"))
+        .when(c.str.contains(r"relu|gelu|silu|swish|elementwise|vectorized_elementwise|(?:^|[^a-z])(?:add|mul|cast|copy)(?:[^a-z]|$)"))
         .then(pl.lit("Elementwise"))
         .otherwise(pl.lit("Other"))
     )
