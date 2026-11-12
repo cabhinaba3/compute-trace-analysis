@@ -1,3 +1,13 @@
 .venv/
 __pycache__/
-compute_trace_analysis.egg-info/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.cta_cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store

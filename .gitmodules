@@ -1,0 +1,3 @@
+[submodule "third_party/chakra"]
+	path = third_party/chakra
+	url = https://github.com/mlcommons/chakra.git
