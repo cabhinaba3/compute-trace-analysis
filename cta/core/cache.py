@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from cta.core.models import TraceArtifact
 from cta.core.registry import TraceAdapter
 
 _FULL_HASH_LIMIT = 4 * 1024 * 1024  # 4 MiB
+_INTERIOR_SAMPLES = 14
 _SAMPLE_CHUNK = 64 * 1024  # 64 KiB head + tail for multi-GB files
 
 
@@ -26,6 +28,10 @@ def compute_artifact_digest(artifact: TraceArtifact, adapter_version: str) -> st
                     hasher.update(chunk)
             else:
                 hasher.update(fh.read(_SAMPLE_CHUNK))
+                # evenly spaced interior samples so in-place edits in the middle are (probably) noticed
+                for i in range(1, _INTERIOR_SAMPLES + 1):
+                    fh.seek(st.st_size * i // (_INTERIOR_SAMPLES + 1))
+                    hasher.update(fh.read(_SAMPLE_CHUNK))
                 fh.seek(max(0, st.st_size - _SAMPLE_CHUNK))
                 hasher.update(fh.read(_SAMPLE_CHUNK))
     return hasher.hexdigest()
@@ -43,9 +49,12 @@ class CacheStore:
         target = self.entry_dir(digest)
         meta_file = target / "_meta.json"
         if meta_file.exists():
-            meta = json.loads(meta_file.read_text())
-            paths = {k: target / v for k, v in meta["tables"].items()}
-            if all(p.exists() for p in paths.values()):
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                paths = {k: target / v for k, v in meta["tables"].items()}
+            except (ValueError, KeyError, AttributeError, OSError):
+                paths = {}  # truncated/corrupt metadata: re-ingest
+            if paths and all(p.exists() for p in paths.values()):
                 return paths
 
         target.mkdir(parents=True, exist_ok=True)
@@ -59,7 +68,8 @@ class CacheStore:
             rel_tables[name] = dst.name
             final_paths[name] = dst
 
-        meta_file.write_text(
+        tmp_meta = meta_file.with_name(f"_meta.json.tmp.{os.getpid()}")
+        tmp_meta.write_text(
             json.dumps(
                 {
                     "format": artifact.format,
@@ -69,8 +79,10 @@ class CacheStore:
                     "tables": rel_tables,
                 },
                 indent=2,
-            )
+            ),
+            encoding="utf-8",
         )
+        tmp_meta.replace(meta_file)
         return final_paths
 
     def write_parquet(self, df: pl.DataFrame, dst: Path) -> Path:

@@ -32,6 +32,14 @@ def missing_gate_metrics(aspects: dict[str, AspectResult], gates: dict[str, floa
     return sorted(set(gates) - known)
 
 
+_HIGHER_IS_BETTER_TERMS = ("throughput", "tflops", "per_s", "per_joule", "qps", "flops", "bandwidth", "util")
+
+
+def _higher_is_better(metric: str) -> bool:
+    low = metric.lower()
+    return any(t in low for t in _HIGHER_IS_BETTER_TERMS)
+
+
 def evaluate_gates(aspects: dict[str, AspectResult], gates: dict[str, float]) -> list[RegressionViolation]:
     if not gates:
         return []
@@ -46,6 +54,10 @@ def evaluate_gates(aspects: dict[str, AspectResult], gates: dict[str, float]) ->
                 continue
             thresh = gates[metric]
             obs = float(row["delta_pct"] or 0.0)
+            if _higher_is_better(metric):
+                # a drop in a throughput/efficiency metric is the regression; normalise so the
+                # threshold always means "allowed regression in %"
+                obs = -obs
             violated = (thresh >= 0 and obs > thresh) or (thresh < 0 and obs < thresh)
             if violated:
                 violations.append(
@@ -84,8 +96,6 @@ def _classify_regime(shares: dict[str, float]) -> str:
     if not core:
         return max(shares.items(), key=lambda kv: kv[1])[0]
     dominant, val = max(core.items(), key=lambda kv: kv[1])
-    if dominant == "Compute" and shares.get("Memory-BW", 0.0) > val:
-        return "Memory-BW-Bound"
     return f"{dominant}-Dominated" if val >= 0.35 else "Mixed-Bottleneck"
 
 

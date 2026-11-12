@@ -166,7 +166,7 @@ def solve_distributed_dag(nodes: pl.DataFrame, edges: pl.DataFrame) -> DagStats:
     return DagStats(
         num_nodes=n_total,
         num_edges=m,
-        dag_depth=int(depth[sink]),
+        dag_depth=int(np.max(depth)),
         critical_path_ns=makespan,
         cp_compute_ns=cp_comp,
         cp_exposed_comm_ns=cp_comm,

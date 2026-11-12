@@ -108,7 +108,7 @@ def _count_bundle_queries(tmap: dict[str, Path], warmup_steps: int, max_steps: i
             sdf = pl.read_parquet(tmap[key])
             # one query per step; with several ranks/reports count the steps of a single rank, not their sum
             total = int(sdf.group_by("rank").len()["len"].to_numpy().max()) if "rank" in sdf.columns and sdf.height else sdf.height
-            n = max(0, total - warmup_steps) if total > warmup_steps else total
+            n = max(0, total - warmup_steps)
             return min(n, max_steps) if max_steps is not None else n
     return 0
 
@@ -151,8 +151,13 @@ class SystemEnergyAspect:
                 sdf = pl.read_parquet(tmap["jtop.samples"])
                 if sdf.is_empty():
                     continue
-                tot_e = float(sdf["cum_energy_j"].to_numpy()[-1])
-                span_s = float(sdf["elapsed_s"].to_numpy()[-1] - sdf["elapsed_s"].to_numpy()[0])
+                # one telemetry file per device: energies add, the run lasts as long as the longest device
+                per_dev = sdf.group_by("device", maintain_order=True).agg(
+                    pl.col("cum_energy_j").last().alias("e"),
+                    (pl.col("elapsed_s").last() - pl.col("elapsed_s").first()).alias("span"),
+                )
+                tot_e = float(per_dev["e"].sum())
+                span_s = float(np.max(per_dev["span"].to_numpy()))
                 p_arr = sdf["power_tot_w"].to_numpy()
                 avg_p = (tot_e / span_s) if span_s > 0 else float(np.mean(p_arr))
 

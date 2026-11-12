@@ -5,15 +5,22 @@ from typing import Any
 
 from cta.core.models import ComparisonReport
 
+_TEX_SPECIAL = {
+    "\\": "\\textbackslash{}",
+    "{": "\\{",
+    "}": "\\}",
+    "$": "\\$",
+    "&": "\\&",
+    "#": "\\#",
+    "^": "\\textasciicircum{}",
+    "_": "\\_",
+    "~": "\\textasciitilde{}",
+    "%": "\\%",
+}
+
 
 def _tex_escape(val: str) -> str:
-    return (
-        val.replace("\\", "\\textbackslash{}")
-        .replace("_", "\\_")
-        .replace("%", "\\%")
-        .replace("&", "\\&")
-        .replace("#", "\\#")
-    )
+    return "".join(_TEX_SPECIAL.get(ch, ch) for ch in val)
 
 
 def export_latex(
@@ -72,5 +79,5 @@ def export_latex(
     content = "\n\n".join(blocks)
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
+        path.write_text(content, encoding="utf-8")
     return content

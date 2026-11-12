@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -204,9 +205,19 @@ def run_jtop(command: Sequence[str], out_dir: Path, name: str, *, interval: floa
     samples: list[dict[str, Any]] = []
     with jtop(interval=interval) as jetson:
         proc = subprocess.Popen(list(command))
-        while proc.poll() is None and jetson.ok():
-            samples.append({k: _jsonable(v) for k, v in dict(jetson.stats).items()})
-        rc = proc.wait()
+        try:
+            while proc.poll() is None and jetson.ok():
+                samples.append({k: _jsonable(v) for k, v in dict(jetson.stats).items()})
+                time.sleep(interval)
+            rc = proc.wait()
+        except BaseException:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            raise
     out.write_text(json.dumps(samples, indent=1))
     return ProfileResult("jtop", bdir, list(command), rc, [out] if samples else [])
 

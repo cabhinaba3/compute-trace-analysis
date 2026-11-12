@@ -142,7 +142,7 @@ def compare_cmd(
                 cache_dir=cache_dir or Path(".cta_cache"),
                 labels=_csv(labels),
             )
-    except ValueError as exc:  # unknown gate metric, no common formats, inapplicable aspects, ...
+    except (ValueError, FileNotFoundError) as exc:  # unknown gate metric, no common formats, inapplicable aspects, ...
         err_console.print(f"[bold red]error:[/bold red] {exc}")
         raise typer.Exit(code=2) from exc
 
@@ -206,19 +206,23 @@ def analyze_cmd(
     """Analyze and characterize a single trace, glob, or multi-artifact RunBundle directory."""
     from cta.core.engine import analyze as run_analyze_sdk
 
-    report = run_analyze_sdk(
-        trace,
-        aspects=_csv(aspects),
-        warmup_steps=warmup_steps,
-        max_steps=max_steps,
-        collective_algo=collective_algo,
-        alpha=alpha,
-        scope_depth=scope_depth,
-        ranks=[int(r) for r in _csv(ranks) or []],
-        devices=[int(d) for d in _csv(devices) or []],
-        cache_dir=cache_dir,
-        label=label,
-    )
+    try:
+        report = run_analyze_sdk(
+            trace,
+            aspects=_csv(aspects),
+            warmup_steps=warmup_steps,
+            max_steps=max_steps,
+            collective_algo=collective_algo,
+            alpha=alpha,
+            scope_depth=scope_depth,
+            ranks=[int(r) for r in _csv(ranks) or []],
+            devices=[int(d) for d in _csv(devices) or []],
+            cache_dir=cache_dir,
+            label=label,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        err_console.print(f"[bold red]error:[/bold red] {exc}")
+        raise typer.Exit(code=2) from exc
     _emit(report, output, out_dir, export)
 
 
