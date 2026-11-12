@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+title: "CTA: Cross-Platform Multi-Trace and Multi-Aspect Performance Comparison Framework"
+message: "If you use CTA in academic research, please cite this software using the metadata below."
+type: software
+version: "1.0.0"
+date-released: "2026-11-12"
+license: GPL-2.0-only
+repository-code: "https://github.com/cabhinaba3/compute-trace-analysis"
+url: "https://github.com/cabhinaba3/compute-trace-analysis"
+authors:
+  - family-names: Chakraborty
+    given-names: Abhinaba
+    email: abhinabacr4@gmail.com
+keywords:
+  - performance-analysis
+  - profiling
+  - chakra
+  - goal
+  - nsight-systems
+  - nsight-compute
+  - kineto
+  - tensorrt
+  - jetson

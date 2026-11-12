@@ -1,0 +1,28 @@
+# Declarative multi-trial CTA sweep manifest
+# Usage: cta compare --manifest examples/configs/sweep_example.yaml --out-dir reports/
+
+groups:
+  - id: fp16_baseline
+    label: Jetson_Orin_FP16
+    tags:
+      precision: fp16
+      batch_size: 8
+    trials:
+      - ../demo_traces/gpu_bundle_fp16
+
+  - id: int8_fused
+    label: Jetson_Orin_INT8
+    tags:
+      precision: int8
+      batch_size: 8
+    trials:
+      - ../demo_traces/gpu_bundle_int8
+
+config:
+  warmup_steps: 2
+  collective_algo: ring
+  alpha: 0.05
+  gates:
+    mean_step_ms: 5.0
+    p99_step_ms: 8.0
+    energy_per_query_mj: 5.0

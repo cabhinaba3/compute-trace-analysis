@@ -1,0 +1,37 @@
+{
+  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@type": "SoftwareSourceCode",
+  "name": "compute-trace-analysis",
+  "version": "1.0.0",
+  "description": "Cross-platform multi-trace and multi-aspect performance comparison framework for AI/HPC schedules and GPU profilers",
+  "license": "https://spdx.org/licenses/GPL-2.0-only.html",
+  "codeRepository": "https://github.com/cabhinaba3/compute-trace-analysis",
+  "issueTracker": "https://github.com/cabhinaba3/compute-trace-analysis/issues",
+  "programmingLanguage": "Python 3",
+  "runtimePlatform": [
+    "Python >=3.11"
+  ],
+  "operatingSystem": [
+    "macOS",
+    "Linux"
+  ],
+  "author": [
+    {
+      "@type": "Person",
+      "givenName": "Abhinaba",
+      "familyName": "Chakraborty",
+      "email": "abhinabacr4@gmail.com"
+    }
+  ],
+  "keywords": [
+    "profiling",
+    "performance-analysis",
+    "chakra",
+    "goal",
+    "nsight-systems",
+    "nsight-compute",
+    "kineto",
+    "tensorrt",
+    "jetson"
+  ]
+}
