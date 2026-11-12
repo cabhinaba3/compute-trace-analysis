@@ -7,6 +7,7 @@ trace (CTA's --warmup-steps/--max-steps do not apply) and is opt-in: ``--aspects
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import shutil
 import tempfile
@@ -21,10 +22,9 @@ from cta.core.models import AspectResult, CompareConfig, TrialGroup
 from cta.core.registry import register_aspect
 from cta.core.stats import compare_scalar_metrics
 
-try:
-    from hta.trace_analysis import TraceAnalysis
-except ImportError:  # optional dependency: pip install "compute-trace-analysis[hta]"
-    TraceAnalysis = None
+# Optional dependency (pip install "compute-trace-analysis[hta]"). find_spec avoids importing HTA, which drags in
+# pandas and plotly (>1 s), until the aspect actually runs.
+_HTA_AVAILABLE = importlib.util.find_spec("hta") is not None
 
 _METRICS: list[tuple[str, str, bool]] = [
     ("idle_host_wait_us", "us", True),
@@ -58,6 +58,8 @@ def _to_polars(df: Any) -> pl.DataFrame:
 
 
 def _run_hta(paths: tuple[Path, ...]) -> tuple[dict[str, float], dict[str, pl.DataFrame]]:
+    from hta.trace_analysis import TraceAnalysis
+
     logging.getLogger("hta").setLevel(logging.WARNING)
     with _trace_dir(paths) as tdir:
         ta = TraceAnalysis(trace_dir=tdir)
@@ -90,7 +92,7 @@ def _run_hta(paths: tuple[Path, ...]) -> tuple[dict[str, float], dict[str, pl.Da
     return metrics, details
 
 
-if TraceAnalysis is not None:
+if _HTA_AVAILABLE:
 
     @register_aspect(
         "hta_kineto",

@@ -54,6 +54,10 @@ dependencies = [
 
 [project.optional-dependencies]
 pandas = ["pandas>=2.1.0"]
+ncu = ["ncu-report>=2026.2.0"]  # NVIDIA's native .ncu-rep reader (wheels for macOS, Linux, Windows)
+# NVIDIA nsight-python (git submodule, v1.1.1): kernel-profiling driver. Needs cuda-bindings/cuda-core, which have
+# no macOS wheels, so it is Linux-only.
+profile = ["nsight-python @ {root:uri}/third_party/nsight-python ; sys_platform == 'linux'"]
 hta = ["traceinsight>=0.6.1"]  # Meta Holistic Trace Analysis; enables the opt-in `hta_kineto` aspect
 dev = [
     "pandas>=2.1.0",

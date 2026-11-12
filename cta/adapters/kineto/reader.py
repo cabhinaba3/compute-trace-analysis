@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
-from cta.adapters.nsys.reader import KERNELS_SCHEMA, RUNTIME_SCHEMA, STEPS_SCHEMA
+from cta.adapters.nsys.reader import KERNELS_SCHEMA, RUNTIME_SCHEMA, STEPS_SCHEMA, conform
 from cta.core.alignment import enrich_ops_df
 from cta.core.models import TraceArtifact
 from cta.core.registry import register_adapter
@@ -75,7 +75,10 @@ class KinetoAdapter:
 
                 m_step = _STEP_RE.search(name)
                 if m_step:
-                    step_rows.append((int(m_step.group(1)), start_ns, end_ns))
+                    # PyTorch also emits each step as a `gpu_user_annotation` (the GPU-side projection of the same
+                    # step); counting it would add a second, differently-timed step with the same id.
+                    if cat != "gpu_user_annotation":
+                        step_rows.append((int(m_step.group(1)), start_ns, end_ns))
                     continue
 
                 if cat in ("cpu_op", "operator", "user_annotation"):
@@ -150,21 +153,19 @@ class KinetoAdapter:
                 s_idx = np.searchsorted(s_beg, k_starts, side="right") - 1
                 valid = (s_idx >= 0) & (k_starts <= s_end[np.maximum(0, s_idx)])
                 step_col = np.where(valid, s_ids[np.maximum(0, s_idx)], -1).astype(np.int32)
-                steps_df = pl.DataFrame(
-                    {"step": s_ids, "start_ns": s_beg, "end_ns": s_end, "duration_ns": s_end - s_beg},
-                    schema=STEPS_SCHEMA,
+                steps_df = conform(
+                    pl.DataFrame({"step": s_ids, "start_ns": s_beg, "end_ns": s_end, "duration_ns": s_end - s_beg}),
+                    STEPS_SCHEMA,
                 )
             else:
                 step_col = np.zeros(kdf.height, dtype=np.int32)
                 s0 = int(kdf["start_ns"].to_numpy().min())
                 e0 = int(kdf["end_ns"].to_numpy().max())
-                steps_df = pl.DataFrame(
-                    [{"step": 0, "start_ns": s0, "end_ns": e0, "duration_ns": e0 - s0}],
-                    schema=STEPS_SCHEMA,
+                steps_df = conform(
+                    pl.DataFrame([{"step": 0, "start_ns": s0, "end_ns": e0, "duration_ns": e0 - s0}]),
+                    STEPS_SCHEMA,
                 )
-            kernels_df = kdf.with_columns(pl.Series("step", step_col, dtype=pl.Int32)).select(
-                list(KERNELS_SCHEMA.keys())
-            ).cast(KERNELS_SCHEMA)
+            kernels_df = conform(kdf.with_columns(pl.Series("step", step_col, dtype=pl.Int32)), KERNELS_SCHEMA)
         else:
             kernels_df = pl.DataFrame(schema=KERNELS_SCHEMA)
             steps_df = pl.DataFrame(schema=STEPS_SCHEMA)

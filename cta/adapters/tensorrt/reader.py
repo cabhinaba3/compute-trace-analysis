@@ -8,7 +8,7 @@ from typing import Any
 
 import polars as pl
 
-from cta.adapters.nsys.reader import KERNELS_SCHEMA, STEPS_SCHEMA
+from cta.adapters.nsys.reader import KERNELS_SCHEMA, STEPS_SCHEMA, conform
 from cta.core.alignment import enrich_ops_df
 from cta.core.models import TraceArtifact
 from cta.core.registry import register_adapter
@@ -129,9 +129,9 @@ class TrtTimingAdapter:
                     )
                 step_idx += 1
 
-        steps_df = pl.DataFrame(step_rows, schema=STEPS_SCHEMA) if step_rows else pl.DataFrame(schema=STEPS_SCHEMA)
+        steps_df = conform(pl.DataFrame(step_rows), STEPS_SCHEMA) if step_rows else pl.DataFrame(schema=STEPS_SCHEMA)
         if ev_rows:
-            kernels_df = enrich_ops_df(pl.DataFrame(ev_rows), "name").select(list(KERNELS_SCHEMA.keys())).cast(KERNELS_SCHEMA)
+            kernels_df = conform(enrich_ops_df(pl.DataFrame(ev_rows), "name"), KERNELS_SCHEMA)
         else:
             kernels_df = pl.DataFrame(schema=KERNELS_SCHEMA)
 

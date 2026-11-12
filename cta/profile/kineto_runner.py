@@ -1,0 +1,71 @@
+"""Run a Python script or module under ``torch.profiler`` and write a Chrome/Kineto trace (``.json`` / ``.json.gz``).
+
+    python -m cta.profile.kineto_runner --out trace.json.gz [--step-on optimizer|none] -- script.py [args...]
+    python -m cta.profile.kineto_runner --out trace.json.gz -- -m package.module [args...]
+
+With ``--step-on optimizer`` every ``optimizer.step()`` advances the profiler, producing ``ProfilerStep#N`` ranges that
+CTA uses for warmup slicing and per-step statistics. Without step markers the whole run is one step.
+"""
+
+from __future__ import annotations
+
+import argparse
+import inspect
+import runpy
+import sys
+from pathlib import Path
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", required=True, help="trace file to write (.json or .json.gz)")
+    ap.add_argument("--step-on", choices=("optimizer", "none"), default="optimizer")
+    ap.add_argument("target", nargs=argparse.REMAINDER, help="script.py [args] or -m module [args]")
+    ns = ap.parse_args(argv)
+    target = ns.target[1:] if ns.target[:1] == ["--"] else ns.target
+    if not target:
+        ap.error("nothing to run")
+
+    import torch  # lazy: only needed when profiling
+    from torch.optim.optimizer import (
+        register_optimizer_step_post_hook,  # submodule: not an attribute of torch.optim
+    )
+    from torch.profiler import ProfilerAction, ProfilerActivity, profile
+
+    activities = [ProfilerActivity.CPU]
+    if torch.cuda.is_available():
+        activities.append(ProfilerActivity.CUDA)
+
+    # torch only emits ProfilerStep#N ranges when a schedule is given, so use one that records every step forever.
+    kwargs: dict[str, object] = {}
+    if ns.step_on == "optimizer":
+        kwargs["schedule"] = lambda _step: ProfilerAction.RECORD
+        if "acc_events" in inspect.signature(profile).parameters:  # keep events across steps (torch >= 2.2)
+            kwargs["acc_events"] = True
+
+    handle = None
+    status = 0
+    with profile(activities=activities, **kwargs) as prof:  # type: ignore[arg-type]
+        if ns.step_on == "optimizer":
+            handle = register_optimizer_step_post_hook(lambda *_a, **_k: prof.step())
+        try:
+            if target[0] == "-m":
+                sys.argv = [target[1], *target[2:]]
+                runpy.run_module(target[1], run_name="__main__", alter_sys=True)
+            else:
+                sys.argv = target
+                runpy.run_path(target[0], run_name="__main__")
+        except SystemExit as exc:
+            status = exc.code if isinstance(exc.code, int) else 1
+        finally:
+            if handle is not None:
+                handle.remove()
+    out = Path(ns.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    prof.export_chrome_trace(str(out))
+    print(f"wrote {out}", file=sys.stderr)
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

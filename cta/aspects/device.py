@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -21,24 +22,90 @@ def _slice_steps_and_kernels(
     kernels_df: pl.DataFrame,
     config: CompareConfig,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Apply --warmup-steps/--max-steps per rank (ranks have independent clocks) and keep the matching kernels."""
     if steps_df.is_empty():
         return steps_df, kernels_df
-    ordered = steps_df.sort("start_ns")
-    if config.warmup_steps > 0 and ordered.height > config.warmup_steps:
-        ordered = ordered.slice(config.warmup_steps)
+    ordered = steps_df.sort("rank", "start_ns").with_columns(pl.col("start_ns").cum_count().over("rank").alias("_i"))
+    most = int(ordered["_i"].to_numpy().max())
+    if config.warmup_steps > 0 and most <= config.warmup_steps:
+        warnings.warn(
+            f"--warmup-steps={config.warmup_steps} but a rank has at most {most} step(s) "
+            "(no NVTX step markers?); nothing was skipped.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    elif config.warmup_steps > 0:
+        ordered = ordered.filter(pl.col("_i") > config.warmup_steps)
     if config.max_steps is not None and config.max_steps > 0:
-        ordered = ordered.head(config.max_steps)
+        ordered = ordered.with_columns(pl.col("start_ns").cum_count().over("rank").alias("_j")).filter(
+            pl.col("_j") <= config.max_steps
+        ).drop("_j")
+    ordered = ordered.drop("_i")
 
     if kernels_df.is_empty() or ordered.height == steps_df.height:
         return ordered, kernels_df
 
-    valid_steps = ordered["step"].to_list()
-    w_min = int(ordered["start_ns"].to_numpy().min())
-    w_max = int(ordered["end_ns"].to_numpy().max())
-    filtered_k = kernels_df.filter(
-        pl.col("step").is_in(valid_steps) | ((pl.col("start_ns") >= w_min) & (pl.col("end_ns") <= w_max))
-    )
+    windows = ordered.group_by("rank").agg(pl.col("start_ns").min().alias("_w0"), pl.col("end_ns").max().alias("_w1"))
+    by_step = kernels_df.join(ordered.select("rank", "step").unique().with_columns(pl.lit(True).alias("_ok")), on=["rank", "step"], how="left")
+    by_step = by_step.join(windows, on="rank", how="left")
+    in_window = (pl.col("start_ns") >= pl.col("_w0")) & (pl.col("end_ns") <= pl.col("_w1"))
+    filtered_k = by_step.filter(pl.col("_ok").fill_null(False) | in_window).drop("_ok", "_w0", "_w1")
     return ordered, filtered_k
+
+
+def _gpu_metrics_in_steps(gm: pl.DataFrame, steps_df: pl.DataFrame) -> pl.DataFrame:
+    """Keep only GPU-metric samples inside each rank's step window.
+
+    The sampler runs for the whole capture, so medians over every sample mostly measure idle time before and
+    after the profiled steps. Falls back to all samples when nothing falls inside the window (e.g. sources whose
+    sample timestamps are not on the kernel clock).
+    """
+    if gm.is_empty() or steps_df.is_empty() or "rank" not in gm.columns:
+        return gm
+    wins = steps_df.group_by("rank").agg(pl.col("start_ns").min().alias("_w0"), pl.col("end_ns").max().alias("_w1"))
+    inside = gm.join(wins, on="rank", how="inner").filter(
+        pl.col("timestamp_ns").is_between(pl.col("_w0"), pl.col("_w1"))
+    ).drop("_w0", "_w1")
+    return inside if inside.height else gm
+
+
+def _duration_weighted_mean(df: pl.DataFrame, col: str) -> float | None:
+    """Duration-weighted mean of ``col`` over the rows where it is not null (None if no row has it)."""
+    sub = df.filter(pl.col(col).is_not_null())
+    if sub.is_empty():
+        return None
+    total = float(sub["duration_ns"].sum() or 0.0)
+    if total <= 0:
+        return float(sub[col].mean())  # type: ignore[arg-type]
+    return float((sub[col] * sub["duration_ns"]).sum()) / total
+
+
+def _overlap_per_device(steps_df: pl.DataFrame, kdf: pl.DataFrame) -> tuple[int, int, int, int, int]:
+    """Compute/comm overlap summed over every (rank, device) timeline.
+
+    Each device is its own timeline and each rank has its own clock, so overlap is computed per (rank, device)
+    inside that rank's step window and then summed: (compute_only, comm_only, overlap, idle, window) in ns.
+    """
+    windows = {
+        int(r["rank"]): (int(r["w0"]), int(r["w1"]))
+        for r in steps_df.group_by("rank").agg(pl.col("start_ns").min().alias("w0"), pl.col("end_ns").max().alias("w1")).iter_rows(named=True)
+    }
+    tot = [0, 0, 0, 0, 0]
+    for (rank, _device), sub in kdf.group_by(["rank", "device"], maintain_order=True):
+        w0, w1 = windows.get(int(rank), (None, None))  # type: ignore[call-overload]
+        comp = sub.filter(pl.col("category") == "compute")
+        comm = sub.filter(pl.col("category").is_in(["comm", "memcpy"]))
+        ov = compute_timeline_overlap(
+            comp["start_ns"].to_numpy(),
+            comp["end_ns"].to_numpy(),
+            comm["start_ns"].to_numpy(),
+            comm["end_ns"].to_numpy(),
+            window_start=w0,
+            window_end=w1,
+        )
+        for i, v in enumerate((ov.compute_only_ns, ov.comm_only_ns, ov.overlap_ns, ov.idle_ns, ov.window_ns)):
+            tot[i] += v
+    return tot[0], tot[1], tot[2], tot[3], tot[4]
 
 
 def _pick_timeline_tables(tmap: dict[str, Path]) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
@@ -89,17 +156,19 @@ class LatencyThroughputAspect:
                 if steps_df.is_empty():
                     continue
                 durs_ms = steps_df["duration_ns"].to_numpy().astype(np.float64) / 1e6
-                s_min = float(steps_df["start_ns"].to_numpy().min())
-                s_max = float(steps_df["end_ns"].to_numpy().max())
-                wall_s = max(1e-9, (s_max - s_min) / 1e9)
+                # Ranks have independent clocks: throughput is steps/wall per rank, averaged over ranks.
+                per_rank = steps_df.group_by("rank").agg(
+                    pl.len().alias("n"), (pl.col("end_ns").max() - pl.col("start_ns").min()).alias("wall_ns")
+                )
+                thr = float(np.mean(per_rank["n"].to_numpy() / np.maximum(1e-9, per_rank["wall_ns"].to_numpy() / 1e9)))
 
                 acc["mean_step_ms"].append(float(np.mean(durs_ms)))
                 acc["median_step_ms"].append(float(np.median(durs_ms)))
                 acc["p90_step_ms"].append(float(np.percentile(durs_ms, 90)))
                 acc["p95_step_ms"].append(float(np.percentile(durs_ms, 95)))
                 acc["p99_step_ms"].append(float(np.percentile(durs_ms, 99)))
-                acc["throughput_per_s"].append(float(len(durs_ms) / wall_s))
-                acc["total_steps"].append(float(len(durs_ms)))
+                acc["throughput_per_s"].append(thr)
+                acc["total_steps"].append(float(per_rank["n"].to_numpy().mean()))  # steps per rank
                 rt_ms = float(runtime_df["duration_ns"].to_numpy().sum() / 1e6) if runtime_df.height else 0.0
                 acc["cuda_runtime_ms"].append(rt_ms)
             trials.append(acc)
@@ -279,31 +348,21 @@ class TimelineOverlapAspect:
                 steps_raw, kernels_raw, _ = _pick_timeline_tables(tmap)
                 steps_df, kdf = _slice_steps_and_kernels(steps_raw, kernels_raw, config)
                 if kdf.height:
-                    w_start = int(steps_df["start_ns"].to_numpy().min()) if steps_df.height else None
-                    w_end = int(steps_df["end_ns"].to_numpy().max()) if steps_df.height else None
-                    comp = kdf.filter(pl.col("category") == "compute")
-                    comm = kdf.filter(pl.col("category").is_in(["comm", "memcpy"]))
-                    ov = compute_timeline_overlap(
-                        comp["start_ns"].to_numpy(),
-                        comp["end_ns"].to_numpy(),
-                        comm["start_ns"].to_numpy(),
-                        comm["end_ns"].to_numpy(),
-                        window_start=w_start,
-                        window_end=w_end,
-                    )
-                    acc["compute_only_ms"].append(ov.compute_only_ns / 1e6)
-                    acc["exposed_comm_ms"].append(ov.comm_only_ns / 1e6)
-                    acc["overlapped_comm_ms"].append(ov.overlap_ns / 1e6)
-                    acc["gpu_idle_ms"].append(ov.idle_ns / 1e6)
-                    acc["comm_overlap_pct"].append(ov.comm_overlap_ratio * 100.0)
-                    acc["gpu_busy_pct"].append(ov.gpu_busy_ratio * 100.0)
-                    w_sums["comp"] += ov.compute_total_ns
-                    w_sums["comm"] += ov.comm_only_ns
-                    w_sums["idle"] += ov.idle_ns
-                    w_sums["win"] += ov.window_ns
+                    comp_only, comm_only, overlap, idle, window = _overlap_per_device(steps_df, kdf)
+                    comm_total = comm_only + overlap
+                    acc["compute_only_ms"].append(comp_only / 1e6)
+                    acc["exposed_comm_ms"].append(comm_only / 1e6)
+                    acc["overlapped_comm_ms"].append(overlap / 1e6)
+                    acc["gpu_idle_ms"].append(idle / 1e6)
+                    acc["comm_overlap_pct"].append(overlap / comm_total * 100.0 if comm_total else 0.0)
+                    acc["gpu_busy_pct"].append((window - idle) / window * 100.0 if window else 0.0)
+                    w_sums["comp"] += comp_only + overlap
+                    w_sums["comm"] += comm_only
+                    w_sums["idle"] += idle
+                    w_sums["win"] += window
 
                 if "nsys.gpu_metrics" in tmap:
-                    gm = pl.read_parquet(tmap["nsys.gpu_metrics"])
+                    gm = _gpu_metrics_in_steps(pl.read_parquet(tmap["nsys.gpu_metrics"]), steps_df)
                     if gm.height:
                         for m_key, needle in (
                             ("sm_active_median_pct", "sm"),
@@ -432,6 +491,7 @@ class RooflineDiffAspect:
         scalars: dict[str, dict[str, float]] = {}
         kern_dfs: list[pl.DataFrame] = []
         roof_pts: dict[str, pl.DataFrame] = {}
+        find_pts: dict[str, pl.DataFrame] = {}
 
         for g in groups:
             acc: dict[str, list[float]] = {
@@ -446,27 +506,48 @@ class RooflineDiffAspect:
                 "stall_compute_pct": [],
             }
             group_kdfs: list[pl.DataFrame] = []
+            group_findings: list[pl.DataFrame] = []
             for tmap in tables[g.group_id]:
                 ndf = pl.read_parquet(tmap["ncu.ncu_kernels"])
                 if ndf.is_empty():
                     continue
-                dur = ndf["duration_ns"].to_numpy()
-                tot_ns = float(np.sum(dur)) or 1.0
-                w = dur / tot_ns
-
-                tot_flops = float(np.sum(ndf["flops"].to_numpy()))
-                tot_bytes = float(np.sum(ndf["dram_bytes"].to_numpy()))
+                tot_ns = float(ndf["duration_ns"].sum() or 0.0)
                 acc["total_kernel_us"].append(tot_ns / 1e3)
-                acc["weighted_sm_pct"].append(float(np.sum(w * ndf["sm_throughput_pct"].to_numpy())))
-                acc["weighted_dram_pct"].append(float(np.sum(w * ndf["dram_throughput_pct"].to_numpy())))
-                acc["weighted_tensor_pct"].append(float(np.sum(w * ndf["tensor_pipe_pct"].to_numpy())))
-                acc["weighted_occupancy_pct"].append(float(np.sum(w * ndf["occupancy_pct"].to_numpy())))
-                acc["overall_arith_intensity"].append((tot_flops / tot_bytes) if tot_bytes > 0 else 0.0)
-                acc["achieved_tflops"].append(tot_flops / tot_ns / 1e3)
-                acc["stall_mem_pct"].append(float(np.sum(w * ndf["stall_mem_pct"].to_numpy())))
-                acc["stall_compute_pct"].append(float(np.sum(w * ndf["stall_compute_pct"].to_numpy())))
+                # Missing metrics are null (not 0): average only over kernels that report the metric.
+                for key, col in (
+                    ("weighted_sm_pct", "sm_throughput_pct"),
+                    ("weighted_dram_pct", "dram_throughput_pct"),
+                    ("weighted_tensor_pct", "tensor_pipe_pct"),
+                    ("weighted_occupancy_pct", "occupancy_pct"),
+                    ("stall_mem_pct", "stall_mem_pct"),
+                    ("stall_compute_pct", "stall_compute_pct"),
+                ):
+                    wm = _duration_weighted_mean(ndf, col)
+                    if wm is not None:
+                        acc[key].append(wm)
+                with_flops = ndf.filter(pl.col("flops").is_not_null())
+                if with_flops.height:
+                    flops = float(with_flops["flops"].sum())
+                    dur = float(with_flops["duration_ns"].sum() or 0.0)
+                    both = with_flops.filter(pl.col("dram_bytes").is_not_null() & (pl.col("dram_bytes") > 0))
+                    if both.height:  # AI = total FLOPs / total DRAM bytes of the kernels that have both
+                        acc["overall_arith_intensity"].append(float(both["flops"].sum()) / float(both["dram_bytes"].sum()))
+                    if dur > 0:
+                        acc["achieved_tflops"].append(flops / dur / 1e3)
                 group_kdfs.append(ndf)
+                if "ncu.ncu_findings" in tmap:
+                    fdf = pl.read_parquet(tmap["ncu.ncu_findings"])
+                    if fdf.height:
+                        group_findings.append(fdf)
 
+            if group_findings:  # NCU's own guided-analysis rules, summarised per rule (report-based inputs only)
+                find_pts[f"findings_{g.label}"] = (
+                    pl.concat(group_findings)
+                    .filter(pl.col("level").is_in(["warning", "optimization", "error"]))
+                    .group_by(["rule", "title", "level"])
+                    .agg(pl.len().alias("kernels"), pl.col("speedup_pct").max().alias("max_speedup_pct"))
+                    .sort("kernels", descending=True)
+                )
             trials.append(acc)
             sm_m = float(np.mean(acc["weighted_sm_pct"])) if acc["weighted_sm_pct"] else 0.0
             dr_m = float(np.mean(acc["weighted_dram_pct"])) if acc["weighted_dram_pct"] else 0.0
@@ -478,12 +559,25 @@ class RooflineDiffAspect:
 
             if group_kdfs:
                 cat_df = pl.concat(group_kdfs)
-                roof_pts[f"roofline_{g.label}"] = cat_df.group_by(["canonical_name", "op_family"]).agg(
-                    (pl.col("duration_ns").sum() / 1e3).alias("duration_us"),
-                    pl.col("arith_intensity").mean(),
-                    pl.col("achieved_tflops").mean(),
-                    pl.col("sm_throughput_pct").mean(),
-                    pl.col("dram_throughput_pct").mean(),
+                roof_pts[f"roofline_{g.label}"] = (
+                    cat_df.group_by(["canonical_name", "op_family"])
+                    .agg(
+                        (pl.col("duration_ns").sum() / 1e3).alias("duration_us"),
+                        pl.col("flops").sum().alias("_flops"),
+                        pl.col("dram_bytes").sum().alias("_bytes"),
+                        pl.col("flops").is_not_null().any().alias("_has_flops"),
+                        pl.col("duration_ns").sum().alias("_dur_ns"),
+                        (pl.col("sm_throughput_pct") * pl.col("duration_ns")).sum().alias("_sm_w"),
+                        (pl.col("dram_throughput_pct") * pl.col("duration_ns")).sum().alias("_dr_w"),
+                    )
+                    .with_columns(
+                        # per-entity aggregates: sum(FLOPs)/sum(bytes) and sum(FLOPs)/sum(time), not means of ratios
+                        pl.when(pl.col("_has_flops") & (pl.col("_bytes") > 0)).then(pl.col("_flops") / pl.col("_bytes")).alias("arith_intensity"),
+                        pl.when(pl.col("_has_flops") & (pl.col("_dur_ns") > 0)).then(pl.col("_flops") / pl.col("_dur_ns") / 1e3).alias("achieved_tflops"),
+                        (pl.col("_sm_w") / pl.col("_dur_ns")).alias("sm_throughput_pct"),
+                        (pl.col("_dr_w") / pl.col("_dur_ns")).alias("dram_throughput_pct"),
+                    )
+                    .select("canonical_name", "op_family", "duration_us", "arith_intensity", "achieved_tflops", "sm_throughput_pct", "dram_throughput_pct")
                 )
                 kern_dfs.append(roof_pts[f"roofline_{g.label}"].select("canonical_name", "duration_us"))
             else:
@@ -508,5 +602,6 @@ class RooflineDiffAspect:
         details = {
             "by_kernel": compare_entity_tables(labels, kern_dfs, key_col="canonical_name", val_col="duration_us"),
             **roof_pts,
+            **find_pts,
         }
         return AspectResult(name=self.name, title=self.title, summary=summary, details=details, scalars=scalars)

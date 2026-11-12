@@ -106,7 +106,9 @@ def _count_bundle_queries(tmap: dict[str, Path], warmup_steps: int, max_steps: i
         key = f"{fmt}.steps"
         if key in tmap:
             sdf = pl.read_parquet(tmap[key])
-            n = max(0, sdf.height - warmup_steps) if sdf.height > warmup_steps else sdf.height
+            # one query per step; with several ranks/reports count the steps of a single rank, not their sum
+            total = int(sdf.group_by("rank").len()["len"].to_numpy().max()) if "rank" in sdf.columns and sdf.height else sdf.height
+            n = max(0, total - warmup_steps) if total > warmup_steps else total
             return min(n, max_steps) if max_steps is not None else n
     return 0
 

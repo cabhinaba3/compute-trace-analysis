@@ -9,13 +9,8 @@ from typing import Any
 
 import numpy as np
 
-from cta.adapters.chakra.schema import (
-    COMM_COLL_NODE,
-    COMP_NODE,
-    GlobalMetadataMsg,
-    NodeMsg,
-    encode_varint,
-)
+from cta.adapters.chakra import schema as chakra_schema
+from cta.adapters.chakra.schema import COMM_COLL_NODE, COMP_NODE, encode_varint
 from cta.adapters.goal.reader import (
     GOAL_BIN_NODE_DTYPE,
     GOAL_MAGIC_COOKIE,
@@ -43,6 +38,8 @@ def write_chakra_et_run(
     straggler_factor: float = 1.0,
 ) -> list[Path]:
     """Write `world_size` valid MLCommons Chakra `.et` binary protobuf shards."""
+    NodeMsg = chakra_schema.NodeMsg  # lazy: loads the protobuf module only when .et files are written
+    GlobalMetadataMsg = chakra_schema.GlobalMetadataMsg
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
 

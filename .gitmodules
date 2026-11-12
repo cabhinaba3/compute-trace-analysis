@@ -1,3 +1,6 @@
 [submodule "third_party/chakra"]
 	path = third_party/chakra
 	url = https://github.com/mlcommons/chakra.git
+[submodule "third_party/nsight-python"]
+	path = third_party/nsight-python
+	url = https://github.com/NVIDIA/nsight-python.git

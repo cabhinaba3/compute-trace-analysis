@@ -4,7 +4,6 @@ import math
 
 import numpy as np
 import polars as pl
-from scipy import stats as sp_stats
 
 
 def _trial_summary(vals: list[float]) -> tuple[float, float, float, float, float]:
@@ -14,7 +13,11 @@ def _trial_summary(vals: list[float]) -> tuple[float, float, float, float, float
     n = len(arr)
     mean = float(np.mean(arr))
     std = float(np.std(arr, ddof=1)) if n > 1 else 0.0
-    ci95 = float(sp_stats.t.ppf(0.975, df=n - 1) * std / math.sqrt(n)) if n > 1 else 0.0
+    ci95 = 0.0
+    if n > 1:
+        from scipy import stats as sp_stats  # lazy: scipy.stats costs >1 s to import
+
+        ci95 = float(sp_stats.t.ppf(0.975, df=n - 1) * std / math.sqrt(n))
     q25, q50, q75 = np.percentile(arr, [25.0, 50.0, 75.0])
     return (mean, std, ci95, float(q50), float(q75 - q25))
 
@@ -22,6 +25,8 @@ def _trial_summary(vals: list[float]) -> tuple[float, float, float, float, float
 def _hypothesis_stats(base: list[float], cand: list[float], alpha: float) -> tuple[float | None, float | None, float | None, bool]:
     if len(base) < 2 or len(cand) < 2:
         return (None, None, None, False)
+    from scipy import stats as sp_stats  # lazy: scipy.stats costs >1 s to import
+
     b = np.asarray(base, dtype=np.float64)
     c = np.asarray(cand, dtype=np.float64)
     b_var, c_var = np.var(b, ddof=1), np.var(c, ddof=1)
