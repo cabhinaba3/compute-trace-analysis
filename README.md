@@ -90,10 +90,11 @@ Supported plot kinds: `breakdown`, `topk` (alias `tornado`), `traffic_delta`, `s
 cta profile nsys    --analyze -- python train.py                 # Nsight Systems: .nsys-rep + .sqlite export
 cta profile ncu     --launch-count 50 -- python train.py         # Nsight Compute (needs counter access): .ncu-rep
 cta profile kineto  --analyze -- python train.py                 # torch.profiler Chrome trace; each optimizer.step() = a ProfilerStep
+cta profile jax     --analyze -- python train.py                 # jax.profiler (XProf) log dir; mark steps with StepTraceAnnotation
 cta profile trtexec -- --loadEngine=model.plan --iterations=200  # TensorRT: --exportTimes/Profile/LayerInfo are added
 cta profile jtop    -- python infer.py                           # Jetson power & utilisation sampled while it runs
 ```
-Each command writes `profiles/<name>/` (override with `-o`/`--name`), which `cta analyze profiles/<name>` reads. The tools do the profiling; CTA only runs them with the flags its adapters need (`nsys`/`ncu` must be on `PATH`, or set `NSYS_PATH`/`NCU_PATH`; `trtexec` via `TRTEXEC_PATH`; `jtop` needs `sudo pip install jetson-stats`). `nsight-python` (the `[profile]` extra, Linux only) is for annotating kernels inside your own Python code; `cta profile ncu` reuses its `ncu` flag defaults (flush caches, do not lock clocks) but works on any command.
+Each command writes `profiles/<name>/` (override with `-o`/`--name`), which `cta analyze profiles/<name>` reads. The tools do the profiling; CTA only runs them with the flags its adapters need (`nsys`/`ncu` must be on `PATH`, or set `NSYS_PATH`/`NCU_PATH`; `trtexec` via `TRTEXEC_PATH`; `jtop` needs `sudo pip install jetson-stats`). JAX `*.xplane.pb` files are converted with `xprof` (`pip install cta[jax]`); the Chrome-format `trace.json.gz` next to them needs nothing extra. `nsight-python` (the `[profile]` extra, Linux only) is for annotating kernels inside your own Python code; `cta profile ncu` reuses its `ncu` flag defaults (flush caches, do not lock clocks) but works on any command.
 
 ---
 
@@ -170,12 +171,12 @@ class CustomMetric:
 ```text
 cta/
   core/          Canonical schemas, BLAKE2b Parquet cache, CSR DAG & sweep-line engines, stats, diagnosis
-  adapters/      Format readers: chakra/, goal/, nsys/, kineto/, ncu/, tensorrt/, jtop/
+  adapters/      Format readers: chakra/, goal/, nsys/, kineto/, jax/, ncu/, tensorrt/, jtop/
   aspects/       Comparison aspects: distributed.py, device.py, edge.py
   exporters/     Rich terminal, Markdown, LaTeX booktabs, CSV/JSON bundle exporters
   viz/           Okabe-Ito Type-42 Matplotlib publication figure suite
   synth/         Deterministic synthetic trace generators for all 7 ecosystems
-  profile/       Thin runners for nsys, ncu, torch.profiler, trtexec and jtop (`cta profile`)
+  profile/       Thin runners for nsys, ncu, torch.profiler, jax.profiler, trtexec and jtop (`cta profile`)
   cli/           Typer CLI (`cta compare`, `analyze`, `profile`, `equiv`, `plot`, `inspect`, `list`, `synth`, `cache`)
 examples/        Runnable SDK quickstarts and declarative sweep YAML manifest
 tests/           Unit and end-to-end integration test suites

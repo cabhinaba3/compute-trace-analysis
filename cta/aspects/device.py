@@ -13,8 +13,8 @@ from cta.core.models import AspectResult, CompareConfig, TrialGroup
 from cta.core.registry import register_aspect
 from cta.core.stats import compare_entity_tables, compare_scalar_metrics
 
-_TIMELINE_FORMATS = ("nsys", "kineto", "trtexec_timing")
-_KERNEL_FORMATS = ("nsys", "kineto")
+_TIMELINE_FORMATS = ("nsys", "kineto", "jax", "trtexec_timing")
+_KERNEL_FORMATS = ("nsys", "kineto", "jax")
 
 
 def _slice_steps_and_kernels(
@@ -237,7 +237,7 @@ class KernelDiffAspect:
             }
             t_fam, t_kern, t_scope = [], [], []
             for tmap in tables[g.group_id]:
-                fmt = "nsys" if "nsys.kernels" in tmap else "kineto"
+                fmt = next(f for f in _KERNEL_FORMATS if f"{f}.kernels" in tmap)
                 steps_raw = pl.read_parquet(tmap[f"{fmt}.steps"])
                 kernels_raw = pl.read_parquet(tmap[f"{fmt}.kernels"])
                 _, kdf = _slice_steps_and_kernels(steps_raw, kernels_raw, config)

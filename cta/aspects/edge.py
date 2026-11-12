@@ -102,7 +102,7 @@ class LayerFusionAspect:
 
 
 def _count_bundle_queries(tmap: dict[str, Path], warmup_steps: int, max_steps: int | None) -> int:
-    for fmt in ("trtexec_timing", "nsys", "kineto"):
+    for fmt in ("trtexec_timing", "nsys", "kineto", "jax"):
         key = f"{fmt}.steps"
         if key in tmap:
             sdf = pl.read_parquet(tmap[key])

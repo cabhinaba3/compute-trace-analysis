@@ -18,6 +18,7 @@ from cta.core.intervals import assign_ranges, build_thread_ranges, range_paths
 from cta.core.models import TraceArtifact
 from cta.core.registry import register_adapter
 
+_XPROF_HEAD = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
 _STEP_RE = re.compile(r"profilerstep#\s*(\d+)", re.IGNORECASE)
 
 
@@ -42,7 +43,10 @@ class KinetoAdapter:
         if not (name_low.endswith(".json") or name_low.endswith(".json.gz")):
             return False
         head = _open_text_head(path)
+        if _XPROF_HEAD.match(head.lstrip()):  # JAX/XProf traces (displayTimeUnit "ns") belong to the jax adapter
+            return False
         return '"traceEvents"' in head
+
     def ingest(self, artifact: TraceArtifact, out_dir: Path) -> dict[str, Path]:
         """Ingest every shard of the artifact (one trace per rank). Each shard keeps its own clock and rank."""
         kernel_frames: list[pl.DataFrame] = []

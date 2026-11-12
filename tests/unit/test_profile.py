@@ -51,6 +51,9 @@ def test_command_construction() -> None:
     assert "--set" not in ncu_m and ncu_m[ncu_m.index("--metrics") + 1] == "m1,m2"
     trt = runners.trtexec_command(["--loadEngine=m.plan"], Path("b"))
     assert any(a.startswith("--exportTimes=") for a in trt) and "--profilingVerbosity=detailed" in trt
+    j = runners.jax_command(["python", "train.py", "--lr", "1"], Path("logdir"))
+    assert j[1:3] == ["-m", "cta.profile.jax_runner"] and j[-3:] == ["train.py", "--lr", "1"] and "--no-perfetto" not in j
+    assert "--no-perfetto" in runners.jax_command(["train.py"], Path("logdir"), perfetto=False)
     k = runners.kineto_command(["python", "train.py", "--lr", "1"], Path("t.json.gz"), step_on="optimizer")
     assert k[1:3] == ["-m", "cta.profile.kineto_runner"] and k[-3:] == ["train.py", "--lr", "1"] and "python" not in k[-4:]
 

@@ -26,7 +26,7 @@ app = typer.Typer(
 cache_app = typer.Typer(help="Manage the content-addressed Parquet trace cache.")
 app.add_typer(cache_app, name="cache")
 profile_app = typer.Typer(
-    help="Collect a profile with the vendor tool (nsys, ncu, kineto, trtexec, jtop) in a form `cta analyze` reads.",
+    help="Collect a profile with the vendor tool (nsys, ncu, kineto, jax, trtexec, jtop) in a form `cta analyze` reads.",
     no_args_is_help=True,
 )
 app.add_typer(profile_app, name="profile")
@@ -425,6 +425,20 @@ def profile_kineto(
     from cta.profile.runners import run_kineto
 
     _run_profile(ctx, "kineto", lambda cmd, n: run_kineto(cmd, out_dir, n, step_on=step_on), name, analyze)
+
+
+@profile_app.command("jax", context_settings=_PROFILE_CTX)
+def profile_jax(
+    ctx: typer.Context,
+    out_dir: _OutDir = Path("profiles"),
+    name: _Name = None,
+    perfetto: Annotated[bool, typer.Option(help="Also write a Chrome-format trace (readable without xprof).")] = True,
+    analyze: _Analyze = False,
+) -> None:
+    """JAX profiler (XProf): `cta profile jax -- python train.py` or `-- -m package.module`."""
+    from cta.profile.runners import run_jax
+
+    _run_profile(ctx, "jax", lambda cmd, n: run_jax(cmd, out_dir, n, perfetto=perfetto), name, analyze)
 
 
 @profile_app.command("trtexec", context_settings=_PROFILE_CTX)
