@@ -20,7 +20,7 @@ groups:
 
 config:
   warmup_steps: 2
-  collective_algo: ring
+  collective_algorithm: ring
   alpha: 0.05
   gates:
     mean_step_ms: 5.0

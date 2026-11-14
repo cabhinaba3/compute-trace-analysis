@@ -71,7 +71,7 @@ Gates fail the run (exit code 2) when a metric's `delta_pct` exceeds the thresho
 
 ### 3. Verify Chakra-ET $\leftrightarrow$ GOAL schedule equivalence
 ```bash
-cta equiv demo_traces/chakra_ring demo_traces/goal/ring.bin --collective-algo ring --rel-tol 0.02
+cta verify-equivalence demo_traces/chakra_ring demo_traces/goal/ring.bin --collective-algorithm ring --rel-tol 0.02
 ```
 
 ### 4. Plots: static figures, interactive HTML, one dashboard
@@ -143,7 +143,11 @@ report.to_latex("tables/kineto_diff.tex")
 report.plot(kind="tornado", path="figures/kernel_tornado.pdf")
 
 # 4. Validate Chakra-ET to GOAL lowering fidelity
-verdict = cta.equiv("demo_traces/chakra_ring", "demo_traces/goal/ring.goal", collective_algo="ring")
+verdict = cta.verify_chakra_goal_equivalence(
+    "demo_traces/chakra_ring",
+    "demo_traces/goal/ring.goal",
+    collective_algorithm="ring",
+)
 assert verdict.equivalent
 ```
 
@@ -154,29 +158,37 @@ assert verdict.equivalent
 Third-party formats and comparison aspects register via decorators in [`cta/core/registry.py`](cta/core/registry.py), either in your own module or through the `cta.plugins` entry-point group. Run `cta list` to see what is registered.
 
 ```python
-from pathlib import Path
+import pathlib
 
 import polars as pl
-from cta import AspectResult, CompareConfig, TraceArtifact, TrialGroup, register_adapter, register_aspect
+
+import cta
 
 
-@register_adapter("custom_log")
+@cta.register_adapter("custom_log")
 class CustomAdapter:
-    def detect(self, path: Path) -> bool:
+    def detect(self, path: pathlib.Path) -> bool:
         return path.suffix == ".clog"
 
-    def ingest(self, artifact: TraceArtifact, out_dir: Path) -> dict[str, Path]:
+    def ingest(
+        self, artifact: cta.TraceArtifact, out_dir: pathlib.Path
+    ) -> dict[str, pathlib.Path]:
         # Write each normalized table as Parquet and return {table_name: path}.
-        dst = out_dir / "steps.parquet"
-        pl.read_csv(artifact.paths[0]).write_parquet(dst)
-        return {"steps": dst}
+        steps_path = out_dir / "steps.parquet"
+        pl.read_csv(artifact.paths[0]).write_parquet(steps_path)
+        return {"steps": steps_path}
 
 
-@register_aspect("custom_metric", title="Custom Metric", required_formats=("custom_log",))
+@cta.register_aspect(
+    "custom_metric", title="Custom Metric", required_formats=("custom_log",)
+)
 class CustomMetric:
     def run(
-        self, groups: tuple[TrialGroup, ...], tables: dict[str, list[dict[str, Path]]], cfg: CompareConfig
-    ) -> AspectResult:
+        self,
+        groups: tuple[cta.TrialGroup, ...],
+        tables: dict[str, list[dict[str, pathlib.Path]]],
+        config: cta.CompareConfig,
+    ) -> cta.AspectResult:
         # tables[group_id][trial_index]["custom_log.steps"] -> Parquet path
         ...
 ```
@@ -189,12 +201,12 @@ class CustomMetric:
 cta/
   core/          Canonical schemas, BLAKE2b Parquet cache, CSR DAG & sweep-line engines, stats, diagnosis
   adapters/      Format readers: chakra/, goal/, nsys/, kineto/, jax/, ncu/, tensorrt/, jtop/
-  aspects/       Comparison aspects: distributed.py, device.py, edge.py
+  aspects/       Comparison aspects: device/ (latency, kernels, timeline, os_runtime, roofline), distributed.py, edge.py, hta.py
   exporters/     Rich terminal, Markdown, LaTeX booktabs, CSV/JSON bundle exporters
   viz/           Plot kinds (registry + typed options), raw-table/SQL data layer, Matplotlib and Plotly renderers, dashboard
-  synth/         Deterministic synthetic trace generators for all 7 ecosystems
+  synth/         Deterministic synthetic trace generators, one module per ecosystem (chakra, goal, nsys, kineto, ncu, tensorrt, jtop)
   profile/       Thin runners for nsys, ncu, torch.profiler, jax.profiler, trtexec and jtop (`cta profile`)
-  cli/           Typer CLI (`cta compare`, `analyze`, `profile`, `equiv`, `plot`, `inspect`, `list`, `synth`, `cache`)
+  cli/           Typer CLI: app.py wires the command modules (`compare`, `analyze`, `verify-equivalence`, `plot`, `synth`, `inspect`, `list`, `profile`, `cache`)
 examples/        Runnable SDK quickstarts and declarative sweep YAML manifest
 tests/           Unit and end-to-end integration test suites
 ```

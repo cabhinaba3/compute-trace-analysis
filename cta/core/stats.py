@@ -1,3 +1,5 @@
+"""Trial statistics and comparison tables for scalar and per-entity metrics."""
+
 from __future__ import annotations
 
 import math
@@ -5,45 +7,178 @@ import math
 import numpy as np
 import polars as pl
 
+# Means closer to zero than this count as zero when dividing by them.
+_NEAR_ZERO = 1e-12
 
-def _trial_summary(vals: list[float]) -> tuple[float, float, float, float, float]:
-    if not vals:
+
+def _trial_summary(
+    values: list[float],
+) -> tuple[float, float, float, float, float]:
+    """Summarises one group's trial values.
+
+    Returns:
+        ``(mean, sample std, 95% CI half-width, median, IQR)``. All zero
+        without values; std and CI are zero for a single value.
+    """
+    if not values:
         return (0.0, 0.0, 0.0, 0.0, 0.0)
-    arr = np.asarray(vals, dtype=np.float64)
-    n = len(arr)
-    mean = float(np.mean(arr))
-    std = float(np.std(arr, ddof=1)) if n > 1 else 0.0
+    samples = np.asarray(values, dtype=np.float64)
+    n = len(samples)
+    mean = float(np.mean(samples))
+    std = float(np.std(samples, ddof=1)) if n > 1 else 0.0
     ci95 = 0.0
     if n > 1:
-        from scipy import stats as sp_stats  # lazy: scipy.stats costs >1 s to import
+        # Lazy: importing scipy.stats costs more than 1 s.
+        from scipy import stats as sp_stats
 
         ci95 = float(sp_stats.t.ppf(0.975, df=n - 1) * std / math.sqrt(n))
-    q25, q50, q75 = np.percentile(arr, [25.0, 50.0, 75.0])
+    q25, q50, q75 = np.percentile(samples, [25.0, 50.0, 75.0])
     return (mean, std, ci95, float(q50), float(q75 - q25))
 
 
-def _hypothesis_stats(base: list[float], cand: list[float], alpha: float) -> tuple[float | None, float | None, float | None, bool]:
-    if len(base) < 2 or len(cand) < 2:
-        return (None, None, None, False)
-    from scipy import stats as sp_stats  # lazy: scipy.stats costs >1 s to import
+def _hypothesis_stats(
+    baseline_values: list[float], candidate_values: list[float], alpha: float
+) -> tuple[float | None, float | None, float | None, bool]:
+    """Tests whether candidate trials differ from baseline trials.
 
-    b = np.asarray(base, dtype=np.float64)
-    c = np.asarray(cand, dtype=np.float64)
-    b_var, c_var = np.var(b, ddof=1), np.var(c, ddof=1)
-    if b_var == 0.0 and c_var == 0.0:
-        same = float(np.mean(b)) == float(np.mean(c))
-        p_val = 1.0 if same else 0.0
-        return (p_val, p_val, 0.0 if same else float("inf"), not same)
-    _, p_welch = sp_stats.ttest_ind(c, b, equal_var=False)
+    Returns:
+        ``(Welch t-test p, Mann-Whitney U p, Cohen's d, significant)``,
+        where significant means the Welch p is below ``alpha``. All None
+        and False with fewer than two trials per side. When neither side
+        varies, both p-values are 1 (equal means, d = 0) or 0 (d = inf).
+    """
+    if len(baseline_values) < 2 or len(candidate_values) < 2:
+        return (None, None, None, False)
+    # Lazy: importing scipy.stats costs more than 1 s.
+    from scipy import stats as sp_stats
+
+    baseline = np.asarray(baseline_values, dtype=np.float64)
+    candidate = np.asarray(candidate_values, dtype=np.float64)
+    baseline_var = np.var(baseline, ddof=1)
+    candidate_var = np.var(candidate, ddof=1)
+    if baseline_var == 0.0 and candidate_var == 0.0:
+        is_same = float(np.mean(baseline)) == float(np.mean(candidate))
+        p_value = 1.0 if is_same else 0.0
+        cohens_d = 0.0 if is_same else float("inf")
+        return (p_value, p_value, cohens_d, not is_same)
+    _, welch_p = sp_stats.ttest_ind(candidate, baseline, equal_var=False)
     try:
-        _, p_mwu = sp_stats.mannwhitneyu(c, b, alternative="two-sided")
+        _, mannwhitney_p = sp_stats.mannwhitneyu(
+            candidate, baseline, alternative="two-sided"
+        )
     except ValueError:
-        p_mwu = 1.0
-    pooled_sd = math.sqrt(((len(b) - 1) * b_var + (len(c) - 1) * c_var) / (len(b) + len(c) - 2))
-    cohens_d = float((np.mean(c) - np.mean(b)) / pooled_sd) if pooled_sd > 0 else 0.0
-    pw = float(p_welch) if not math.isnan(p_welch) else 1.0
-    pm = float(p_mwu) if not math.isnan(p_mwu) else 1.0
-    return (pw, pm, cohens_d, pw < alpha)
+        mannwhitney_p = 1.0
+    pooled_sd = math.sqrt(
+        (
+            (len(baseline) - 1) * baseline_var
+            + (len(candidate) - 1) * candidate_var
+        )
+        / (len(baseline) + len(candidate) - 2)
+    )
+    cohens_d = (
+        float((np.mean(candidate) - np.mean(baseline)) / pooled_sd)
+        if pooled_sd > 0
+        else 0.0
+    )
+    p_welch = float(welch_p) if not math.isnan(welch_p) else 1.0
+    p_mannwhitney = (
+        float(mannwhitney_p) if not math.isnan(mannwhitney_p) else 1.0
+    )
+    return (p_welch, p_mannwhitney, cohens_d, p_welch < alpha)
+
+
+def _single_group_row(
+    metric: str, unit: str, label: str, values: list[float]
+) -> dict[str, object]:
+    """Builds the summary row of one metric for a single group."""
+    mean, std, ci95, median, _ = _trial_summary(values)
+    return {
+        "metric": metric,
+        "unit": unit,
+        label: mean,
+        "std": std,
+        "median": median,
+        "ci95_single": ci95,
+    }
+
+
+def _pair_row(
+    metric: str,
+    unit: str,
+    lower_is_better: bool,
+    baseline_values: list[float],
+    candidate_values: list[float],
+    alpha: float,
+) -> dict[str, object]:
+    """Builds the baseline-vs-candidate row of one metric."""
+    baseline_mean, baseline_std, baseline_ci95, baseline_median, _ = (
+        _trial_summary(baseline_values)
+    )
+    candidate_mean, candidate_std, candidate_ci95, candidate_median, _ = (
+        _trial_summary(candidate_values)
+    )
+    delta = candidate_mean - baseline_mean
+    delta_pct = (
+        (delta / baseline_mean * 100.0)
+        if abs(baseline_mean) > _NEAR_ZERO
+        else 0.0
+    )
+    # Direction-aware: a speedup above 1 means the candidate is better.
+    if lower_is_better:
+        speedup = (
+            (baseline_mean / candidate_mean)
+            if abs(candidate_mean) > _NEAR_ZERO
+            else 1.0
+        )
+    else:
+        speedup = (
+            (candidate_mean / baseline_mean)
+            if abs(baseline_mean) > _NEAR_ZERO
+            else 1.0
+        )
+    p_welch, p_mannwhitney, cohens_d, is_significant = _hypothesis_stats(
+        baseline_values, candidate_values, alpha
+    )
+    return {
+        "metric": metric,
+        "unit": unit,
+        "baseline": baseline_mean,
+        "baseline_std": baseline_std,
+        "baseline_median": baseline_median,
+        "candidate": candidate_mean,
+        "candidate_std": candidate_std,
+        "candidate_median": candidate_median,
+        "delta": delta,
+        "delta_pct": delta_pct,
+        "speedup": speedup,
+        "ci95_baseline": baseline_ci95,
+        "ci95_candidate": candidate_ci95,
+        "p_welch": p_welch,
+        "p_mannwhitney": p_mannwhitney,
+        "cohens_d": cohens_d,
+        "significant": is_significant,
+    }
+
+
+def _multi_group_row(
+    metric: str,
+    unit: str,
+    baseline_mean: float,
+    group_labels: list[str],
+    group_trials: list[dict[str, list[float]]],
+) -> dict[str, object]:
+    """Builds the row of one metric across three or more groups."""
+    row: dict[str, object] = {"metric": metric, "unit": unit}
+    for label, trials in zip(group_labels, group_trials, strict=True):
+        mean, std, _, _, _ = _trial_summary(trials.get(metric, []))
+        row[label] = mean
+        row[f"{label}_std"] = std
+        row[f"{label}_delta_pct"] = (
+            ((mean - baseline_mean) / baseline_mean * 100.0)
+            if abs(baseline_mean) > _NEAR_ZERO
+            else 0.0
+        )
+    return row
 
 
 def compare_scalar_metrics(
@@ -53,121 +188,155 @@ def compare_scalar_metrics(
     *,
     alpha: float = 0.05,
 ) -> pl.DataFrame:
-    """Build a crisp comparison DataFrame for scalar metrics across 2 or N TrialGroups.
+    """Builds a comparison table of scalar metrics across 1, 2 or N groups.
 
-    metrics: [(metric_key, unit, lower_is_better), ...]
+    Metrics without values in any group are skipped.
+
+    Args:
+        metrics: ``(metric name, unit, lower_is_better)`` per metric, in
+            output order.
+        group_labels: Group labels; the first group is the baseline.
+        group_trials: Per group, metric name -> one value per trial.
+        alpha: Significance level of the Welch t-test.
+
+    Returns:
+        One row per metric with ``metric`` and ``unit``, plus:
+
+        - one group: ``<label>`` (the mean), ``std``, ``median`` and
+          ``ci95_single``;
+        - two groups: mean, std and median of ``baseline`` and
+          ``candidate``, ``delta``, ``delta_pct``, a direction-aware
+          ``speedup`` (above 1 means the candidate is better), 95% CIs,
+          Welch and Mann-Whitney p-values, ``cohens_d`` and
+          ``significant``;
+        - more groups: ``<label>``, ``<label>_std`` and
+          ``<label>_delta_pct`` (versus the first group) per group.
+
+        Without rows, an empty frame with ``metric`` and ``unit`` columns.
     """
     rows: list[dict[str, object]] = []
     is_pair = len(group_labels) == 2
 
-    for key, unit, lower_is_better in metrics:
-        base_vals = group_trials[0].get(key, [])
-        if not any(gt.get(key) for gt in group_trials):
+    for metric, unit, lower_is_better in metrics:
+        baseline_values = group_trials[0].get(metric, [])
+        if not any(trials.get(metric) for trials in group_trials):
             continue
-        b_mean, b_std, b_ci, b_med, _ = _trial_summary(base_vals)
         if is_pair:
-            cand_vals = group_trials[1].get(key, [])
-            c_mean, c_std, c_ci, c_med, _ = _trial_summary(cand_vals)
-            delta = c_mean - b_mean
-            delta_pct = (delta / b_mean * 100.0) if abs(b_mean) > 1e-12 else 0.0
-            if lower_is_better:
-                speedup = (b_mean / c_mean) if abs(c_mean) > 1e-12 else 1.0
-            else:
-                speedup = (c_mean / b_mean) if abs(b_mean) > 1e-12 else 1.0
-            pw, pm, d, sig = _hypothesis_stats(base_vals, cand_vals, alpha)
+            candidate_values = group_trials[1].get(metric, [])
             rows.append(
-                {
-                    "metric": key,
-                    "unit": unit,
-                    "baseline": b_mean,
-                    "baseline_std": b_std,
-                    "baseline_median": b_med,
-                    "candidate": c_mean,
-                    "candidate_std": c_std,
-                    "candidate_median": c_med,
-                    "delta": delta,
-                    "delta_pct": delta_pct,
-                    "speedup": speedup,
-                    "ci95_baseline": b_ci,
-                    "ci95_candidate": c_ci,
-                    "p_welch": pw,
-                    "p_mannwhitney": pm,
-                    "cohens_d": d,
-                    "significant": sig,
-                }
+                _pair_row(
+                    metric,
+                    unit,
+                    lower_is_better,
+                    baseline_values,
+                    candidate_values,
+                    alpha,
+                )
             )
         elif len(group_labels) == 1:
-            lbl = group_labels[0]
             rows.append(
-                {
-                    "metric": key,
-                    "unit": unit,
-                    lbl: b_mean,
-                    "std": b_std,
-                    "median": b_med,
-                    "ci95_single": b_ci,
-                }
+                _single_group_row(
+                    metric, unit, group_labels[0], baseline_values
+                )
             )
         else:
-            row: dict[str, object] = {"metric": key, "unit": unit}
-            for lbl, gt in zip(group_labels, group_trials, strict=True):
-                vals = gt.get(key, [])
-                m, s, _, _, _ = _trial_summary(vals)
-                row[lbl] = m
-                row[f"{lbl}_std"] = s
-                row[f"{lbl}_delta_pct"] = ((m - b_mean) / b_mean * 100.0) if abs(b_mean) > 1e-12 else 0.0
-            rows.append(row)
+            baseline_mean = _trial_summary(baseline_values)[0]
+            rows.append(
+                _multi_group_row(
+                    metric, unit, baseline_mean, group_labels, group_trials
+                )
+            )
 
-    return pl.DataFrame(rows) if rows else pl.DataFrame({"metric": [], "unit": []})
+    return (
+        pl.DataFrame(rows) if rows else pl.DataFrame({"metric": [], "unit": []})
+    )
 
 
 def compare_entity_tables(
     group_labels: list[str],
-    group_dfs: list[pl.DataFrame],
+    group_tables: list[pl.DataFrame],
     *,
-    key_col: str,
-    val_col: str,
-    count_col: str | None = None,
+    key_column: str,
+    value_column: str,
+    count_column: str | None = None,
 ) -> pl.DataFrame:
-    """Vectorized outer join comparing per-entity (kernel/family/layer/collective) totals across groups."""
+    """Outer-joins per-entity totals across groups.
+
+    Entities are kernels, op families, layers, collectives and the like.
+    Values missing in a group become 0. With two groups the result gets
+    ``delta``, ``delta_pct`` (100 for an entity new in the candidate) and
+    ``speedup`` = baseline / candidate, sorted by absolute delta; with one
+    group a ``share_pct`` of the total, sorted by value; with more groups
+    it is sorted by the first group's value. All sorts are descending.
+
+    Args:
+        group_labels: Group labels; each names a value column.
+        group_tables: One table per group, in label order.
+        key_column: Column that identifies the entity.
+        value_column: Column with the value to compare.
+        count_column: Optional count column, copied as ``<label>_count`` from
+            the groups that have it.
+
+    Returns:
+        One row per entity: ``key_column``, one value column per group label
+        and the columns above. Only a ``key_column`` column when there is
+        nothing to compare.
+    """
     merged: pl.DataFrame | None = None
-    for idx, (lbl, df) in enumerate(zip(group_labels, group_dfs, strict=True)):
-        cols = [pl.col(key_col), pl.col(val_col).alias(lbl)]
-        if count_col and count_col in df.columns:
-            cols.append(pl.col(count_col).alias(f"{lbl}_count"))
-        sub = df.select(cols)
-        if sub.schema[key_col] == pl.Null:  # an empty group built as pl.DataFrame({key: []}) has no dtype to join on
-            sub = sub.with_columns(pl.col(key_col).cast(pl.String))
-        merged = sub if idx == 0 else merged.join(sub, on=key_col, how="full", coalesce=True)  # type: ignore[union-attr]
+    for label, entities in zip(group_labels, group_tables, strict=True):
+        columns = [pl.col(key_column), pl.col(value_column).alias(label)]
+        if count_column and count_column in entities.columns:
+            columns.append(pl.col(count_column).alias(f"{label}_count"))
+        group_table = entities.select(columns)
+        # An empty group built as pl.DataFrame({key: []}) has no dtype to
+        # join on.
+        if group_table.schema[key_column] == pl.Null:
+            group_table = group_table.with_columns(
+                pl.col(key_column).cast(pl.String)
+            )
+        merged = (
+            group_table
+            if merged is None
+            else merged.join(
+                group_table, on=key_column, how="full", coalesce=True
+            )
+        )
 
     if merged is None or merged.is_empty():
-        return pl.DataFrame({key_col: []})
+        return pl.DataFrame({key_column: []})
 
-    fill_exprs = [pl.col(lbl).fill_null(0.0) for lbl in group_labels]
-    if count_col:
-        fill_exprs.extend(
-            pl.col(f"{lbl}_count").fill_null(0)
-            for lbl in group_labels
-            if f"{lbl}_count" in merged.columns
+    fill_nulls = [pl.col(label).fill_null(0.0) for label in group_labels]
+    if count_column:
+        fill_nulls.extend(
+            pl.col(f"{label}_count").fill_null(0)
+            for label in group_labels
+            if f"{label}_count" in merged.columns
         )
-    merged = merged.with_columns(fill_exprs)
+    merged = merged.with_columns(fill_nulls)
 
     if len(group_labels) == 2:
-        b_col, c_col = pl.col(group_labels[0]), pl.col(group_labels[1])
+        baseline = pl.col(group_labels[0])
+        candidate = pl.col(group_labels[1])
         merged = merged.with_columns(
-            (c_col - b_col).alias("delta"),
-            pl.when(b_col.abs() > 1e-12)
-            .then((c_col - b_col) / b_col * 100.0)
-            .otherwise(pl.when(c_col > 0).then(100.0).otherwise(0.0))
+            (candidate - baseline).alias("delta"),
+            pl.when(baseline.abs() > _NEAR_ZERO)
+            .then((candidate - baseline) / baseline * 100.0)
+            .otherwise(pl.when(candidate > 0).then(100.0).otherwise(0.0))
             .alias("delta_pct"),
-            pl.when(c_col.abs() > 1e-12).then(b_col / c_col).otherwise(1.0).alias("speedup"),
+            pl.when(candidate.abs() > _NEAR_ZERO)
+            .then(baseline / candidate)
+            .otherwise(1.0)
+            .alias("speedup"),
         ).sort(pl.col("delta").abs(), descending=True)
     elif len(group_labels) == 1:
-        col = pl.col(group_labels[0])
-        tot = float(merged[group_labels[0]].sum())
-        merged = merged.with_columns(
-            ((col / tot * 100.0) if abs(tot) > 1e-12 else pl.lit(0.0)).alias("share_pct")
-        ).sort(group_labels[0], descending=True)
+        values = pl.col(group_labels[0])
+        total = float(merged[group_labels[0]].sum())
+        share_pct = (
+            (values / total * 100.0) if abs(total) > _NEAR_ZERO else pl.lit(0.0)
+        )
+        merged = merged.with_columns(share_pct.alias("share_pct")).sort(
+            group_labels[0], descending=True
+        )
     else:
         merged = merged.sort(group_labels[0], descending=True)
 
