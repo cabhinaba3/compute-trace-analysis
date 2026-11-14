@@ -51,6 +51,7 @@ def test_kernel_name_gives_operation_algorithm_and_protocol() -> None:
             ]
         )
     )
+    assert ops["launch_ns"].to_list() == [-1] * 5
     assert ops["op"].to_list() == [
         "allreduce", "broadcast", "other", "allreduce", "sendrecv",
     ]  # fmt: skip
@@ -104,6 +105,8 @@ def _ops(
             "api": api,
             "op": "allreduce",
             "posted": False,
+            # The launch is 300 ns before the start, 100 ns on rank 1.
+            "launch_ns": 1000 * i - (300 if rank == 0 else 100),
             "algo": "RING",
             "proto": "LL",
             "dtype": "Float",
@@ -135,6 +138,15 @@ def test_bandwidth_and_wait_skew() -> None:
     skew = network_aspect.wait_skew_us(ops)
     # Call 0 differs by 600 ns between the ranks, call 1 by none.
     assert skew["skew_us"].to_list() == [pytest.approx(0.3)]
+
+
+def test_launch_gap_is_start_minus_launch() -> None:
+    ops = _ops({0: [1000, 1000], 1: [400, 1000]}, size=1)
+    gap = network_aspect.launch_gap_us(ops)
+    # Two calls at 300 ns and two at 100 ns.
+    assert gap["gap_us"].to_list() == [pytest.approx(0.2)]
+    unknown = ops.with_columns(launch_ns=pl.lit(-1))
+    assert network_aspect.launch_gap_us(unknown).is_empty()
 
 
 def test_posted_calls_are_counted_but_not_timed() -> None:

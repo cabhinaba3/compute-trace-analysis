@@ -325,4 +325,6 @@ def _network_ops(
             "group_size": columns["comm_size"],
         }
     )
-    return network.ops_from_kernels(kernels, collective)
+    return network.ops_from_kernels(
+        kernels, collective, columns["gpu_launch_ns"][order]
+    )
