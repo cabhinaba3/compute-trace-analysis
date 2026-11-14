@@ -260,6 +260,34 @@ def wait_skew_us(ops: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def launch_gap_us(ops: pl.DataFrame) -> pl.DataFrame:
+    """Measures how long GPU work waits between its launch and its start.
+
+    A long wait means the GPU was busy with earlier work on the stream, or
+    the collective had to wait for the other ranks to arrive.
+
+    Args:
+        ops: A ``network_ops`` table.
+
+    Returns:
+        One row per API and operation with ``gap_us``, the mean wait over the
+        calls whose launch is known; none for the others.
+    """
+    return (
+        ops.filter(
+            ~pl.col("posted"),
+            pl.col("launch_ns") >= 0,
+            pl.col("start_ns") >= pl.col("launch_ns"),
+        )
+        .group_by("api", "op")
+        .agg(
+            ((pl.col("start_ns") - pl.col("launch_ns")).mean() / 1e3).alias(
+                "gap_us"
+            )
+        )
+    )
+
+
 def _add_trial_metrics(
     metrics: dict[str, list[float]], ops: pl.DataFrame, per_key: pl.DataFrame
 ) -> None:
@@ -289,6 +317,10 @@ def _add_trial_metrics(
         metrics.setdefault(f"wait_skew_us|{row['api']}|{row['op']}", []).append(
             row["skew_us"]
         )
+    for row in launch_gap_us(ops).iter_rows(named=True):
+        metrics.setdefault(
+            f"launch_gap_us|{row['api']}|{row['op']}", []
+        ).append(row["gap_us"])
 
 
 _UNITS = {
@@ -298,6 +330,7 @@ _UNITS = {
     "algbw_GBps": ("GB/s", False),
     "busbw_GBps": ("GB/s", False),
     "wait_skew_us": ("us", True),
+    "launch_gap_us": ("us", True),
 }
 
 

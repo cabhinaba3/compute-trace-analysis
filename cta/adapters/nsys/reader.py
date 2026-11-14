@@ -599,7 +599,12 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         "osrt": osrt,
         "gpu_metrics": gpu_metrics,
         "network_ops": pl.concat(
-            [network.ops_from_kernels(kernels), host_ops]
+            [
+                network.ops_from_kernels(
+                    kernels, launch_ns=columns["gpu_launch_ns"][order]
+                ),
+                host_ops,
+            ]
         ),
     }
 

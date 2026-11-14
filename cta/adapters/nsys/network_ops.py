@@ -126,6 +126,7 @@ def _with_host_columns(rows: pl.DataFrame) -> pl.DataFrame:
     """Adds what host calls lack: no device, no stream, no algorithm."""
     return rows.with_columns(
         (pl.col("end_ns") - pl.col("start_ns")).alias("duration_ns"),
+        pl.lit(-1).alias("launch_ns"),
         pl.lit(-1).alias("device"),
         pl.lit(-1).alias("stream"),
         pl.lit("").alias("algo"),

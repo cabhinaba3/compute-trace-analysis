@@ -36,6 +36,10 @@ NETWORK_OPS_SCHEMA = pl.Schema(
         # True when the call only posts the transfer (MPI_Isend, a UCX
         # submit): its duration says nothing about bandwidth.
         "posted": pl.Boolean(),
+        # When the host issued the call (the CUDA launch of the kernel or
+        # copy); -1 when the trace does not say. start_ns - launch_ns is how
+        # long the GPU work waited before it began.
+        "launch_ns": pl.Int64(),
         "start_ns": pl.Int64(),
         "end_ns": pl.Int64(),
         "duration_ns": pl.Int64(),
@@ -122,7 +126,9 @@ def busbw_factor(op: str, ranks: int) -> float:
 
 
 def ops_from_kernels(
-    kernels: pl.DataFrame, collective: pl.DataFrame | None = None
+    kernels: pl.DataFrame,
+    collective: pl.DataFrame | None = None,
+    launch_ns: np.ndarray | None = None,
 ) -> pl.DataFrame:
     """Builds the NCCL rows of a ``network_ops`` table from a kernels table.
 
@@ -131,10 +137,18 @@ def ops_from_kernels(
         collective: Optional collective metadata of PyTorch traces: ``row``
             (index into ``kernels``), ``collective``, ``dtype``, ``group``,
             ``in_elems``, ``out_elems`` and ``group_size``.
+        launch_ns: Optional launch time of each kernel row, NaN where the
+            launch is unknown.
 
     Returns:
         A frame conforming to ``NETWORK_OPS_SCHEMA``.
     """
+    launches = (
+        np.full(kernels.height, -1, dtype=np.int64)
+        if launch_ns is None
+        else np.nan_to_num(launch_ns, nan=-1.0).astype(np.int64)
+    )
+    kernels = kernels.with_columns(pl.Series("launch_ns", launches))
     rows = kernels.with_row_index("row").filter(pl.col("category") == "comm")
     rows = rows.with_columns(
         pl.col("name").str.extract_groups(_KERNEL_RE).alias("parsed")
@@ -187,6 +201,7 @@ def ops_from_kernels(
         pl.col("group_size").fill_null(0),
         (elems.fill_null(0) * width).alias("bytes"),
         pl.lit(False).alias("posted"),
+        "launch_ns",
         "start_ns",
         "end_ns",
         "duration_ns",
@@ -222,6 +237,7 @@ def peer_copies(kernels: pl.DataFrame) -> pl.DataFrame:
         pl.lit(2).alias("group_size"),
         "bytes",
         pl.lit(False).alias("posted"),
+        "launch_ns",
         "start_ns",
         "end_ns",
         "duration_ns",
