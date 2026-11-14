@@ -17,6 +17,16 @@ void Merger::add(ChunkOut& c) {
     thread_map.push_back(it->second);
   }
 
+  const int64_t row_base = static_cast<int64_t>(out_.gpu_name.size());
+  for (std::size_t j = 0; j < c.c_row.size(); ++j) {
+    out_.comm_row.push_back(row_base + c.c_row[j]);
+    out_.comm_op.push_back(name_map[static_cast<std::size_t>(c.c_op[j])]);
+    out_.comm_dtype.push_back(name_map[static_cast<std::size_t>(c.c_dtype[j])]);
+    out_.comm_group.push_back(name_map[static_cast<std::size_t>(c.c_group[j])]);
+  }
+  append_vector(out_.comm_in, c.c_in);
+  append_vector(out_.comm_out, c.c_out);
+  append_vector(out_.comm_size, c.c_size);
   for (int32_t n : c.g_name) out_.gpu_name.push_back(name_map[static_cast<std::size_t>(n)]);
   append_vector(out_.gpu_category, c.g_cat);
   append_vector(out_.gpu_start, c.g_start);

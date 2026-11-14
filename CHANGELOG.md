@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Network API analysis: NCCL calls (`network_api`)
+- The `kineto` and `nsys` adapters now write a `network_ops` table: one row per NCCL call on a GPU, with the logical operation, the algorithm and protocol NCCL chose (read from the kernel name, for example `RING` and `LL`), the dtype, process group, group size and message size in bytes. The native Kineto reader takes the collective name, element counts, group size, dtype and process group from the args PyTorch puts on NCCL kernels, so no join with the CPU side is needed. nsys exports carry no payload values, so their rows have the operation, algorithm and timing but no size.
+- New aspect `network_api` compares groups by logical operation and message-size bucket: algorithm and bus bandwidth (the nccl-tests definitions), time per bucket, total communication time, and the cross-rank wait skew, which is the spread of the durations of the same collective on different ranks and does not need the ranks' clocks to agree.
+- Both adapter versions went up, so cached ingests are redone.
+
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported: the package requires Python 3.12 or newer. The CI matrix, the classifiers, ruff's `target-version` and mypy's `python_version` moved to 3.12.
 - The synthetic trace generators in `cta.synth` (Kineto, GOAL text and binary, Chakra `.et` and host-ET, nsys SQLite, ncu, jtop, trtexec) are now C++ in `native/`, built into the package as `cta._native` by the same `pip install` (a hatch build hook runs CMake with nanobind; there is no second distribution). The Python generators are removed, so the module is required. Output is byte-identical to the old Python writers (nsys SQLite: identical rows), checked on GPULab.
