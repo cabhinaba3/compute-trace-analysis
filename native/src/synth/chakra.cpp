@@ -7,9 +7,8 @@
 #include <fstream>
 #include <stdexcept>
 
-#include "common/common.hpp"
-#include "et_def.pb.h"
 #include "common/json_value.hpp"
+#include "et_def.pb.h"
 
 namespace cta {
 namespace {

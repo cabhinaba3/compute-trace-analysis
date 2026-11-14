@@ -1,7 +1,6 @@
 #include "synth/training.hpp"
 
 #include <google/protobuf/util/delimited_message_util.h>
-#include <sched.h>
 
 #include <algorithm>
 #include <atomic>
@@ -14,7 +13,9 @@
 #include <thread>
 #include <vector>
 
-#include "common/common.hpp"
+#include "common/cpus.hpp"
+#include "common/format.hpp"
+#include "common/sink.hpp"
 #include "et_def.pb.h"
 #include "synth/goal_common.hpp"
 
@@ -263,11 +264,6 @@ class ChakraBuilder {
   std::uint64_t next_ = 0;
 };
 
-int usable_cpus() {
-  cpu_set_t set;
-  if (sched_getaffinity(0, sizeof set, &set) == 0) return std::max(1, CPU_COUNT(&set));
-  return std::max(1u, std::thread::hardware_concurrency());
-}
 
 }  // namespace
 

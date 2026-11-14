@@ -9,7 +9,8 @@
 #include <variant>
 #include <vector>
 
-#include "common/common.hpp"
+#include "common/format.hpp"
+#include "common/sink.hpp"
 
 namespace cta {
 
