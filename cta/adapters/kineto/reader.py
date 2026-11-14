@@ -315,7 +315,8 @@ def _ingest_shard(
 
     # Sort by GPU start time; the launch arrays are permuted alongside so
     # they stay aligned with the sorted rows.
-    order = np.argsort([row["start_ns"] for row in gpu_rows], kind="stable")
+    start_times_ns = np.asarray([row["start_ns"] for row in gpu_rows])
+    order = np.argsort(start_times_ns, kind="stable")
     kernels = alignment.enrich_ops_df(
         pl.DataFrame(gpu_rows)[order.tolist()], "name"
     )
