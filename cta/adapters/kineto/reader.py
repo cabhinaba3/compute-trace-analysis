@@ -20,12 +20,13 @@ from cta.core import alignment
 from cta.core import bundle
 from cta.core import intervals
 from cta.core import models
+from cta.core import network
 from cta.core import registry
 
 _XPROF_HEAD_RE = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
 
 
-@registry.register_adapter("kineto", version="2.2")
+@registry.register_adapter("kineto", version="2.3")
 class KinetoAdapter:
     """Reads PyTorch Profiler (Kineto) Chrome traces, one file per rank.
 
@@ -35,7 +36,7 @@ class KinetoAdapter:
     """
 
     format_name = "kineto"
-    version = "2.2"
+    version = "2.3"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file looks like a Kineto Chrome trace.
@@ -71,24 +72,26 @@ class KinetoAdapter:
             out_dir: The directory the Parquet tables are written to.
 
         Returns:
-            The paths of the ``kernels``, ``steps`` and ``runtime`` Parquet
-            tables, by table name.
+            The paths of the ``kernels``, ``steps``, ``runtime`` and
+            ``network_ops`` Parquet tables, by table name.
         """
         kernel_frames: list[pl.DataFrame] = []
         step_frames: list[pl.DataFrame] = []
+        op_frames: list[pl.DataFrame] = []
         # Runtime API name -> [total duration in ns, number of calls].
         runtime_totals: dict[str, list[int]] = {}
 
         for shard_index, path in enumerate(sorted(artifact.paths)):
             columns = native.read_kineto_trace(str(path))
             rank = _shard_rank(columns, path, shard_index)
-            shard_kernels, shard_steps = _ingest_shard(
+            shard_kernels, shard_steps, shard_ops = _ingest_shard(
                 columns, rank, runtime_totals
             )
             if shard_kernels.height:
                 kernel_frames.append(shard_kernels)
             if shard_steps.height:
                 step_frames.append(shard_steps)
+            op_frames.append(shard_ops)
 
         if kernel_frames:
             kernels = pl.concat(kernel_frames).sort("rank", "start_ns")
@@ -98,6 +101,11 @@ class KinetoAdapter:
             steps = pl.concat(step_frames).sort("rank", "start_ns")
         else:
             steps = pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA)
+        network_ops = (
+            pl.concat(op_frames).sort("rank", "start_ns")
+            if op_frames
+            else pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA)
+        )
         runtime_rows = [
             {"name": name, "duration_ns": duration_ns, "calls": calls}
             for name, (duration_ns, calls) in runtime_totals.items()
@@ -110,6 +118,7 @@ class KinetoAdapter:
                 "kernels": kernels,
                 "steps": steps,
                 "runtime": runtime,
+                "network_ops": network_ops,
             },
         )
 
@@ -127,8 +136,8 @@ def _shard_rank(columns: dict[str, Any], path: pathlib.Path, index: int) -> int:
 
 def _ingest_shard(
     columns: dict[str, Any], rank: int, runtime_totals: dict[str, list[int]]
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Builds the kernels and steps tables of one rank's trace.
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Builds the kernels, steps and network-ops tables of one rank's trace.
 
     All timestamps of a shard share one clock. CUDA runtime call durations
     and counts are added to ``runtime_totals`` as a side effect.
@@ -140,7 +149,8 @@ def _ingest_shard(
             updated in place.
 
     Returns:
-        The kernels and steps tables, conformed to the nsys schemas.
+        The kernels and steps tables, conformed to the nsys schemas, and the
+        network-ops table.
     """
     names: list[str] = columns["names"]
     for code, duration_ns, calls in zip(
@@ -157,6 +167,7 @@ def _ingest_shard(
         return (
             pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA),
             pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA),
+            pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA),
         )
 
     # Sort by GPU start time; the launch arrays are permuted alongside so
@@ -284,4 +295,34 @@ def _ingest_shard(
         kernels.with_columns(pl.Series("step", kernel_steps, dtype=pl.Int32)),
         nsys_reader.KERNELS_SCHEMA,
     )
-    return kernels, steps
+    return kernels, steps, _network_ops(columns, kernels, order)
+
+
+def _network_ops(
+    columns: dict[str, Any], kernels: pl.DataFrame, order: np.ndarray
+) -> pl.DataFrame:
+    """Builds the network-ops table of one rank from its kernels.
+
+    Args:
+        columns: The shard as read by ``native.read_kineto_trace``.
+        kernels: The shard's kernels table, sorted by start time.
+        order: The permutation that sorted the shard's GPU rows.
+
+    Returns:
+        The NCCL calls with the collective metadata PyTorch attached.
+    """
+    names = np.array(columns["names"], dtype=object)
+    position = np.empty(len(order), dtype=np.int64)
+    position[order] = np.arange(len(order))
+    collective = pl.DataFrame(
+        {
+            "row": position[columns["comm_row"]],
+            "collective": pl.Series(names[columns["comm_op"]], dtype=pl.String),
+            "dtype": pl.Series(names[columns["comm_dtype"]], dtype=pl.String),
+            "group": pl.Series(names[columns["comm_group"]], dtype=pl.String),
+            "in_elems": columns["comm_in"],
+            "out_elems": columns["comm_out"],
+            "group_size": columns["comm_size"],
+        }
+    )
+    return network.ops_from_kernels(kernels, collective)

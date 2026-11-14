@@ -27,6 +27,7 @@ from cta.core import alignment
 from cta.core import bundle
 from cta.core import intervals
 from cta.core import models
+from cta.core import network
 from cta.core import registry
 
 KERNELS_SCHEMA = pl.Schema(
@@ -594,7 +595,7 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
     }
 
 
-@registry.register_adapter("nsys", version="2.1")
+@registry.register_adapter("nsys", version="2.2")
 class NsysAdapter:
     """Reads Nsight Systems reports and SQLite exports, one per rank.
 
@@ -604,7 +605,7 @@ class NsysAdapter:
     """
 
     format_name = "nsys"
-    version = "2.1"
+    version = "2.2"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file is an Nsight Systems report or export.
@@ -672,10 +673,12 @@ class NsysAdapter:
                 .cast(schema)
             )
 
+        kernels = concat_reports("kernels", KERNELS_SCHEMA).sort(
+            ["rank", "start_ns"]
+        )
         merged_tables = {
-            "kernels": concat_reports("kernels", KERNELS_SCHEMA).sort(
-                ["rank", "start_ns"]
-            ),
+            "kernels": kernels,
+            "network_ops": network.ops_from_kernels(kernels),
             "steps": concat_reports("steps", STEPS_SCHEMA).sort(
                 ["rank", "start_ns"]
             ),
