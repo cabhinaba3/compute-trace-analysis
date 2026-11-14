@@ -44,8 +44,8 @@ def host_network_ops(
 ) -> pl.DataFrame:
     """Reads the MPI and UCX calls of one rank's export.
 
-    The message size is the larger of the send and receive size, which is the
-    root's buffer for a broadcast and the full buffer for an allgather.
+    The message size follows nccl-tests' convention for the operation; see
+    ``_message_bytes`` for how it is recovered from what nsys records.
     MPI functions that only post a transfer (``MPI_Isend``) and every UCX
     submit are marked ``posted``: their duration is not a transfer time.
 
@@ -85,8 +85,7 @@ def host_network_ops(
 def _mpi_rows(mpi: pl.DataFrame) -> pl.DataFrame:
     """Gives MPI rows the shared columns."""
     kinds = {name: network.mpi_op(name) for name in mpi["name"].unique()}
-    return mpi.select(
-        pl.lit("mpi").alias("api"),
+    rows = mpi.with_columns(
         pl.col("name")
         .replace_strict(
             {name: op for name, (op, _) in kinds.items()},
@@ -99,12 +98,58 @@ def _mpi_rows(mpi: pl.DataFrame) -> pl.DataFrame:
             return_dtype=pl.Boolean,
         )
         .alias("posted"),
+    )
+    return rows.select(
+        pl.lit("mpi").alias("api"),
+        "op",
+        "posted",
         "group",
         "group_size",
-        pl.max_horizontal("size", "recv_size").alias("bytes"),
+        _message_bytes().alias("bytes"),
         "start_ns",
         "end_ns",
     ).pipe(_with_host_columns)
+
+
+def _message_bytes() -> pl.Expr:
+    """Recovers the message size nccl-tests would report from nsys's numbers.
+
+    nsys records ``size`` and ``recvSize`` as the buffer times the number of
+    ranks (one less for ``MPI_IN_PLACE``) for most collectives, and as the
+    plain per-rank buffer for the others. Measured on Open MPI 5 with 2, 3 and
+    4 ranks:
+
+    - allgather, alltoall, reduce_scatter_block: ``size`` is already the
+      total (nccl-tests' size);
+    - allreduce: ``size`` is the buffer times the group size, so it is
+      divided by it;
+    - broadcast: ``recvSize`` is the buffer on every rank;
+    - reduce: ``size`` is the buffer; at an in-place root it is missing and
+      ``recvSize`` is the buffer times (ranks - 1);
+    - gather, scatter: the chunk each rank holds, times the group size.
+
+    An ``MPI_IN_PLACE`` allreduce, allgather or alltoall cannot be told from
+    a plain one, so its size is read as a plain call's. Other functions, and
+    a communicator of unknown size, take the larger of the two numbers.
+    """
+    op, ranks = pl.col("op"), pl.col("group_size")
+    send, recv = pl.col("size"), pl.col("recv_size")
+    largest = pl.max_horizontal(send, recv)
+    return (
+        pl.when(ranks < 2)
+        .then(largest)
+        .when(op == "allreduce")
+        .then(largest // ranks)
+        .when(op == "broadcast")
+        .then(recv)
+        .when(op == "reduce")
+        .then(pl.when(send > 0).then(send).otherwise(recv // (ranks - 1)))
+        .when(op == "scatter")
+        .then(recv * ranks)
+        .when(op == "gather")
+        .then(send * ranks)
+        .otherwise(largest)
+    )
 
 
 def _ucx_rows(ucx: pl.DataFrame) -> pl.DataFrame:

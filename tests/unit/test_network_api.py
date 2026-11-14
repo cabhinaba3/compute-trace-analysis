@@ -188,7 +188,7 @@ def _mpi_export() -> sqlite3.Connection:
         CREATE TABLE MPI_COLLECTIVES_EVENTS (start INTEGER, "end" INTEGER,
             textId INTEGER, commUid INTEGER, size INTEGER, recvSize INTEGER);
         INSERT INTO MPI_COLLECTIVES_EVENTS VALUES
-            (1000, 3000, 1, 7, 4096, 4096), (5000, 6000, 3, 7, NULL, 128);
+            (1000, 3000, 1, 7, 16384, 16384), (5000, 6000, 3, 7, NULL, 128);
         CREATE TABLE MPI_P2P_EVENTS (start INTEGER, "end" INTEGER,
             textId INTEGER, commUid INTEGER, size INTEGER);
         INSERT INTO MPI_P2P_EVENTS VALUES (1500, 1600, 2, 7, 1024);
@@ -210,6 +210,7 @@ def test_host_ops_from_an_export() -> None:
     assert ops.schema == network.NETWORK_OPS_SCHEMA
     rows = {(r["api"], r["op"]): r for r in ops.iter_rows(named=True)}
     allreduce = rows["mpi", "allreduce"]
+    # nsys records the buffer times the four ranks; the buffer is 4096 bytes.
     assert allreduce["bytes"] == 4096
     assert allreduce["group_size"] == 4
     assert allreduce["rank"] == 3
@@ -220,6 +221,44 @@ def test_host_ops_from_an_export() -> None:
     assert rows["mpi", "send"]["posted"]
     assert rows["ucx", "send"]["posted"]
     assert rows["ucx", "send"]["bytes"] == 1024
+
+
+# (function, size, recvSize) as nsys recorded them for a 4096-byte buffer on
+# four Open MPI ranks, and the size nccl-tests would report.
+_MEASURED = [
+    ("MPI_Allgather", 16384, 16384, 16384),
+    ("MPI_Allgatherv", 16384, 16384, 16384),
+    ("MPI_Allreduce", 16384, 16384, 4096),
+    ("MPI_Alltoall", 16384, 16384, 16384),
+    ("MPI_Reduce_scatter_block", 16384, 16384, 16384),
+    ("MPI_Bcast", 16384, 4096, 4096),  # root
+    ("MPI_Bcast", 0, 4096, 4096),
+    ("MPI_Gather", 4096, 16384, 16384),  # root
+    ("MPI_Gather", 4096, 0, 16384),
+    ("MPI_Scatter", 16384, 4096, 16384),  # root
+    ("MPI_Scatter", 0, 4096, 16384),
+    ("MPI_Reduce", 4096, 16384, 4096),  # root
+    ("MPI_Reduce", 4096, 0, 4096),
+    ("MPI_Reduce", 0, 12288, 4096),  # root, MPI_IN_PLACE
+]
+
+
+@pytest.mark.parametrize(("name", "size", "recv", "expected"), _MEASURED)
+def test_mpi_message_size_convention(
+    name: str, size: int, recv: int, expected: int
+) -> None:
+    mpi = pl.DataFrame(
+        {
+            "start_ns": [0],
+            "end_ns": [10],
+            "name": [name],
+            "group": ["1"],
+            "group_size": [4],
+            "size": [size],
+            "recv_size": [recv],
+        }
+    )
+    assert network_ops._mpi_rows(mpi)["bytes"].to_list() == [expected]
 
 
 def test_export_without_network_tables_gives_no_rows() -> None:
