@@ -138,6 +138,29 @@ def _draw_panel(
     _finish_axes(ax, panel, is_labelled)
 
 
+def _require_values(
+    values: np.ndarray | None, trace: ir.Trace, axis: str
+) -> np.ndarray:
+    """Returns an axis array that a mark cannot be drawn without.
+
+    Args:
+        values: The trace's array for the axis, or None if it has none.
+        trace: The trace being drawn (named in the error).
+        axis: Axis name, for the error message.
+
+    Returns:
+        ``values``.
+
+    Raises:
+        ValueError: ``values`` is None.
+    """
+    if values is None:
+        raise ValueError(
+            f"{trace.mark} trace {trace.name!r} has no {axis} data"
+        )
+    return values
+
+
 def _draw_trace(
     ax: matplotlib_axes.Axes,
     trace: ir.Trace,
@@ -169,8 +192,8 @@ def _draw_trace(
     )
     if trace.mark == "line":
         ax.plot(
-            x,
-            y,
+            _require_values(x, trace, "x"),
+            _require_values(y, trace, "y"),
             color=color,
             lw=style.get("width", 1.2),
             ls=style.get("dash", "-"),
@@ -181,8 +204,8 @@ def _draw_trace(
         )
     elif trace.mark == "step":
         ax.step(
-            x,
-            y,
+            _require_values(x, trace, "x"),
+            _require_values(y, trace, "y"),
             where="post",
             color=color,
             lw=style.get("width", 1.2),
@@ -202,7 +225,7 @@ def _draw_trace(
         )
     elif trace.mark == "band":
         ax.fill_between(
-            x,
+            _require_values(x, trace, "x"),
             np.asarray(trace.y, dtype=float),
             np.asarray(trace.y1, dtype=float),
             color=color,

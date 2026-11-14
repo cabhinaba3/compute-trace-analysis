@@ -505,7 +505,8 @@ def _ingest_shard(
             schema=nsys_reader.STEPS_SCHEMA
         )
 
-    order = np.argsort([row["start_ns"] for row in scan.op_rows], kind="stable")
+    start_times_ns = np.asarray([row["start_ns"] for row in scan.op_rows])
+    order = np.argsort(start_times_ns, kind="stable")
     kernels = alignment.enrich_ops_df(
         pl.DataFrame(scan.op_rows)[order.tolist()], "name"
     )
