@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import pathlib
+import sqlite3
 
 import numpy as np
 import polars as pl
 import pytest
 
 from cta.adapters.kineto import reader
+from cta.adapters.nsys import network_ops
 from cta.aspects import network as network_aspect
 from cta.core import models
 from cta.core import network
@@ -31,6 +33,7 @@ def _kernels(names: list[str]) -> pl.DataFrame:
             "start_ns": [i * 1000 for i in range(len(names))],
             "end_ns": [i * 1000 + 500 for i in range(len(names))],
             "duration_ns": [500] * len(names),
+            "bytes": [0] * len(names),
         }
     )
 
@@ -89,50 +92,167 @@ def test_busbw_factors_and_buckets() -> None:
     assert list(labels) == ["unknown", "<1KB", "1-16MB", ">256MB"]
 
 
-def _ops(durations_ns: dict[int, list[int]], size: int) -> pl.DataFrame:
+def _ops(
+    durations_ns: dict[int, list[int]], size: int, api: str = "nccl"
+) -> pl.DataFrame:
     rows = [
         {
-            "rank": rank, "device": rank, "stream": 7, "step": 0,
-            "api": "nccl", "op": "allreduce", "algo": "RING", "proto": "LL",
-            "dtype": "Float", "group": "0", "group_size": 2, "bytes": size,
-            "start_ns": 1000 * i, "end_ns": 1000 * i + d, "duration_ns": d,
+            "rank": rank,
+            "device": rank,
+            "stream": 7,
+            "step": 0,
+            "api": api,
+            "op": "allreduce",
+            "posted": False,
+            "algo": "RING",
+            "proto": "LL",
+            "dtype": "Float",
+            "group": "0",
+            "group_size": 2,
+            "bytes": size,
+            "start_ns": 1000 * i,
+            "end_ns": 1000 * i + d,
+            "duration_ns": d,
         }
         for rank, durations in durations_ns.items()
         for i, d in enumerate(durations)
-    ]  # fmt: skip
+    ]
     return pl.DataFrame(rows, schema=network.NETWORK_OPS_SCHEMA)
 
 
 def test_bandwidth_and_wait_skew() -> None:
     ops = _ops({0: [1000, 1000], 1: [400, 1000]}, size=2_000_000)
     per_key = network_aspect.per_operation(ops).row(0, named=True)
-    assert per_key["key"] == "allreduce|1-16MB"
+    assert (per_key["api"], per_key["op"], per_key["bucket"]) == (
+        "nccl", "allreduce", "1-16MB",
+    )  # fmt: skip
     assert per_key["calls"] == 4
-    # 8 MB in 3.4 us of summed call time.
-    assert per_key["algbw"] == pytest.approx(8_000_000 / 3400)
-    assert per_key["busbw"] == pytest.approx(per_key["algbw"])
+    # 8 MB in 3.4 us of summed call time; two ranks make the factor 1.
+    assert per_key["timed_bytes"] / per_key["timed_ns"] == pytest.approx(
+        8_000_000 / 3400
+    )
+    assert per_key["weighted_bytes"] == per_key["timed_bytes"]
     skew = network_aspect.wait_skew_us(ops)
     # Call 0 differs by 600 ns between the ranks, call 1 by none.
     assert skew["skew_us"].to_list() == [pytest.approx(0.3)]
 
 
-def test_aspect_compares_two_groups(tmp_path: pathlib.Path) -> None:
+def test_posted_calls_are_counted_but_not_timed() -> None:
+    ops = _ops({0: [1000], 1: [1000]}, size=2_000_000).with_columns(
+        posted=pl.lit(True)
+    )
+    per_key = network_aspect.per_operation(ops).row(0, named=True)
+    assert per_key["calls"] == 2
+    assert per_key["bytes"] == 4_000_000
+    assert per_key["timed_bytes"] == per_key["timed_ns"] == 0
+    assert network_aspect.wait_skew_us(ops).is_empty()
+
+
+def test_mpi_and_ucx_names() -> None:
+    assert network.mpi_op("MPI_Allreduce") == ("allreduce", False)
+    assert network.mpi_op("MPI_Bcast") == ("broadcast", False)
+    assert network.mpi_op("MPI_Isend") == ("send", True)
+    assert network.mpi_op("MPI_Reduce_scatter_block") == (
+        "reducescatter",
+        False,
+    )
+    assert network.mpi_op("MPI_Ireduce_scatter") == ("reducescatter", True)
+    # "I" at the start of a name does not mean nonblocking.
+    assert network.mpi_op("MPI_Init") == ("init", False)
+    assert network.ucx_op("ucp_tag_send_nbx") == "send"
+    assert network.ucx_op("ucp_ep_create") == "other"
+
+
+def _mpi_export() -> sqlite3.Connection:
+    """An in-memory export with MPI calls, a communicator and a UCX submit."""
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE StringIds (id INTEGER, value TEXT);
+        INSERT INTO StringIds VALUES (1, 'MPI_Allreduce'), (2, 'MPI_Isend'),
+            (3, 'MPI_Bcast'), (4, 'ucp_tag_send_nbx');
+        CREATE TABLE MPI_COMMUNICATORS (commUid INTEGER, size INTEGER);
+        INSERT INTO MPI_COMMUNICATORS VALUES (7, 4);
+        CREATE TABLE MPI_COLLECTIVES_EVENTS (start INTEGER, "end" INTEGER,
+            textId INTEGER, commUid INTEGER, size INTEGER, recvSize INTEGER);
+        INSERT INTO MPI_COLLECTIVES_EVENTS VALUES
+            (1000, 3000, 1, 7, 4096, 4096), (5000, 6000, 3, 7, NULL, 128);
+        CREATE TABLE MPI_P2P_EVENTS (start INTEGER, "end" INTEGER,
+            textId INTEGER, commUid INTEGER, size INTEGER);
+        INSERT INTO MPI_P2P_EVENTS VALUES (1500, 1600, 2, 7, 1024);
+        CREATE TABLE UCP_SUBMIT_EVENTS (start INTEGER, "end" INTEGER,
+            textId INTEGER, packedSize INTEGER);
+        INSERT INTO UCP_SUBMIT_EVENTS VALUES (1520, 1550, 4, 1024);
+        """
+    )
+    return conn
+
+
+def test_host_ops_from_an_export() -> None:
+    conn = _mpi_export()
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+    steps = pl.DataFrame(
+        {"step": [0, 1], "start_ns": [0, 4000], "end_ns": [3500, 9000]}
+    )
+    ops = network_ops.host_network_ops(conn, tables, rank=3, steps=steps)
+    assert ops.schema == network.NETWORK_OPS_SCHEMA
+    rows = {(r["api"], r["op"]): r for r in ops.iter_rows(named=True)}
+    allreduce = rows["mpi", "allreduce"]
+    assert allreduce["bytes"] == 4096
+    assert allreduce["group_size"] == 4
+    assert allreduce["rank"] == 3
+    assert allreduce["step"] == 0
+    # A broadcast receiver only knows the receive size.
+    assert rows["mpi", "broadcast"]["bytes"] == 128
+    assert rows["mpi", "broadcast"]["step"] == 1
+    assert rows["mpi", "send"]["posted"]
+    assert rows["ucx", "send"]["posted"]
+    assert rows["ucx", "send"]["bytes"] == 1024
+
+
+def test_export_without_network_tables_gives_no_rows() -> None:
+    conn = sqlite3.connect(":memory:")
+    steps = pl.DataFrame(
+        schema={"step": pl.Int32, "start_ns": pl.Int64, "end_ns": pl.Int64}
+    )
+    ops = network_ops.host_network_ops(conn, set(), 0, steps)
+    assert ops.is_empty()
+    assert ops.schema == network.NETWORK_OPS_SCHEMA
+
+
+def test_peer_copies_become_p2p_rows() -> None:
+    kernels = _kernels(["Memcpy_P2P", "Memcpy_H2D"]).with_columns(
+        category=pl.lit("memcpy"), bytes=pl.Series([4096, 8192])
+    )
+    ops = network.ops_from_kernels(kernels)
+    assert ops["api"].to_list() == ["p2p"]
+    assert ops["bytes"].to_list() == [4096]
+
+
+def test_aspect_compares_two_apis(tmp_path: pathlib.Path) -> None:
     groups = []
     tables: dict[str, list[dict[str, pathlib.Path]]] = {}
-    for name, duration in (("slow", 2000), ("fast", 1000)):
+    for name, api, duration in (
+        ("mpi_run", "mpi", 2000),
+        ("nccl_run", "nccl", 1000),
+    ):
         path = tmp_path / f"{name}.parquet"
-        _ops({0: [duration] * 3, 1: [duration] * 3}, 1 << 22).write_parquet(
-            path
-        )
+        _ops(
+            {0: [duration] * 3, 1: [duration] * 3}, 1 << 22, api
+        ).write_parquet(path)
         groups.append(models.TrialGroup(name, name, ()))
         tables[name] = [{"kineto.network_ops": path}] * 3
     result = registry.ASPECTS["network_api"].run(
         tuple(groups), tables, models.CompareConfig()
     )
     rows = {r["metric"]: r for r in result.summary.iter_rows(named=True)}
-    busbw = rows["busbw_GBps|allreduce|1-16MB"]
-    assert busbw["candidate"] == pytest.approx(2 * busbw["baseline"])
-    assert "allreduce|1-16MB" in result.details["by_operation"]["key"].to_list()
+    # Each group ran one API, so the per-API metrics do not overlap...
+    assert "busbw_GBps|mpi|allreduce|1-16MB" in rows
+    assert "busbw_GBps|nccl|allreduce|1-16MB" in rows
+    # ...and the pooled table matches them by operation and size.
+    pooled = result.details["by_operation"].row(0, named=True)
+    assert pooled["key"] == "allreduce|1-16MB"
+    assert pooled["nccl_run"] == pytest.approx(2 * pooled["mpi_run"])
 
 
 @pytest.mark.skipif(
@@ -148,9 +268,10 @@ def test_real_ddp_traces_have_sized_collectives(tmp_path: pathlib.Path) -> None:
     paths = reader.KinetoAdapter().ingest(artifact, tmp_path)
     ops = pl.read_parquet(paths["network_ops"])
     kernels = pl.read_parquet(paths["kernels"])
-    assert ops.height == kernels.filter(pl.col("category") == "comm").height
+    nccl = ops.filter(pl.col("api") == "nccl")
+    assert nccl.height == kernels.filter(pl.col("category") == "comm").height
     assert set(ops["rank"].unique()) == {0, 1}
-    allreduce = ops.filter(pl.col("op") == "allreduce", pl.col("bytes") > 0)
+    allreduce = nccl.filter(pl.col("op") == "allreduce", pl.col("bytes") > 0)
     # 524800 float32 elements, seven times on each rank.
     assert allreduce.filter(pl.col("bytes") == 524800 * 4).height == 14
     assert set(allreduce["algo"]) == {"RING"}

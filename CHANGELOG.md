@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-### Network API analysis: NCCL calls (`network_api`)
+### Network API analysis (`network_api`)
 - The `kineto` and `nsys` adapters now write a `network_ops` table: one row per NCCL call on a GPU, with the logical operation, the algorithm and protocol NCCL chose (read from the kernel name, for example `RING` and `LL`), the dtype, process group, group size and message size in bytes. The native Kineto reader takes the collective name, element counts, group size, dtype and process group from the args PyTorch puts on NCCL kernels, so no join with the CPU side is needed. nsys exports carry no payload values, so their rows have the operation, algorithm and timing but no size.
 - New aspect `network_api` compares groups by logical operation and message-size bucket: algorithm and bus bandwidth (the nccl-tests definitions), time per bucket, total communication time, and the cross-rank wait skew, which is the spread of the durations of the same collective on different ranks and does not need the ranks' clocks to agree.
+- The `nsys` adapter also reads the MPI and UCX tables of an export (`MPI_COLLECTIVES_EVENTS`, `MPI_P2P_EVENTS`, `UCP_SUBMIT_EVENTS`) into `network_ops` rows with `api` set to `mpi` or `ucx`, and takes GPU-to-GPU memcpys as `p2p` copies. MPI sizes are the larger of the send and receive size, the group size comes from `MPI_COMMUNICATORS`, and MPI function names map to the same logical operations as NCCL (`MPI_Bcast` is `broadcast`, `MPI_Sendrecv` is `sendrecv`). Calls that only post a transfer (`MPI_Isend`, every UCX submit) carry `posted = true`: they are counted, but left out of bandwidth and skew, since their duration is not a transfer time.
+- `network_api` metrics are keyed by API, operation and size bucket (`busbw_GBps|mpi|allreduce|1-16MB`); a `by_operation` table pools the APIs so a group that ran NCCL lines up with a group that ran MPI.
+- NCCL 2.32 kernel names (`ncclDevKernel_AllReduce_f32_RING`, `ncclDevKernel_SendRecv`) parse without a reduction or protocol part.
 - Both adapter versions went up, so cached ingests are redone.
 
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
