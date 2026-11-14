@@ -6,6 +6,7 @@
 #include "bindings/bindings.hpp"
 #include "bindings/numpy.hpp"
 #include "readers/chakra/chakra_read.hpp"
+#include "readers/goal/goal_read.hpp"
 #include "readers/kineto/kineto_read.hpp"
 
 namespace nb = nanobind;
@@ -68,6 +69,29 @@ nb::dict chakra_columns_to_dict(cta::ChakraColumns&& c) {
   return d;
 }
 
+nb::dict goal_columns_to_dict(cta::GoalTextColumns&& c) {
+  nb::dict d;
+  d["rank"] = to_numpy(std::move(c.rank));
+  d["node_id"] = to_numpy(std::move(c.node_id));
+  d["name_end"] = to_numpy(std::move(c.name_end));
+  d["name_bytes"] = to_numpy(std::move(c.name_bytes));
+  d["op_class"] = to_numpy(std::move(c.op_class));
+  d["duration_ns"] = to_numpy(std::move(c.duration_ns));
+  d["size_bytes"] = to_numpy(std::move(c.size_bytes));
+  d["src_rank"] = to_numpy(std::move(c.src_rank));
+  d["dst_rank"] = to_numpy(std::move(c.dst_rank));
+  d["message_tag"] = to_numpy(std::move(c.message_tag));
+  d["edge_rank"] = to_numpy(std::move(c.edge_rank));
+  d["edge_src"] = to_numpy(std::move(c.edge_src));
+  d["edge_dst"] = to_numpy(std::move(c.edge_dst));
+  d["edge_kind"] = to_numpy(std::move(c.edge_kind));
+  nb::dict timing;
+  timing["scan"] = c.scan_seconds;
+  timing["finish"] = c.finish_seconds;
+  d["timing"] = timing;
+  return d;
+}
+
 }  // namespace
 
 void bind_readers(nb::module_& m) {
@@ -97,6 +121,19 @@ void bind_readers(nb::module_& m) {
       },
       "paths"_a, "ranks"_a, "threads"_a = 0,
       "Reads Chakra .et files (one rank each) into dictionary-coded node and edge columns.");
+
+  m.def(
+      "read_goal_text",
+      [](const std::string& path, int threads, std::uint64_t chunk_bytes) {
+        cta::GoalTextColumns columns;
+        {
+          nb::gil_scoped_release release;
+          columns = cta::read_goal_text(path, threads, chunk_bytes);
+        }
+        return goal_columns_to_dict(std::move(columns));
+      },
+      "path"_a, "threads"_a = 0, "chunk_bytes"_a = 32ull << 20,
+      "Reads a GOAL text schedule (.goal) into node and edge columns.");
 }
 
 }  // namespace cta::bindings

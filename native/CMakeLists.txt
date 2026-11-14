@@ -50,6 +50,8 @@ set(CTA_SYNTH_SOURCES  # synthetic trace generators
   src/synth/profilers.cpp)
 set(CTA_READER_SOURCES  # trace readers
   src/readers/chakra/chakra_read.cpp
+  src/readers/goal/goal_read.cpp
+  src/readers/goal/goal_text.cpp
   src/readers/kineto/kineto_read.cpp
   src/readers/kineto/chunk_parser.cpp
   src/readers/kineto/merger.cpp
