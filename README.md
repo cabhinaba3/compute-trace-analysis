@@ -1,6 +1,6 @@
 # CTA v1.0 — Multi-Trace & Multi-Aspect Performance Comparison Framework
 
-**CTA (`compute-trace-analysis`)** is a cross-platform (macOS + Linux) performance comparison framework for distributed AI/HPC execution graphs, GPU profilers, inference engines, and edge power telemetry.
+**CTA (`compute-trace-analysis`)** is a Linux performance comparison framework for distributed AI/HPC execution graphs, GPU profilers, inference engines, and edge power telemetry.
 
 Originally developed for GPU/Jetson inference characterization (ISPASS'25), CTA v1.0 provides a unified **Content-Addressed Parquet Cache + Vectorized Polars/DuckDB/NumPy Engine** that compares **2-way (`Baseline` vs `Candidate`)** or **N-way** trace runs across latency, kernel shifts, compute/communication overlap, DAG critical paths, roofline efficiency, layer fusion, and system energy.
 
@@ -22,7 +22,7 @@ Originally developed for GPU/Jetson inference characterization (ISPASS'25), CTA 
 
 ## Installation
 
-Requires **Python >= 3.11** on macOS or Linux.
+Requires **Python >= 3.12** on **Linux** (x86_64). macOS is no longer supported. The package builds a C++ extension (`cta._native`, the synthetic trace generators) as part of `pip install`, so it needs a C++20 compiler plus the zlib, SQLite and Protobuf development packages (Debian/Ubuntu: `apt install g++ zlib1g-dev libsqlite3-dev libprotobuf-dev protobuf-compiler`). CMake, Ninja and nanobind are fetched by pip.
 
 ```bash
 git clone --recurse-submodules https://github.com/cabhinaba3/compute-trace-analysis.git

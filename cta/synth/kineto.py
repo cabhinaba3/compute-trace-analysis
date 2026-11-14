@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
+
+from cta import _native as native
 
 
 def write_kineto_trace(
@@ -31,121 +32,65 @@ def write_kineto_trace(
     Returns:
         ``path``.
     """
-    import gzip
-
     path.parent.mkdir(parents=True, exist_ok=True)
-    events: list[dict[str, object]] = []
-    step_ts_us = 1000.0
-    correlation_id = 100
-
-    gemm_kernel_name = (
-        "ampere_fp16_s16816gemm"
-        if kernel_variant == "fp16"
-        else "sm90_wgmma_fp8_gemm_kernel"
+    native.write_kineto_trace(
+        str(path),
+        steps=steps,
+        attn_us=attn_us,
+        gemm_us=gemm_us,
+        kernel_variant=kernel_variant,
     )
-    attention_kernel_name = (
-        "fmha_cutlassF_f16"
-        if kernel_variant == "fp16"
-        else "flash_attn_fwd_fp8_kernel"
-    )
-
-    for step in range(steps):
-        step_dur_us = attn_us + gemm_us + 50.0
-        events.append(
-            {
-                "ph": "X",
-                "cat": "user_annotation",
-                "name": f"ProfilerStep#{step}",
-                "ts": step_ts_us,
-                "dur": step_dur_us,
-                "pid": 1,
-                "tid": 1,
-            }
-        )
-
-        # Attention op -> launch -> GPU kernel.
-        events.append(
-            {
-                "ph": "X",
-                "cat": "cpu_op",
-                "name": "aten::scaled_dot_product_attention",
-                "ts": step_ts_us + 2.0,
-                "dur": 15.0,
-                "pid": 1,
-                "tid": 1,
-            }
-        )
-        events.append(
-            {
-                "ph": "X",
-                "cat": "cuda_runtime",
-                "name": "cudaLaunchKernel",
-                "ts": step_ts_us + 5.0,
-                "dur": 5.0,
-                "pid": 1,
-                "tid": 1,
-                "args": {"correlation": correlation_id},
-            }
-        )
-        events.append(
-            {
-                "ph": "X",
-                "cat": "kernel",
-                "name": attention_kernel_name,
-                "ts": step_ts_us + 10.0,
-                "dur": attn_us,
-                "pid": 0,
-                "tid": 7,
-                "args": {"correlation": correlation_id, "stream": 7},
-            }
-        )
-        correlation_id += 1
-
-        # Linear op -> launch -> GPU GEMM kernel.
-        gemm_ts_us = step_ts_us + 10.0 + attn_us
-        events.append(
-            {
-                "ph": "X",
-                "cat": "cpu_op",
-                "name": "aten::linear",
-                "ts": step_ts_us + 20.0,
-                "dur": 15.0,
-                "pid": 1,
-                "tid": 1,
-            }
-        )
-        events.append(
-            {
-                "ph": "X",
-                "cat": "cuda_runtime",
-                "name": "cudaLaunchKernel",
-                "ts": step_ts_us + 25.0,
-                "dur": 5.0,
-                "pid": 1,
-                "tid": 1,
-                "args": {"correlation": correlation_id},
-            }
-        )
-        events.append(
-            {
-                "ph": "X",
-                "cat": "kernel",
-                "name": gemm_kernel_name,
-                "ts": gemm_ts_us,
-                "dur": gemm_us,
-                "pid": 0,
-                "tid": 7,
-                "args": {"correlation": correlation_id, "stream": 7},
-            }
-        )
-        correlation_id += 1
-
-        step_ts_us += step_dur_us + 20.0
-
-    payload = json.dumps({"schemaVersion": 1, "traceEvents": events})
-    if path.suffix.lower() == ".gz":
-        with gzip.open(path, "wt", encoding="utf-8") as fh:
-            fh.write(payload)
-    else:
-        path.write_text(payload)
     return path
+
+
+def write_kineto_trace_large(
+    path: pathlib.Path,
+    *,
+    target_bytes: int = 200 << 20,
+    seed: int = 1,
+    rank: int = 0,
+    world_size: int = 1,
+    layers_per_step: int = 24,
+    child_cpu_ops_per_layer: int = 3,
+    python_events_per_layer: int = 2,
+    tensors_per_op: int = 3,
+    distributed_info_after: bool = True,
+) -> int:
+    """Writes a large Kineto trace with a realistic event mix.
+
+    Each step has CPU ops with large ``args``, ``cudaLaunchKernel`` calls,
+    kernels with long demangled names (some with braces and quotes), memcpy and
+    memset events, launch-to-kernel flow events, Python frames and metadata.
+    The same seed and parameters give the same bytes.
+
+    Args:
+        path: Output file; a ``.gz`` suffix writes gzip-compressed JSON. Its
+            parent directory is created if missing.
+        target_bytes: Uncompressed size to reach; whole steps are written, so
+            the file ends up slightly larger.
+        seed: Random seed.
+        rank: Rank recorded in ``distributedInfo`` and mixed into the seed.
+        world_size: World size recorded in ``distributedInfo``.
+        layers_per_step: Number of op/launch/kernel groups per step.
+        child_cpu_ops_per_layer: Small CPU ops per group.
+        python_events_per_layer: Python-frame events per group.
+        tensors_per_op: Number of input tensors in each op's ``args``.
+        distributed_info_after: Whether ``distributedInfo`` is written after
+            the ``traceEvents`` array, as some PyTorch versions do.
+
+    Returns:
+        The number of events written.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return native.write_kineto_trace_large(
+        str(path),
+        target_bytes=target_bytes,
+        seed=seed,
+        rank=rank,
+        world_size=world_size,
+        layers_per_step=layers_per_step,
+        child_cpu_ops_per_layer=child_cpu_ops_per_layer,
+        python_events_per_layer=python_events_per_layer,
+        tensors_per_op=tensors_per_op,
+        distributed_info_after=distributed_info_after,
+    )

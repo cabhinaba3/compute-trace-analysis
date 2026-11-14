@@ -7,6 +7,7 @@ import struct
 
 import numpy as np
 
+from cta import _native as native
 from cta.adapters.goal import reader
 
 # Byte offsets in the binary jump table count from the end of the 8-byte magic
@@ -49,79 +50,53 @@ def write_goal_allreduce(
         ``path``.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"num_ranks {world_size}", ""]
+    native.write_goal_allreduce(
+        str(path),
+        world_size=world_size,
+        compute_ns=compute_ns,
+        allreduce_bytes=allreduce_bytes,
+        steps=steps,
+        algorithm=algorithm,
+    )
+    return path
 
-    for rank in range(world_size):
-        lines.append(f"rank {rank} {{")
-        previous_label: str | None = None
-        label_count = 0
 
-        def next_label() -> str:
-            nonlocal label_count
-            label_count += 1
-            return f"l{label_count}"
+def write_goal_allreduce_bin(
+    path: pathlib.Path,
+    *,
+    world_size: int = 4,
+    compute_ns: int = 1_000_000,
+    allreduce_bytes: int = 400_000,
+    steps: int = 2,
+    algorithm: str = "ring",
+) -> pathlib.Path:
+    """Writes the same schedule as ``write_goal_allreduce`` as a `.bin` file.
 
-        for step in range(steps):
-            calc_label = next_label()
-            lines.append(f"{calc_label}: calc {compute_ns} cpu 0")
-            if previous_label:
-                lines.append(f"{calc_label} requires {previous_label}")
-            previous_label = calc_label
+    The binary is written directly, without parsing the text form, so it is
+    byte-identical to ``compile_goal_to_bin`` of the text schedule but much
+    faster for large rank counts.
 
-            if world_size <= 1:
-                continue
+    Args:
+        path: Output ``.bin`` file; its parent directory is created if missing.
+        world_size: Number of ranks.
+        compute_ns: Duration of each ``calc`` operation in nanoseconds.
+        allreduce_bytes: AllReduce buffer size in bytes.
+        steps: Number of compute + AllReduce steps per rank.
+        algorithm: ``"ring"`` for Ring AllReduce; anything else selects the
+            direct exchange.
 
-            if algorithm == "ring":
-                # Ring AllReduce: 2 * (P - 1) sequential phases with a chunk
-                # size of B / P.
-                chunk_bytes = allreduce_bytes // world_size
-                next_rank = (rank + 1) % world_size
-                previous_rank = (rank - 1 + world_size) % world_size
-                for phase in range(2 * (world_size - 1)):
-                    tag = step * 100 + phase
-                    send_label = next_label()
-                    recv_label = next_label()
-                    lines.append(
-                        f"{send_label}: send {chunk_bytes}b to {next_rank} "
-                        f"tag {tag} cpu 0 nic 0"
-                    )
-                    lines.append(
-                        f"{recv_label}: recv {chunk_bytes}b from "
-                        f"{previous_rank} tag {tag} cpu 0 nic 0"
-                    )
-                    lines.append(f"{send_label} requires {previous_label}")
-                    lines.append(f"{recv_label} requires {previous_label}")
-                    # The next ring phase waits for this phase's recv.
-                    previous_label = recv_label
-            else:
-                # Direct all-to-all exchange: each rank sends the full B bytes
-                # to every peer concurrently.
-                barrier_label = next_label()
-                lines.append(f"{barrier_label}: calc 0 cpu 0")
-                for peer in range(world_size):
-                    if peer == rank:
-                        continue
-                    tag = step * 100 + 1
-                    send_label = next_label()
-                    recv_label = next_label()
-                    lines.append(
-                        f"{send_label}: send {allreduce_bytes}b to {peer} "
-                        f"tag {tag} cpu 0 nic 0"
-                    )
-                    lines.append(
-                        f"{recv_label}: recv {allreduce_bytes}b from {peer} "
-                        f"tag {tag} cpu 0 nic 0"
-                    )
-                    lines.append(f"{send_label} requires {previous_label}")
-                    lines.append(f"{recv_label} requires {previous_label}")
-                    lines.append(f"{barrier_label} requires {send_label}")
-                    lines.append(f"{barrier_label} requires {recv_label}")
-                previous_label = barrier_label
-
-        lines.append("}")
-        lines.append("")
-
-    path.write_text("\n".join(lines))
+    Returns:
+        ``path``.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    native.write_goal_allreduce_bin(
+        str(path),
+        world_size=world_size,
+        compute_ns=compute_ns,
+        allreduce_bytes=allreduce_bytes,
+        steps=steps,
+        algorithm=algorithm,
+    )
     return path
 
 
