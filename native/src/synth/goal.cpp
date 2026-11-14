@@ -1,4 +1,4 @@
-#include "goal.hpp"
+#include "synth/goal.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -7,8 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "common.hpp"
-#include "goal_common.hpp"
+#include "common/common.hpp"
+#include "synth/goal_common.hpp"
 
 namespace cta {
 namespace {

@@ -1,4 +1,4 @@
-#include "intervals.hpp"
+#include "core/intervals.hpp"
 
 namespace cta {
 

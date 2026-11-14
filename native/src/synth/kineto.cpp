@@ -1,11 +1,11 @@
-#include "kineto.hpp"
+#include "synth/kineto.hpp"
 
 #include <algorithm>
 #include <array>
 #include <string>
 #include <string_view>
 
-#include "common.hpp"
+#include "common/common.hpp"
 
 namespace cta {
 namespace {

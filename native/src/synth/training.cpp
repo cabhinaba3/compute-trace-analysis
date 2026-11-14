@@ -1,4 +1,4 @@
-#include "training.hpp"
+#include "synth/training.hpp"
 
 #include <google/protobuf/util/delimited_message_util.h>
 #include <sched.h>
@@ -14,9 +14,9 @@
 #include <thread>
 #include <vector>
 
-#include "common.hpp"
+#include "common/common.hpp"
 #include "et_def.pb.h"
-#include "goal_common.hpp"
+#include "synth/goal_common.hpp"
 
 namespace cta {
 namespace {

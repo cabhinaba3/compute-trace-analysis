@@ -9,7 +9,7 @@
 #include <variant>
 #include <vector>
 
-#include "common.hpp"
+#include "common/common.hpp"
 
 namespace cta {
 

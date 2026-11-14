@@ -35,18 +35,28 @@ endif()
 protobuf_generate_cpp(CHAKRA_PROTO_SRCS CHAKRA_PROTO_HDRS
   "${CHAKRA_PROTO_DIR}/et_def.proto" "${CHAKRA_PROTO_DIR}/storage.proto")
 
+# Sources by area. Paths are relative to src/, which is also the include root,
+# so every #include names its file from there ("common/common.hpp"). The
+# helpers in src/common/ are header-only.
+set(CTA_CORE_SOURCES
+  src/core/intervals.cpp)
+set(CTA_SYNTH_SOURCES  # synthetic trace generators
+  src/synth/kineto.cpp
+  src/synth/goal.cpp
+  src/synth/nsys.cpp
+  src/synth/chakra.cpp
+  src/synth/training.cpp
+  src/synth/profilers.cpp)
+set(CTA_READER_SOURCES  # trace readers
+  src/readers/kineto/kineto_read.cpp)
+
 nanobind_add_module(_native NB_STATIC
   src/module.cpp
-  src/kineto.cpp
-  src/kineto_read.cpp
-  src/intervals.cpp
-  src/goal.cpp
-  src/nsys.cpp
-  src/chakra.cpp
-  src/training.cpp
-  src/small.cpp
+  ${CTA_CORE_SOURCES}
+  ${CTA_SYNTH_SOURCES}
+  ${CTA_READER_SOURCES}
   ${CHAKRA_PROTO_SRCS})
-target_include_directories(_native PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(_native PRIVATE ZLIB::ZLIB SQLite::SQLite3 protobuf::libprotobuf simdjson::simdjson Threads::Threads)
 target_compile_options(_native PRIVATE -Wall -Wextra)
 
