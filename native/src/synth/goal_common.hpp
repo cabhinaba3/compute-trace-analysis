@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <memory>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -99,13 +100,11 @@ inline std::string rank_blob(const RankGraph& r) {
 // only one rank is in memory at a time. Returns the total node count.
 template <typename FillRank>
 std::uint64_t write_file(const std::string& path, int num_ranks, FillRank&& fill_rank) {
-  std::FILE* f = std::fopen(path.c_str(), "wb");
-  if (!f) throw std::runtime_error("cannot open " + path);
+  std::unique_ptr<std::FILE, int (*)(std::FILE*)> file(std::fopen(path.c_str(), "wb"), &std::fclose);
+  if (!file) throw std::runtime_error("cannot open " + path);
+  std::FILE* f = file.get();
   auto check = [&](bool ok) {
-    if (!ok) {
-      std::fclose(f);
-      throw std::runtime_error("write failed: " + path);
-    }
+    if (!ok) throw std::runtime_error("write failed: " + path);
   };
   std::string head;
   put_le<std::uint64_t>(head, kMagicCookie);
@@ -132,7 +131,7 @@ std::uint64_t write_file(const std::string& path, int num_ranks, FillRank&& fill
   }
   check(std::fseek(f, static_cast<long>(head.size()), SEEK_SET) == 0);
   check(std::fwrite(offsets.data(), 1, offsets.size(), f) == offsets.size());
-  check(std::fclose(f) == 0);
+  check(std::fclose(file.release()) == 0);
   return total_nodes;
 }
 

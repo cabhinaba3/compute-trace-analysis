@@ -5,10 +5,11 @@
 #include <unordered_map>
 #include <vector>
 
-#include "readers/kineto/chunk.hpp"
 #include "common/interner.hpp"
-#include "readers/kineto/kineto_read.hpp"
 #include "common/launch_map.hpp"
+#include "common/util.hpp"
+#include "readers/kineto/chunk.hpp"
+#include "readers/kineto/kineto_read.hpp"
 
 namespace cta::kineto_reader {
 
@@ -23,10 +24,6 @@ class Merger {
   KinetoColumns finish();
 
  private:
-  template <typename T>
-  static void append(std::vector<T>& to, const std::vector<T>& from) {
-    to.insert(to.end(), from.begin(), from.end());
-  }
   static std::string encode(const Tag& tag, const Interner& tags);
 
   KinetoColumns out_;

@@ -18,22 +18,22 @@ void Merger::add(ChunkOut& c) {
   }
 
   for (int32_t n : c.g_name) out_.gpu_name.push_back(name_map[static_cast<std::size_t>(n)]);
-  append(out_.gpu_category, c.g_cat);
-  append(out_.gpu_start, c.g_start);
-  append(out_.gpu_end, c.g_end);
-  append(out_.gpu_bytes, c.g_bytes);
-  append(out_.gpu_stream, c.g_stream);
-  append(out_.gpu_device, c.g_device);
-  append(gpu_corr_, c.g_corr);
+  append_vector(out_.gpu_category, c.g_cat);
+  append_vector(out_.gpu_start, c.g_start);
+  append_vector(out_.gpu_end, c.g_end);
+  append_vector(out_.gpu_bytes, c.g_bytes);
+  append_vector(out_.gpu_stream, c.g_stream);
+  append_vector(out_.gpu_device, c.g_device);
+  append_vector(gpu_corr_, c.g_corr);
 
-  append(out_.op_start, c.o_start);
-  append(out_.op_end, c.o_end);
+  append_vector(out_.op_start, c.o_start);
+  append_vector(out_.op_end, c.o_end);
   for (int32_t n : c.o_name) out_.op_name.push_back(name_map[static_cast<std::size_t>(n)]);
   for (int32_t t : c.o_thread) out_.op_thread.push_back(thread_map[static_cast<std::size_t>(t)]);
 
-  append(out_.step_id, c.s_id);
-  append(out_.step_start, c.s_start);
-  append(out_.step_end, c.s_end);
+  append_vector(out_.step_id, c.s_id);
+  append_vector(out_.step_start, c.s_start);
+  append_vector(out_.step_end, c.s_end);
 
   for (std::size_t j = 0; j < c.r_name.size(); ++j) {
     const std::size_t code = static_cast<std::size_t>(name_map[static_cast<std::size_t>(c.r_name[j])]);

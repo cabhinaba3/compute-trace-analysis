@@ -16,7 +16,7 @@ namespace cta {
 class Sink {
  public:
   explicit Sink(const std::string& path) {
-    gz_ = path.size() >= 3 && path.compare(path.size() - 3, 3, ".gz") == 0;
+    gz_ = path.ends_with(".gz");
     if (gz_) {
       gzf_ = gzopen(path.c_str(), "wb6");
       if (!gzf_) throw std::runtime_error("cannot open " + path);

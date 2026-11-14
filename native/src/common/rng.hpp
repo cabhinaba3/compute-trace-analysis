@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#include "common/util.hpp"
+
 namespace cta {
 
 // xoshiro256** seeded through splitmix64. Range mapping is done by hand
@@ -13,10 +15,7 @@ class Rng {
   explicit Rng(std::uint64_t seed) {
     for (auto& w : s_) {
       seed += 0x9e3779b97f4a7c15ULL;
-      std::uint64_t z = seed;
-      z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-      z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-      w = z ^ (z >> 31);
+      w = mix64(seed);
     }
   }
   std::uint64_t next() {

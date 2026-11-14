@@ -46,7 +46,7 @@ class GzSource : public Source {
 };
 
 bool ends_with_gz(const std::string& path) {
-  return path.size() >= 3 && (path.compare(path.size() - 3, 3, ".gz") == 0 || path.compare(path.size() - 3, 3, ".GZ") == 0);
+  return path.ends_with(".gz") || path.ends_with(".GZ");
 }
 
 }  // namespace

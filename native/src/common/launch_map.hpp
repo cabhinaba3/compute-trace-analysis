@@ -5,6 +5,8 @@
 #include <limits>
 #include <vector>
 
+#include "common/util.hpp"
+
 namespace cta {
 
 // ---------------------------------------------------------------------------
@@ -47,16 +49,9 @@ class LaunchMap {
     std::int64_t start = 0;
     std::int64_t thread = 0;
   };
-  static std::uint64_t mix(std::uint64_t x) {
-    x ^= x >> 30;
-    x *= 0xbf58476d1ce4e5b9ULL;
-    x ^= x >> 27;
-    x *= 0x94d049bb133111ebULL;
-    return x ^ (x >> 31);
-  }
   std::size_t probe(std::int64_t key) const {
     const std::size_t mask = slots_.size() - 1;
-    std::size_t i = mix(static_cast<std::uint64_t>(key)) & mask;
+    std::size_t i = mix64(static_cast<std::uint64_t>(key)) & mask;
     while (slots_[i].key != kEmpty && slots_[i].key != key) i = (i + 1) & mask;
     return i;
   }
