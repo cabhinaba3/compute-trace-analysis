@@ -30,7 +30,8 @@ src/
   readers/chakra/         the Chakra .et reader (see below)
   readers/goal/           the GOAL text reader (see below)
   readers/kineto/         the Kineto trace reader (see below)
-  core/                   dag (critical path and slack), intervals (nesting_parents)
+  core/                   dag (critical path and slack), dag_edges (the graph's
+                          edge list), intervals (nesting_parents)
 ```
 
 Changing a Python-visible name or default means changing `cta/_native.pyi`,

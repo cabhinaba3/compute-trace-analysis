@@ -15,8 +15,12 @@
 - Text that is not UTF-8, or a number that does not fit its column (a tag over 2^32, a size over 2^64), now raises `ValueError` from the reader; the old parser raised from Polars or Python.
 - The `.bin` path and the `traffic` table are unchanged.
 
+### Native DAG edge build
+- `cta.core.dag._global_edges` builds the graph's edge list in C++ (`cta._native.build_dag_edges`) instead of with Polars joins: dependencies given by per-rank node ids are looked up through a direct index when each rank is one run of rows numbered 0, 1, 2, ... (what the GOAL and Chakra readers write) and through a hash table otherwise, on all CPUs; the k-th send of each channel is linked to its k-th receive with a flat hash table. A (rank, node id) that occurs on several rows still links every pair, and edges to unknown nodes are still dropped.
+- On the 512-rank training graph at 10.9M nodes the edge build takes 2.4 s instead of 5.8 s, and the whole `solve_distributed_dag` call 4.8 s instead of 8.2 s (48.8 s before the solver was native).
+
 ### Native DAG solver
-- `cta.core.dag.solve_distributed_dag` keeps its signature; the graph passes (CSR build with duplicate edges dropped, the forward Kahn pass, the backward slack pass and the critical chain) run in C++ (`cta._native.solve_dag`). Polars still builds the edge list, including the send-to-receive matching. Op classes are no longer turned into Python strings, and the `.unique()` over all edges is gone because the solver drops repeats itself.
+- `cta.core.dag.solve_distributed_dag` keeps its signature; the graph passes (CSR build with duplicate edges dropped, the forward Kahn pass, the backward slack pass and the critical chain) run in C++ (`cta._native.solve_dag`). The edge list is built natively too (next entry). Op classes are no longer turned into Python strings, and the `.unique()` over all edges is gone because the solver drops repeats itself.
 - **Behaviour change:** where predecessors tie on finish time and depth, the one with the lowest vertex id is the critical-path parent. Before, the first one seen won, and that depended on the order of the rows after `.unique()`, which Polars does not define. `cp_compute_ns`, `cp_exposed_comm_ns` and `cp_comm_bytes` can differ from earlier runs on graphs with such ties (1 of 12 random tie-heavy graphs in testing); every other field is unchanged, and the numbers no longer move between runs. The same graph now gives the same critical path whatever the order of its edge rows.
 - Floating-point sums (mean slack, critical-path compute and comm time) use extended precision instead of NumPy's pairwise sums and agree to well under 1e-9 relative.
 
