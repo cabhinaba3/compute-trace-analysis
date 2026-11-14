@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
+
+from cta import _native as native
 
 
 def write_jtop_trace(
@@ -35,22 +36,13 @@ def write_jtop_trace(
         ``path``.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    start_ns = 1_700_000_000_000_000_000
-    samples = []
-    for second in range(duration_s + 1):
-        sample: dict[str, object] = {
-            "time": start_ns + second * 1_000_000_000,
-            "GPU": gpu_util,
-            "gpu_memory_usage": gpu_mem_mb,
-            "RAM": 4096.0,
-            "SWAP": 128.0,
-            "Power TOT": power_mw,
-            "VDD_GPU_SOC": power_mw * 0.65,
-        }
-        for core in range(1, num_cores + 1):
-            sample[f"CPU{core}"] = 35.0
-        if temp_c is not None:
-            sample["Temp gpu"] = temp_c
-        samples.append(sample)
-    path.write_text(json.dumps(samples, indent=2))
+    native.write_jtop_trace(
+        str(path),
+        duration_s=duration_s,
+        num_cores=num_cores,
+        power_mw=power_mw,
+        gpu_util=gpu_util,
+        gpu_mem_mb=gpu_mem_mb,
+        temp_c=temp_c,
+    )
     return path

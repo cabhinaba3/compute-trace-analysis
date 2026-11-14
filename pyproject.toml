@@ -1,5 +1,5 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "nanobind>=2.0", "cmake>=3.18", "ninja"]
 build-backend = "hatchling.build"
 
 [project]
@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Cross-platform multi-trace and multi-aspect performance comparison framework for AI/HPC schedules and GPU profilers"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
     { name = "Abhinaba Chakraborty", email = "abhinabacr4@gmail.com" }
 ]
@@ -28,9 +28,7 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU General Public License v2 (GPLv2)",
-    "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -84,11 +82,14 @@ allow-direct-references = true
 [tool.hatch.version]
 path = "cta/__init__.py"
 
+[tool.hatch.build.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["cta"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 80  # Google Python Style Guide
 extend-exclude = ["third_party", "scripts"]
 
@@ -116,7 +117,7 @@ order-by-type = false
 docstring-code-format = true
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true

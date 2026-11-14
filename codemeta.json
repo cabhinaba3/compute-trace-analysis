@@ -9,7 +9,7 @@
   "issueTracker": "https://github.com/cabhinaba3/compute-trace-analysis/issues",
   "programmingLanguage": "Python 3",
   "runtimePlatform": [
-    "Python >=3.11"
+    "Python >=3.12"
   ],
   "operatingSystem": [
     "macOS",

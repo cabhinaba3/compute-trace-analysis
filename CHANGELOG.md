@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Native synthetic generators; Linux only; Python 3.12+ (breaking)
+- Python 3.11 is no longer supported: the package requires Python 3.12 or newer. The CI matrix, the classifiers, ruff's `target-version` and mypy's `python_version` moved to 3.12.
+- The synthetic trace generators in `cta.synth` (Kineto, GOAL text and binary, Chakra `.et` and host-ET, nsys SQLite, ncu, jtop, trtexec) are now C++ in `native/`, built into the package as `cta._native` by the same `pip install` (a hatch build hook runs CMake with nanobind; there is no second distribution). The Python generators are removed, so the module is required. Output is byte-identical to the old Python writers (nsys SQLite: identical rows), checked on GPULab.
+- New: `cta.synth.kineto.write_kineto_trace_large` (realistic event mix, any size, about 400 MB/s) and `cta.synth.goal.write_goal_allreduce_bin` (writes the `.bin` schedule directly).
+- macOS is no longer supported; the package needs Linux with a C++20 compiler and the zlib, SQLite and Protobuf development packages.
+
 ### Google Python style refactor (breaking)
 - The code now follows the Google Python Style Guide: 80-column lines, Google docstrings, one import per line, and modules imported instead of names (`from cta.core import models`, then `models.TraceArtifact`). Ruff's `D` (google convention) and `N` rules are on; `tests/unit/test_code_style.py` checks the import rule, which ruff cannot.
 - Renamed Parquet columns: `tag` is `message_tag` (nodes), `msg_count` is `message_count` (traffic), `arith_intensity` is `arithmetic_intensity` (ncu kernels, and the `roofline_diff` metric is `overall_arithmetic_intensity`), `power_tot_w` is `power_total_w` and `cum_energy_j` is `cumulative_energy_j` (jtop samples), `pct_time` is `time_share_pct` (trtexec layer profile). The chakra_et, chakra_host_et and goal adapters are now v1.1, jtop v1.2, ncu v2.1 and trtexec_profile v1.1, so cached tables are rebuilt once.

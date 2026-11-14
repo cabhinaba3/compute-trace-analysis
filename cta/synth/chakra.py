@@ -2,24 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import pathlib
-from typing import Any
 
-from cta.adapters.chakra import schema as chakra_schema
-
-
-def _add_int_attribute(node: Any, name: str, value: int) -> None:
-    """Appends an ``int64`` attribute to a Chakra protobuf node."""
-    attribute = node.attr.add()
-    attribute.name = name
-    attribute.int64_val = value
-
-
-def _append_length_delimited(buffer: bytearray, message_bytes: bytes) -> None:
-    """Appends a serialized message preceded by its varint-encoded length."""
-    buffer.extend(chakra_schema.encode_varint(len(message_bytes)))
-    buffer.extend(message_bytes)
+from cta import _native as native
 
 
 def write_chakra_et_run(
@@ -51,64 +36,16 @@ def write_chakra_et_run(
     Returns:
         The shard paths (``trace.rank<N>.et``), in rank order.
     """
-    # Lazy: these attributes load the protobuf module only when .et files are
-    # written.
-    node_message_type = chakra_schema.NodeMsg
-    metadata_message_type = chakra_schema.GlobalMetadataMsg
-    out_dir.mkdir(parents=True, exist_ok=True)
-    shard_paths: list[pathlib.Path] = []
-
-    for rank in range(world_size):
-        shard_bytes = bytearray()
-        metadata = metadata_message_type(version="0.0.4")
-        _append_length_delimited(shard_bytes, metadata.SerializeToString())
-
-        node_id = 0
-        previous_node_id: int | None = None
-        compute_duration_us = (
-            int(compute_us * straggler_factor)
-            if rank == straggler_rank
-            else compute_us
-        )
-
-        for step in range(steps):
-            compute_node = node_message_type(
-                id=node_id,
-                name=f"aten::mm_step{step}",
-                type=chakra_schema.COMP_NODE,
-                duration_micros=compute_duration_us,
-            )
-            if previous_node_id is not None:
-                compute_node.data_deps.append(previous_node_id)
-            _add_int_attribute(compute_node, "num_ops", 2 * 1024 * 1024)
-            _add_int_attribute(compute_node, "tensor_size", allreduce_bytes)
-            _append_length_delimited(
-                shard_bytes, compute_node.SerializeToString()
-            )
-            compute_node_id = node_id
-            node_id += 1
-
-            allreduce_node = node_message_type(
-                id=node_id,
-                name=f"nccl:all_reduce_step{step}",
-                type=chakra_schema.COMM_COLL_NODE,
-                duration_micros=max(10, allreduce_bytes // 1000),
-            )
-            allreduce_node.data_deps.append(compute_node_id)
-            # A comm_type of 0 is ALL_REDUCE.
-            _add_int_attribute(allreduce_node, "comm_type", 0)
-            _add_int_attribute(allreduce_node, "comm_size", allreduce_bytes)
-            _append_length_delimited(
-                shard_bytes, allreduce_node.SerializeToString()
-            )
-            previous_node_id = node_id
-            node_id += 1
-
-        shard_path = out_dir / f"trace.rank{rank}.et"
-        shard_path.write_bytes(bytes(shard_bytes))
-        shard_paths.append(shard_path)
-
-    return shard_paths
+    shard_paths = native.write_chakra_et_run(
+        str(out_dir),
+        world_size=world_size,
+        compute_us=compute_us,
+        allreduce_bytes=allreduce_bytes,
+        steps=steps,
+        straggler_rank=straggler_rank,
+        straggler_factor=straggler_factor,
+    )
+    return [pathlib.Path(shard) for shard in shard_paths]
 
 
 def write_chakra_host_et(
@@ -135,34 +72,7 @@ def write_chakra_host_et(
         ``path``.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    nodes = []
-    node_id = 1
-    previous_node_id = None
-    for step in range(steps):
-        nodes.append(
-            {
-                "id": node_id,
-                "name": f"aten::linear_{step}",
-                "ctrl_deps": (
-                    [previous_node_id] if previous_node_id is not None else []
-                ),
-                "dur_us": compute_us,
-            }
-        )
-        compute_node_id = node_id
-        node_id += 1
-        nodes.append(
-            {
-                "id": node_id,
-                "name": f"c10d::all_reduce_{step}",
-                "ctrl_deps": [compute_node_id],
-                "dur_us": comm_bytes / 1000.0,
-                "comm_bytes": comm_bytes,
-            }
-        )
-        previous_node_id = node_id
-        node_id += 1
-    path.write_text(
-        json.dumps({"schema": "1.0.2-chakra.0.0.4", "nodes": nodes})
+    native.write_chakra_host_et(
+        str(path), steps=steps, compute_us=compute_us, comm_bytes=comm_bytes
     )
     return path
