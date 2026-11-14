@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "readers/kineto/interner.hpp"
+#include "common/interner.hpp"
 
 namespace cta::kineto_reader {
 

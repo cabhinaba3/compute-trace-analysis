@@ -17,6 +17,18 @@ struct NumpyDtype<std::int8_t> {
   static constexpr const char* name = "int8";
 };
 template <>
+struct NumpyDtype<std::uint8_t> {
+  static constexpr const char* name = "uint8";
+};
+template <>
+struct NumpyDtype<std::uint32_t> {
+  static constexpr const char* name = "uint32";
+};
+template <>
+struct NumpyDtype<std::uint64_t> {
+  static constexpr const char* name = "uint64";
+};
+template <>
 struct NumpyDtype<std::int32_t> {
   static constexpr const char* name = "int32";
 };

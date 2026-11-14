@@ -48,6 +48,7 @@ set(CTA_SYNTH_SOURCES  # synthetic trace generators
   src/synth/training.cpp
   src/synth/profilers.cpp)
 set(CTA_READER_SOURCES  # trace readers
+  src/readers/chakra/chakra_read.cpp
   src/readers/kineto/kineto_read.cpp
   src/readers/kineto/chunk_parser.cpp
   src/readers/kineto/merger.cpp

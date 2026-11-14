@@ -23,14 +23,32 @@ src/
     rng.hpp                 deterministic random numbers
     json_value.hpp          a small JSON value for the writers
     cpus.hpp                usable_cpus(): reads the affinity mask
+    interner.hpp            distinct strings numbered by first appearance
+    ordered_pool.hpp        worker threads whose results are merged in task order
   synth/                  synthetic trace generators (kineto, goal, nsys,
                           chakra, training, profilers = ncu/jtop/trtexec)
+  readers/chakra/         the Chakra .et reader (see below)
   readers/kineto/         the Kineto trace reader (see below)
   core/                   interval helpers (nesting_parents)
 ```
 
 Changing a Python-visible name or default means changing `cta/_native.pyi`,
 the `cta.synth` wrappers and the tests too.
+
+## readers/chakra
+
+One `.et` file is one task. `read_chakra_files` gives each file to an
+`OrderedPool` worker, which streams the length-prefixed protobuf messages
+(`ParseDelimitedFromZeroCopyStream`, one `Node` object reused with `Clear()`)
+into columns, and the merge step appends the files in the order given. Strings
+(`name`, `comm_type`) are numbered per file and renumbered at the merge, so
+the codes follow first appearance and do not depend on the thread count.
+
+Attribute handling follows what the Python reader did: a later attribute with
+the same name wins, a present `comm_size` hides `tensor_size`, an integer
+`comm_type` names its collective (`COLL_<n>` if unknown), and a send or receive
+defaults its own side to the file's rank. The rank of each file is worked out
+in Python from the file name and passed in.
 
 ## readers/kineto
 
@@ -52,7 +70,6 @@ blocks      array into chunks                                match launches to G
 | `chunk_parser.*` | simdjson parsing of one chunk; the only file that includes simdjson besides the CMake link |
 | `pipeline.*` | worker threads, bounded queue, ordered merge thread |
 | `merger.*`, `launch_map.hpp` | renumbers names and threads in file order; resolves CUDA launches |
-| `interner.hpp` | distinct strings numbered by first appearance |
 
 Two rules keep the output independent of thread count, chunk size and block
 size: chunks are merged in file order, and ids are assigned at the merge, not

@@ -17,6 +17,12 @@ def read_kineto_trace(
     """Reads a Kineto trace (.json or .json.gz) into coded columns."""
     ...
 
+def read_chakra_et(
+    paths: list[str], ranks: list[int], threads: int = 0
+) -> dict[str, Any]:
+    """Reads Chakra .et files into dictionary-coded node and edge columns."""
+    ...
+
 def nesting_parents(starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
     """Returns the enclosing range of each range, -1 for none."""
     ...

@@ -5,6 +5,7 @@
 
 #include "bindings/bindings.hpp"
 #include "bindings/numpy.hpp"
+#include "readers/chakra/chakra_read.hpp"
 #include "readers/kineto/kineto_read.hpp"
 
 namespace nb = nanobind;
@@ -45,6 +46,28 @@ nb::dict kineto_columns_to_dict(cta::KinetoColumns&& c) {
   return d;
 }
 
+nb::dict chakra_columns_to_dict(cta::ChakraColumns&& c) {
+  nb::dict d;
+  d["names"] = nb::cast(c.names);
+  d["comm_types"] = nb::cast(c.comm_types);
+  d["rank"] = to_numpy(std::move(c.rank));
+  d["node_id"] = to_numpy(std::move(c.node_id));
+  d["name"] = to_numpy(std::move(c.name));
+  d["op_class"] = to_numpy(std::move(c.op_class));
+  d["comm_type"] = to_numpy(std::move(c.comm_type));
+  d["duration_ns"] = to_numpy(std::move(c.duration_ns));
+  d["size_bytes"] = to_numpy(std::move(c.size_bytes));
+  d["num_ops"] = to_numpy(std::move(c.num_ops));
+  d["src_rank"] = to_numpy(std::move(c.src_rank));
+  d["dst_rank"] = to_numpy(std::move(c.dst_rank));
+  d["message_tag"] = to_numpy(std::move(c.message_tag));
+  d["edge_rank"] = to_numpy(std::move(c.edge_rank));
+  d["edge_src"] = to_numpy(std::move(c.edge_src));
+  d["edge_dst"] = to_numpy(std::move(c.edge_dst));
+  d["edge_kind"] = to_numpy(std::move(c.edge_kind));
+  return d;
+}
+
 }  // namespace
 
 void bind_readers(nb::module_& m) {
@@ -61,6 +84,19 @@ void bind_readers(nb::module_& m) {
       },
       "path"_a, "threads"_a = 0, "chunk_bytes"_a = 32ull << 20, "block_bytes"_a = 8ull << 20,
       "Reads a Kineto trace (.json or .json.gz) into dictionary-coded columns.");
+
+  m.def(
+      "read_chakra_et",
+      [](const std::vector<std::string>& paths, const std::vector<std::uint32_t>& ranks, int threads) {
+        cta::ChakraColumns columns;
+        {
+          nb::gil_scoped_release release;
+          columns = cta::read_chakra_files(paths, ranks, threads);
+        }
+        return chakra_columns_to_dict(std::move(columns));
+      },
+      "paths"_a, "ranks"_a, "threads"_a = 0,
+      "Reads Chakra .et files (one rank each) into dictionary-coded node and edge columns.");
 }
 
 }  // namespace cta::bindings
