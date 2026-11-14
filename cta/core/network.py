@@ -71,7 +71,8 @@ SIZE_BUCKET_LABELS = (
 
 _KERNEL_RE = (
     r"nccl(?:Dev)?Kernel_(?<op>[A-Za-z]+)"
-    r"(?:_(?:Sum|Prod|Max|Min|PreMulSum|SumPostDiv)_[a-z0-9]+)?"
+    r"(?:_(?:Sum|Prod|Max|Min|PreMulSum|SumPostDiv))?"
+    r"(?:_(?:f|bf|u|i)[0-9][a-z0-9]*)?"
     r"(?:_(?<algo>RING|TREE|COLLNET_DIRECT|COLLNET_CHAIN|NVLS_TREE|NVLS|PAT))?"
     r"(?:_(?<proto>LL128|LL|SIMPLE))?"
 )
