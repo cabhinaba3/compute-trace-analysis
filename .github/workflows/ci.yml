@@ -25,7 +25,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev libsqlite3-dev libprotobuf-dev protobuf-compiler
+        run: sudo apt-get update && sudo apt-get install -y g++ zlib1g-dev libsqlite3-dev libprotobuf-dev protobuf-compiler libsimdjson-dev
 
       - name: Install package & dev dependencies
         run: |

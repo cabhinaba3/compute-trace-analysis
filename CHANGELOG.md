@@ -7,7 +7,12 @@
 - The synthetic trace generators in `cta.synth` (Kineto, GOAL text and binary, Chakra `.et` and host-ET, nsys SQLite, ncu, jtop, trtexec) are now C++ in `native/`, built into the package as `cta._native` by the same `pip install` (a hatch build hook runs CMake with nanobind; there is no second distribution). The Python generators are removed, so the module is required. Output is byte-identical to the old Python writers (nsys SQLite: identical rows), checked on GPULab.
 - New: `cta.synth.training` writes 3D-parallel (data, pipeline, tensor, optional MoE) training graphs as GOAL text, GOAL binary and Chakra shards, up to 512 ranks and beyond. GOAL spells collectives out as send/recv; Chakra keeps each collective as one node and only pipeline traffic as send/recv. The graphs have the cross-rank edges and varying level widths that the ring all-reduce generator lacks.
 - New: `cta.synth.kineto.write_kineto_trace_large` (realistic event mix, any size, about 400 MB/s) and `cta.synth.goal.write_goal_allreduce_bin` (writes the `.bin` schedule directly).
-- macOS is no longer supported; the package needs Linux with a C++20 compiler and the zlib, SQLite and Protobuf development packages.
+- macOS is no longer supported; the package needs Linux with a C++20 compiler and the zlib, SQLite, Protobuf and simdjson development packages.
+
+### Native Kineto reader
+- The Kineto adapter reads traces in C++ (`cta._native.read_kineto_trace`, simdjson). A splitter cuts the file into chunks at event boundaries while it reads (plain or gzip), worker threads parse the chunks, and the results are merged in file order, so the tables do not depend on the thread count. Launch correlation, step and CUDA-runtime totals are computed in C++; the Python adapter keeps the scope, step and table logic. The Python per-event loop is removed. Tables are identical to the old reader's on 17 fixtures (synthetic, adversarial, gzip, bare-list and epoch-scale timestamps), checked on GPULab.
+- On a 1 GB synthetic trace (16 CPUs): 3.8 s instead of 39.8 s, and 1.06 GB of RSS instead of 5.04 GB.
+- `cta.core.intervals`: the nesting-parent loop runs in C++ (`cta._native.nesting_parents`), `build_thread_ranges_arrays` takes NumPy arrays, and `range_paths` no longer loops over every range in Python.
 
 ### Google Python style refactor (breaking)
 - The code now follows the Google Python Style Guide: 80-column lines, Google docstrings, one import per line, and modules imported instead of names (`from cta.core import models`, then `models.TraceArtifact`). Ruff's `D` (google convention) and `N` rules are on; `tests/unit/test_code_style.py` checks the import rule, which ruff cannot.

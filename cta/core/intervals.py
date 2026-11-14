@@ -3,8 +3,19 @@
 from __future__ import annotations
 
 import dataclasses
+from typing import Protocol
 
 import numpy as np
+
+from cta import _native as native
+
+
+class _NameLookup(Protocol):
+    """Anything that gives the name of a range id: a list or a lazy lookup."""
+
+    def __getitem__(self, index: int, /) -> str:
+        """Returns the name of one range."""
+        ...
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -172,6 +183,23 @@ class ThreadRanges:
     parent: np.ndarray
 
 
+def _link_parents(starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
+    """Returns each range's enclosing range, for ranges sorted by start.
+
+    Args:
+        starts: Range starts, ascending, longer range first on equal starts.
+        ends: Range ends.
+
+    Returns:
+        The index of the latest earlier range that has not ended by a
+        range's start, or -1 for a range with none.
+    """
+    return native.nesting_parents(
+        np.ascontiguousarray(starts, dtype=np.int64),
+        np.ascontiguousarray(ends, dtype=np.int64),
+    )
+
+
 def build_thread_ranges(rows: list[tuple[int, int, int]]) -> ThreadRanges:
     """Sorts one thread's ranges and links each to its enclosing range.
 
@@ -189,14 +217,32 @@ def build_thread_ranges(rows: list[tuple[int, int, int]]) -> ThreadRanges:
     starts = np.array([row[0] for row in rows], dtype=np.int64)
     ends = np.array([row[1] for row in rows], dtype=np.int64)
     gids = np.array([row[2] for row in rows], dtype=np.int64)
-    parent = np.full(len(rows), -1, dtype=np.int64)
-    open_ranges: list[int] = []
-    for i in range(len(rows)):
-        while open_ranges and ends[open_ranges[-1]] <= starts[i]:
-            open_ranges.pop()
-        parent[i] = open_ranges[-1] if open_ranges else -1
-        open_ranges.append(i)
-    return ThreadRanges(starts, ends, gids, parent)
+    return ThreadRanges(starts, ends, gids, _link_parents(starts, ends))
+
+
+def build_thread_ranges_arrays(
+    starts: np.ndarray, ends: np.ndarray, gids: np.ndarray
+) -> ThreadRanges:
+    """Does what ``build_thread_ranges`` does, for ranges held in arrays.
+
+    Args:
+        starts: Start of each range.
+        ends: End of each range.
+        gids: Global id of each range.
+
+    Returns:
+        The thread's ranges. Ranges with equal start and end keep the order
+        they have in the input.
+    """
+    order = np.lexsort((-ends, starts))
+    sorted_starts = starts[order].astype(np.int64, copy=False)
+    sorted_ends = ends[order].astype(np.int64, copy=False)
+    return ThreadRanges(
+        sorted_starts,
+        sorted_ends,
+        gids[order].astype(np.int64, copy=False),
+        _link_parents(sorted_starts, sorted_ends),
+    )
 
 
 def innermost_range(
@@ -235,7 +281,7 @@ def innermost_range(
 def range_paths(
     threads: dict[int, ThreadRanges],
     range_ids: np.ndarray,
-    names: list[str],
+    names: _NameLookup,
     separator: str = " > ",
 ) -> np.ndarray:
     """Returns the outermost-to-innermost chain of range names per range id.
@@ -249,20 +295,28 @@ def range_paths(
     Returns:
         An object array of strings, ``""`` where ``range_ids`` is -1.
     """
-    parent_by_gid: dict[int, int] = {}
+    size = max(
+        (
+            int(t.range_ids.max()) + 1
+            for t in threads.values()
+            if len(t.range_ids)
+        ),
+        default=0,
+    )
+    parent_array = np.full(size, -1, dtype=np.int64)
     for thread in threads.values():
-        for i in range(len(thread.range_ids)):
-            parent_by_gid[int(thread.range_ids[i])] = (
-                int(thread.range_ids[thread.parent[i]])
-                if thread.parent[i] >= 0
-                else -1
-            )
+        if not len(thread.range_ids):
+            continue
+        has_parent = thread.parent >= 0
+        enclosing = thread.range_ids[np.where(has_parent, thread.parent, 0)]
+        parent_array[thread.range_ids] = np.where(has_parent, enclosing, -1)
+    parent_by_gid = parent_array.tolist()
     path_by_gid: dict[int, str] = {-1: ""}
 
     def path_of(range_id: int) -> str:
         """Returns (and memoises) the name chain of one range id."""
         if range_id not in path_by_gid:
-            parent_id = parent_by_gid.get(range_id, -1)
+            parent_id = parent_by_gid[range_id] if range_id < size else -1
             path_by_gid[range_id] = (
                 f"{path_of(parent_id)}{separator}{names[range_id]}"
                 if parent_id >= 0
@@ -270,9 +324,12 @@ def range_paths(
             )
         return path_by_gid[range_id]
 
-    return np.array(
-        [path_of(int(range_id)) for range_id in range_ids], dtype=object
+    distinct, inverse = np.unique(range_ids, return_inverse=True)
+    distinct_paths = np.array(
+        [path_of(int(range_id)) for range_id in distinct.tolist()],
+        dtype=object,
     )
+    return distinct_paths[inverse]
 
 
 def assign_ranges(

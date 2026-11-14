@@ -22,7 +22,7 @@ Originally developed for GPU/Jetson inference characterization (ISPASS'25), CTA 
 
 ## Installation
 
-Requires **Python >= 3.12** on **Linux** (x86_64). macOS is no longer supported. The package builds a C++ extension (`cta._native`, the synthetic trace generators) as part of `pip install`, so it needs a C++20 compiler plus the zlib, SQLite and Protobuf development packages (Debian/Ubuntu: `apt install g++ zlib1g-dev libsqlite3-dev libprotobuf-dev protobuf-compiler`). CMake, Ninja and nanobind are fetched by pip.
+Requires **Python >= 3.12** on **Linux** (x86_64). macOS is no longer supported. The package builds a C++ extension (`cta._native`: the synthetic trace generators and the Kineto reader) as part of `pip install`, so it needs a C++20 compiler plus the zlib, SQLite, Protobuf and simdjson development packages (Debian/Ubuntu: `apt install g++ zlib1g-dev libsqlite3-dev libprotobuf-dev protobuf-compiler libsimdjson-dev`). CMake, Ninja and nanobind are fetched by pip.
 
 ```bash
 git clone --recurse-submodules https://github.com/cabhinaba3/compute-trace-analysis.git
