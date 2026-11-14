@@ -15,6 +15,7 @@ import warnings
 import polars as pl
 import pytest
 
+from cta import _native as native
 from cta.core import dag
 
 _NOMINAL_COLLECTIVE_NS = (
@@ -327,3 +328,80 @@ def test_the_result_does_not_depend_on_the_order_of_the_edge_rows() -> None:
     for seed in range(4):
         shuffled = edges.sample(fraction=1.0, shuffle=True, seed=seed)
         assert dag.solve_distributed_dag(nodes, shuffled) == first
+
+
+def _edge_pairs(
+    ops: Sequence[tuple[object, ...]], edges: Sequence[tuple[int, int, int]]
+) -> set[tuple[int, int]]:
+    nodes, edge_table = _frames(ops, edges)
+    sources, destinations = dag._global_edges(
+        nodes.with_row_index("vid"), edge_table
+    )
+    return set(zip(sources.tolist(), destinations.tolist(), strict=True))
+
+
+def test_node_ids_may_be_sparse_and_huge() -> None:
+    ops = [
+        (0, 7, "compute", 1, 0),
+        (0, 2**63, "compute", 1, 0),
+        (1, 2**64 - 1, "compute", 1, 0),
+    ]
+    assert _edge_pairs(ops, [(0, 7, 2**63), (0, 2**63, 5)]) == {(0, 1)}
+
+
+def test_a_node_id_on_two_rows_links_every_pair() -> None:
+    ops = [
+        (0, 1, "compute", 1, 0),
+        (0, 2, "compute", 1, 0),
+        (0, 1, "compute", 1, 0),
+        (0, 2, "compute", 1, 0),
+    ]
+    # Both rows that hold node 1 depend-link to both rows that hold node 2.
+    assert _edge_pairs(ops, [(0, 1, 2)]) == {(0, 1), (0, 3), (2, 1), (2, 3)}
+
+
+def test_ranks_in_separate_runs_are_still_found() -> None:
+    ops = [
+        (0, 1, "compute", 1, 0),
+        (1, 1, "compute", 1, 0),
+        (0, 2, "compute", 1, 0),
+        (1, 2, "compute", 1, 0),
+    ]
+    assert _edge_pairs(ops, [(0, 1, 2), (1, 2, 1)]) == {(0, 2), (3, 1)}
+
+
+def test_unmatched_sends_and_receives_make_no_link() -> None:
+    ops = [
+        (0, 1, "comm_send", 1, 8, 0, 1, 3),
+        (0, 2, "comm_send", 1, 8, 0, 1, 3),
+        (0, 3, "comm_send", 1, 8, 0, 1, 3),
+        (1, 1, "comm_recv", 1, 8, 0, 1, 3),
+        (1, 2, "comm_recv", 1, 8, 0, 1, 3),
+        (1, 3, "comm_recv", 1, 8, 2, 1, 3),  # another channel
+    ]
+    # Three sends and two receives on one channel pair up twice, in row order.
+    assert _edge_pairs(ops, []) == {(0, 3), (1, 4)}
+
+
+def test_the_edges_do_not_depend_on_the_thread_count() -> None:
+    nodes, edges = _frames(*random_graph(21, 2000, 6, True))
+    indexed = nodes.with_row_index("vid")
+
+    def build(threads: int) -> tuple[list[int], list[int]]:
+        op_class = indexed["op_class"]
+        sources, destinations, _ = native.build_dag_edges(
+            dag._key(indexed["rank"]),
+            dag._key(indexed["node_id"]),
+            (op_class == "comm_send").to_numpy(),
+            (op_class == "comm_recv").to_numpy(),
+            indexed["src_rank"].cast(pl.Int64).to_numpy(),
+            indexed["dst_rank"].cast(pl.Int64).to_numpy(),
+            indexed["message_tag"].cast(pl.Int64).to_numpy(),
+            dag._key(edges["rank"]),
+            dag._key(edges["src_id"]),
+            dag._key(edges["dst_id"]),
+            threads,
+        )
+        return sources.tolist(), destinations.tolist()
+
+    assert build(1) == build(8)

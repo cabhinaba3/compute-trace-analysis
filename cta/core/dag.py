@@ -15,8 +15,6 @@ from cta import _native as native
 _NOMINAL_LATENCY_NS = 500.0
 _NOMINAL_OVERHEAD_NS = 150.0
 _NOMINAL_INV_BW_NS_PER_BYTE = 0.02  # 50 GB/s
-# Columns that identify one point-to-point channel.
-_P2P_CHANNEL_COLUMNS = ["src_rank", "dst_rank", "message_tag"]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -126,82 +124,54 @@ def solve_distributed_dag(nodes: pl.DataFrame, edges: pl.DataFrame) -> DagStats:
     )
 
 
+def _key(column: pl.Series) -> np.ndarray:
+    """Returns an integer column as 64-bit keys that are equal when values are.
+
+    Unsigned columns keep their value; signed ones are read as the bit pattern
+    of their 64-bit value, so the same number in a signed and an unsigned
+    column gives the same key.
+    """
+    if column.dtype.is_unsigned_integer():
+        return column.cast(pl.UInt64).to_numpy()
+    return column.cast(pl.Int64).to_numpy().view(np.uint64)
+
+
 def _global_edges(
     indexed: pl.DataFrame, edges: pl.DataFrame
 ) -> tuple[np.ndarray, np.ndarray]:
     """Returns the source and destination vertex ids of all edges.
 
+    A vertex is a row of ``indexed``. Each intra-rank dependency becomes an
+    edge between the rows that hold its two node ids, and the k-th send of
+    each point-to-point channel (src_rank, dst_rank, message_tag) is linked to
+    its k-th receive.
+
     Args:
-        indexed: The nodes, with their global vertex id in column ``vid``.
+        indexed: The nodes.
         edges: Intra-rank dependency edges in per-rank node ids.
 
     Returns:
         Two equally long arrays: edge sources and edge destinations. An
         edge can appear more than once.
     """
-    vertex_ids = indexed.select("rank", "node_id", "vid")
-
-    # Map intra-rank edges to global vertex ids.
-    intra = (
-        edges.join(
-            vertex_ids,
-            left_on=["rank", "src_id"],
-            right_on=["rank", "node_id"],
-            how="inner",
-        )
-        .rename({"vid": "u"})
-        .join(
-            vertex_ids,
-            left_on=["rank", "dst_id"],
-            right_on=["rank", "node_id"],
-            how="inner",
-        )
-        .rename({"vid": "v"})
-        .select("u", "v")
+    op_class = indexed["op_class"]
+    sources, destinations, _ = native.build_dag_edges(
+        _key(indexed["rank"]),
+        _key(indexed["node_id"]),
+        np.ascontiguousarray(
+            (op_class == "comm_send").fill_null(False).to_numpy()
+        ),
+        np.ascontiguousarray(
+            (op_class == "comm_recv").fill_null(False).to_numpy()
+        ),
+        np.ascontiguousarray(indexed["src_rank"].cast(pl.Int64).to_numpy()),
+        np.ascontiguousarray(indexed["dst_rank"].cast(pl.Int64).to_numpy()),
+        np.ascontiguousarray(indexed["message_tag"].cast(pl.Int64).to_numpy()),
+        _key(edges["rank"]),
+        _key(edges["src_id"]),
+        _key(edges["dst_id"]),
     )
-
-    # Pair the k-th send with the k-th recv of each channel, vectorised.
-    sends = _p2p_endpoints(indexed, "comm_send", "u")
-    recvs = _p2p_endpoints(indexed, "comm_recv", "v")
-    inter = sends.join(
-        recvs, on=[*_P2P_CHANNEL_COLUMNS, "_seq"], how="inner"
-    ).select("u", "v")
-
-    # Repeated edges are dropped by the solver.
-    all_edges = pl.concat([intra, inter])
-    return (
-        all_edges["u"].to_numpy().astype(np.uint32, copy=False),
-        all_edges["v"].to_numpy().astype(np.uint32, copy=False),
-    )
-
-
-def _p2p_endpoints(
-    indexed: pl.DataFrame, op_class: str, vertex_column: str
-) -> pl.DataFrame:
-    """Returns the send or recv ops numbered by order within their channel.
-
-    Args:
-        indexed: The nodes, with their global vertex id in column ``vid``.
-        op_class: ``"comm_send"`` or ``"comm_recv"``.
-        vertex_column: Name to give the vertex id column.
-
-    Returns:
-        The channel columns, the sequence number ``_seq`` within the channel
-        and the vertex id.
-    """
-    return (
-        indexed.filter(pl.col("op_class") == op_class)
-        .with_columns(
-            pl.cum_count("vid").over(_P2P_CHANNEL_COLUMNS).alias("_seq")
-        )
-        .select(
-            pl.col("src_rank"),
-            pl.col("dst_rank"),
-            pl.col("message_tag"),
-            pl.col("_seq"),
-            pl.col("vid").alias(vertex_column),
-        )
-    )
+    return sources, destinations
 
 
 def _nominal_comm_cost_ns(size_bytes: np.ndarray) -> np.ndarray:

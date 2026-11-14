@@ -40,6 +40,7 @@ protobuf_generate_cpp(CHAKRA_PROTO_SRCS CHAKRA_PROTO_HDRS
 # helpers in src/common/ are header-only.
 set(CTA_CORE_SOURCES
   src/core/dag.cpp
+  src/core/dag_edges.cpp
   src/core/intervals.cpp)
 set(CTA_SYNTH_SOURCES  # synthetic trace generators
   src/synth/kineto.cpp
