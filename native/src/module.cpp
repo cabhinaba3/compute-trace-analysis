@@ -107,7 +107,8 @@ NB_MODULE(_native, m) {
       .def_rw("pp_bytes", &cta::TrainingSpec::pp_bytes)
       .def_rw("dp_bytes", &cta::TrainingSpec::dp_bytes)
       .def_rw("moe_bytes", &cta::TrainingSpec::moe_bytes)
-      .def("ranks", &cta::TrainingSpec::ranks);
+      .def("ranks", &cta::TrainingSpec::ranks)
+      .def("validate", &cta::TrainingSpec::validate);
 
   m.def("write_goal_training", &cta::write_goal_training, "path"_a, "spec"_a,
         call_guard<Nogil>());

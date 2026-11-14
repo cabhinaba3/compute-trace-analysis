@@ -30,13 +30,18 @@ struct After {
 };
 
 enum Kind : int { kTpF, kTpB, kMoeF1, kMoeF2, kMoeB1, kMoeB2, kPpF, kPpB, kDp };
-constexpr std::uint64_t kMaxPhase = 4096;  // ring phases per collective
 constexpr std::uint64_t kTagLimit = 1ull << 31;
+
+// Tags of the phases of one ring all-reduce are consecutive, so each collective
+// gets a span of 2 * (largest group size) tags (a ring has 2 * (g - 1) phases).
+std::uint64_t phase_span(const TrainingSpec& s) {
+  return 2ull * static_cast<std::uint64_t>(std::max({s.dp, s.tp, s.ep_size}));
+}
 
 std::uint64_t tag_of(const TrainingSpec& s, int step, int mb, int layer, Kind kind) {
   const std::uint64_t slot =
       (static_cast<std::uint64_t>(step) * s.microbatches + mb) * (s.layers_per_stage + 1) + layer;
-  return (slot * 16 + kind) * kMaxPhase;
+  return (slot * 16 + kind) * phase_span(s);
 }
 
 // GOAL has only calc/send/recv, so collectives become ring all-reduce phases and
@@ -272,8 +277,7 @@ void TrainingSpec::validate() const {
   if (microbatches < 1 || layers_per_stage < 1 || steps < 1) bad("microbatches, layers_per_stage and steps must be at least 1");
   if (dp_buckets < 1 || dp_buckets > layers_per_stage) bad("dp_buckets must be between 1 and layers_per_stage");
   if (moe_every < 0 || ep_size < 1 || dp % ep_size != 0) bad("ep_size must divide dp, and moe_every must be >= 0");
-  if (std::max({dp, tp, ep_size}) > static_cast<int>(kMaxPhase / 2)) bad("a collective group is too large for the tag layout");
-  if (static_cast<std::uint64_t>(steps) * microbatches * (layers_per_stage + 1) * 16 * kMaxPhase >= kTagLimit)
+  if (static_cast<std::uint64_t>(steps) * microbatches * (layers_per_stage + 1) * 16 * phase_span(*this) >= kTagLimit)
     bad("steps * microbatches * layers_per_stage is too large for 31-bit message tags");
 }
 
