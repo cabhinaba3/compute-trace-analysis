@@ -19,8 +19,6 @@ if TYPE_CHECKING:
     from cta.core import models
     from cta.viz import ir
 
-_RENDER_KEYS = ("theme", "palette", "width", "height")
-
 
 def build_chart(
     ctx: data.DataContext, kind: str, options: Mapping[str, Any] | None = None

@@ -84,7 +84,7 @@ def _overlap_per_device(
     required_formats=step_slicing.TIMELINE_FORMATS,
     any_of_formats=True,
 )
-class TimelineOverlapAspect:
+class TimelineOverlapAspect(registry.ComparisonAspect):
     """Compares GPU busy/idle time, comm overlap and sampled GPU metrics.
 
     Attributes:
@@ -93,11 +93,6 @@ class TimelineOverlapAspect:
         required_formats: Formats that provide a step table.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "timeline_overlap"
-    title = "Timeline Utilization, Overlap & GPU Metrics"
-    required_formats = step_slicing.TIMELINE_FORMATS
-    any_of_formats = True
 
     def run(
         self,

@@ -11,19 +11,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 import json
 import pathlib
-import re
 from typing import Any
 
 import numpy as np
 import polars as pl
 
 from cta import _native as native
+from cta.core import bundle
 from cta.core import models
 from cta.core import registry
-
-_RANK_FILE_RE = re.compile(
-    r"(?:rank[_.-]?|\.r?)(\d+)(?:\.[^.]+)+$", re.IGNORECASE
-)
 
 NODES_SCHEMA = pl.Schema(
     {
@@ -78,15 +74,6 @@ _HOST_OP_PATTERNS: tuple[tuple[tuple[str, ...], str, str], ...] = (
     (("send",), "comm_send", "SEND"),
     (("recv",), "comm_recv", "RECV"),
 )
-
-
-def _infer_rank(path: pathlib.Path, fallback_rank: int) -> int:
-    """Returns the rank in a file name such as ``trace.rank3.et``.
-
-    Falls back to ``fallback_rank`` when the name carries no rank.
-    """
-    match = _RANK_FILE_RE.search(path.name)
-    return int(match.group(1)) if match else fallback_rank
 
 
 def _dependency_rows(
@@ -221,9 +208,7 @@ def _rows_to_frame(
     rows: list[dict[str, object]], frame_schema: pl.Schema
 ) -> pl.DataFrame:
     """Builds a frame from rows, or an empty frame with the given schema."""
-    if rows:
-        return pl.DataFrame(rows, schema=frame_schema)
-    return pl.DataFrame(schema=frame_schema)
+    return pl.DataFrame(rows, schema=frame_schema)
 
 
 def _write_tables(
@@ -243,13 +228,14 @@ def _write_tables(
     world_size = max(artifact.world_size, ranks_seen)
     traffic = _build_traffic_df(nodes, world_size)
 
-    nodes_path = out_dir / "nodes.parquet"
-    edges_path = out_dir / "edges.parquet"
-    traffic_path = out_dir / "traffic.parquet"
-    nodes.write_parquet(nodes_path, compression="zstd")
-    edges.write_parquet(edges_path, compression="zstd")
-    traffic.write_parquet(traffic_path, compression="zstd")
-    return {"nodes": nodes_path, "edges": edges_path, "traffic": traffic_path}
+    return bundle.write_tables(
+        out_dir,
+        {
+            "nodes": nodes,
+            "edges": edges,
+            "traffic": traffic,
+        },
+    )
 
 
 # Codes the native reader gives to the op classes and dependency kinds.
@@ -311,9 +297,12 @@ class ChakraEtAdapter:
             to their Parquet paths.
         """
         paths = sorted(artifact.paths)
+        ranks = [
+            bundle.infer_rank(path, index) for index, path in enumerate(paths)
+        ]
         columns = native.read_chakra_et(
             [str(path) for path in paths],
-            [_infer_rank(path, index) for index, path in enumerate(paths)],
+            ranks,
         )
         nodes = pl.DataFrame(
             {
@@ -419,16 +408,10 @@ class ChakraHostEtAdapter:
             or "execution_trace" in lower_name
         ):
             return True
-        try:
-            with path.open("rb") as fh:
-                head = fh.read(4096).decode("utf-8", errors="ignore")
-            return (
-                '"ctrl_deps"' in head
-                and '"nodes"' in head
-                and '"schema"' in head
-            )
-        except OSError:
-            return False
+        head = bundle.peek_text(path, 4096)
+        return (
+            '"ctrl_deps"' in head and '"nodes"' in head and '"schema"' in head
+        )
 
     def ingest(
         self, artifact: models.TraceArtifact, out_dir: pathlib.Path
@@ -449,7 +432,7 @@ class ChakraHostEtAdapter:
         node_rows: list[dict[str, object]] = []
         edge_rows: list[dict[str, object]] = []
         for file_index, path in enumerate(sorted(artifact.paths)):
-            rank = _infer_rank(path, file_index)
+            rank = bundle.infer_rank(path, file_index)
             trace = json.loads(path.read_text())
             for node in trace.get("nodes", []):
                 node_id = int(node["id"])

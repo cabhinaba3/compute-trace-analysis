@@ -148,7 +148,7 @@ if _HTA_AVAILABLE:
         required_formats=("kineto",),
         default_enabled=False,
     )
-    class HtaKinetoAspect:
+    class HtaKinetoAspect(registry.ComparisonAspect):
         """Compares HTA's idle-time, launch-delay and queue-length metrics.
 
         Registered only when HTA is installed.
@@ -160,12 +160,6 @@ if _HTA_AVAILABLE:
             any_of_formats: Whether one of ``required_formats`` is enough.
             default_enabled: False: runs only when requested by name.
         """
-
-        name = "hta_kineto"
-        title = "HTA GPU Health: Idle Attribution, Launch Delay & Queue Length"
-        required_formats = ("kineto",)
-        any_of_formats = False
-        default_enabled = False
 
         def run(
             self,

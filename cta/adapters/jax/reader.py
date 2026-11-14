@@ -32,6 +32,7 @@ import polars as pl
 
 from cta.adapters.nsys import reader as nsys_reader
 from cta.core import alignment
+from cta.core import bundle
 from cta.core import models
 from cta.core import registry
 
@@ -50,20 +51,6 @@ _COPY_RE = re.compile(
 _EXECUTE_PREFIX = "CommonPjRtLoadedExecutable::Execute ("
 _BYTES_RE = re.compile(r"(?:size|num_bytes):(\d+)")
 _DEVICE_RE = re.compile(r"/device:(?:[A-Za-z]+):(\d+)")
-
-
-def _read_head(path: pathlib.Path, num_bytes: int = 512) -> str:
-    """Returns the first bytes of a (possibly gzipped) file as text.
-
-    Returns an empty string if the file cannot be read.
-    """
-    try:
-        opener = gzip.open if path.suffix == ".gz" else open
-        with opener(path, "rb") as fh:
-            head: bytes = fh.read(num_bytes)
-            return head.decode("utf-8", errors="ignore")
-    except OSError:
-        return ""
 
 
 def _host_stem(name: str) -> str | None:
@@ -180,7 +167,7 @@ class JaxAdapter:
         )
         if not is_json:
             return False
-        head = _read_head(path).lstrip()
+        head = bundle.peek_text(path).lstrip()
         # XProf and jax's Perfetto export both start with displayTimeUnit
         # "ns"; PyTorch/Kineto traces start with schemaVersion.
         return re.match(r'\{\s*"displayTimeUnit"\s*:\s*"ns"', head) is not None
@@ -230,16 +217,14 @@ class JaxAdapter:
             ],
             schema=nsys_reader.RUNTIME_SCHEMA,
         )
-        table_paths: dict[str, pathlib.Path] = {}
-        for table_name, table in (
-            ("kernels", kernels),
-            ("steps", steps),
-            ("runtime", runtime),
-        ):
-            table_path = out_dir / f"{table_name}.parquet"
-            table.write_parquet(table_path, compression="zstd")
-            table_paths[table_name] = table_path
-        return table_paths
+        return bundle.write_tables(
+            out_dir,
+            {
+                "kernels": kernels,
+                "steps": steps,
+                "runtime": runtime,
+            },
+        )
 
 
 def _us_to_ns(us: Any) -> int:

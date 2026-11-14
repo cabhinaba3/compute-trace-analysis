@@ -17,6 +17,7 @@ import pyarrow as pa
 
 from cta import _native as native
 from cta.adapters.chakra import reader
+from cta.core import bundle
 from cta.core import models
 from cta.core import registry
 
@@ -402,14 +403,11 @@ class GoalAdapter:
         )
         traffic = _p2p_traffic(all_nodes)
 
-        nodes_path = out_dir / "nodes.parquet"
-        edges_path = out_dir / "edges.parquet"
-        traffic_path = out_dir / "traffic.parquet"
-        all_nodes.write_parquet(nodes_path, compression="zstd")
-        all_edges.write_parquet(edges_path, compression="zstd")
-        traffic.write_parquet(traffic_path, compression="zstd")
-        return {
-            "nodes": nodes_path,
-            "edges": edges_path,
-            "traffic": traffic_path,
-        }
+        return bundle.write_tables(
+            out_dir,
+            {
+                "nodes": all_nodes,
+                "edges": all_edges,
+                "traffic": traffic,
+            },
+        )

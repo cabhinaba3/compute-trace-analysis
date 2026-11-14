@@ -14,8 +14,9 @@ import argparse
 import inspect
 import os
 import pathlib
-import runpy
 import sys
+
+from cta.profile import runners
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,27 +72,13 @@ def main(argv: list[str] | None = None) -> int:
             kwargs["acc_events"] = True
 
     handle = None
-    status = 0
     with profiler.profile(activities=activities, **kwargs) as prof:  # type: ignore[arg-type]
         if args.step_on == "optimizer":
             handle = optimizer.register_optimizer_step_post_hook(
                 lambda *_a, **_k: prof.step()
             )
         try:
-            if target[0] == "-m":
-                sys.argv = [target[1], *target[2:]]
-                runpy.run_module(target[1], run_name="__main__", alter_sys=True)
-            else:
-                sys.argv = target
-                runpy.run_path(target[0], run_name="__main__")
-        except SystemExit as exc:
-            status = exc.code if isinstance(exc.code, int) else 1
-        except Exception as exc:  # keep the trace collected up to the crash
-            print(
-                f"cta profile: target raised {type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            status = 1
+            status = runners.execute_target(target)
         finally:
             if handle is not None:
                 handle.remove()

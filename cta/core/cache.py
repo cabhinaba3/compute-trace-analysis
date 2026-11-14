@@ -12,8 +12,6 @@ import os
 import pathlib
 import shutil
 
-import polars as pl
-
 from cta.core import models
 from cta.core import registry
 
@@ -156,22 +154,6 @@ class CacheStore:
         )
         tmp_meta_path.replace(meta_path)
         return table_paths
-
-    def write_parquet(
-        self, frame: pl.DataFrame, path: pathlib.Path
-    ) -> pathlib.Path:
-        """Writes a frame as zstd-compressed Parquet.
-
-        Args:
-            frame: The frame to write.
-            path: Destination file; its parent directories are created.
-
-        Returns:
-            ``path``.
-        """
-        path.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path, compression="zstd", compression_level=3)
-        return path
 
     def status(self) -> dict[str, int]:
         """Returns the number of cache entries and their total size.

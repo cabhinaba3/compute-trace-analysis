@@ -109,22 +109,8 @@ GPU_METRICS_SCHEMA = pl.Schema(
     }
 )
 
-# GPU activities of one report, before labelling.
-_GPU_EVENTS_SCHEMA = {
-    "name": pl.String,
-    "category": pl.String,
-    "start_ns": pl.Int64,
-    "end_ns": pl.Int64,
-    "bytes": pl.Int64,
-    "stream": pl.Int32,
-    "device": pl.Int32,
-    "correlation_id": pl.Int64,
-}
-_LAUNCHES_SCHEMA = {
-    "correlation_id": pl.Int64,
-    "launch_thread_id": pl.Int64,
-    "launch_ns": pl.Int64,
-}
+# The category codes the native readers give GPU activities.
+GPU_CATEGORY_NAMES = {0: "compute", 1: "comm", 2: "memcpy"}
 # Step ranges of one report, before duration and rank are added.
 _STEP_RANGES_SCHEMA = {
     "step": pl.Int32,
@@ -136,16 +122,6 @@ _STEP_RE = re.compile(
     r"(?:profilerstep|step|iter|iteration|inference)[#_\s:-]*(\d+)",
     re.IGNORECASE,
 )
-# CUPTI memcpy kinds: 1 HtoD, 2 DtoH, 8 DtoD, 9 HtoH, 10 PtoP (others are rare
-# array/unified-memory copies).
-_MEMCPY_NAME_BY_KIND = {
-    1: "Memcpy_H2D",
-    2: "Memcpy_D2H",
-    8: "Memcpy_D2D",
-    9: "Memcpy_H2H",
-    10: "Memcpy_P2P",
-}
-_NVTX_RANGE_EVENT_TYPES = (59, 60)  # NvtxPushPopRange, NvtxStartEndRange
 # Tables of which any one marks an SQLite file as an Nsight Systems export.
 _NSYS_MARKER_TABLES = frozenset(
     {
@@ -481,9 +457,6 @@ def _summary_frame(summary: dict[str, Any], schema: pl.Schema) -> pl.DataFrame:
     )
 
 
-_CATEGORY_NAMES = {0: "compute", 1: "comm", 2: "memcpy"}
-
-
 def _gpu_events_frame(
     columns: dict[str, Any], order: np.ndarray
 ) -> pl.DataFrame:
@@ -509,7 +482,7 @@ def _gpu_events_frame(
             "name": distinct["name"].gather(name_rows),
             "category": pl.Series(
                 columns["gpu_category"][order]
-            ).replace_strict(_CATEGORY_NAMES, return_dtype=pl.String),
+            ).replace_strict(GPU_CATEGORY_NAMES, return_dtype=pl.String),
             "start_ns": columns["gpu_start"][order],
             "end_ns": columns["gpu_end"][order],
             "bytes": columns["gpu_bytes"][order],
@@ -710,9 +683,4 @@ class NsysAdapter:
             "osrt": merge_summaries("osrt", OSRT_SCHEMA),
             "gpu_metrics": concat_reports("gpu_metrics", GPU_METRICS_SCHEMA),
         }
-        table_paths: dict[str, pathlib.Path] = {}
-        for table_name, table in merged_tables.items():
-            table_path = out_dir / f"{table_name}.parquet"
-            table.write_parquet(table_path, compression="zstd")
-            table_paths[table_name] = table_path
-        return table_paths
+        return bundle.write_tables(out_dir, merged_tables)

@@ -119,9 +119,7 @@ def run_comparison(
         raise ValueError("Analysis requires at least 1 trace group")
     config = config or models.CompareConfig()
     group_tuple = tuple(groups)
-    common_formats = set(group_tuple[0].formats)
-    for group in group_tuple[1:]:
-        common_formats &= group.formats
+    common_formats = set.intersection(*(g.formats for g in group_tuple))
     if not common_formats:
         formats_by_group = {
             group.label: sorted(group.formats) for group in group_tuple

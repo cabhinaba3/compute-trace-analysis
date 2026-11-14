@@ -7,7 +7,6 @@ that launched them, matched through the CUDA runtime call's correlation id.
 
 from __future__ import annotations
 
-import gzip
 import pathlib
 import re
 from typing import Any
@@ -24,26 +23,6 @@ from cta.core import models
 from cta.core import registry
 
 _XPROF_HEAD_RE = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
-
-
-def _open_text_head(path: pathlib.Path, max_bytes: int = 8192) -> str:
-    """Returns the first bytes of a (possibly gzipped) file as text.
-
-    Args:
-        path: The file to read; a ``.gz`` suffix means gzip-compressed.
-        max_bytes: The number of (decompressed) bytes to read at most.
-
-    Returns:
-        The decoded head, or "" if the file cannot be read.
-    """
-    try:
-        if path.suffix.lower() == ".gz":
-            with gzip.open(path, "rb") as gz:
-                return gz.read(max_bytes).decode("utf-8", errors="ignore")
-        with path.open("rb") as fh:
-            return fh.read(max_bytes).decode("utf-8", errors="ignore")
-    except OSError:
-        return ""
 
 
 @registry.register_adapter("kineto", version="2.2")
@@ -74,7 +53,7 @@ class KinetoAdapter:
             lower_name.endswith(".json") or lower_name.endswith(".json.gz")
         ):
             return False
-        head = _open_text_head(path)
+        head = bundle.peek_text(path)
         if _XPROF_HEAD_RE.match(head.lstrip()):
             return False
         return '"traceEvents"' in head
@@ -119,30 +98,20 @@ class KinetoAdapter:
             steps = pl.concat(step_frames).sort("rank", "start_ns")
         else:
             steps = pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA)
-        if runtime_totals:
-            runtime_rows = [
-                {"name": name, "duration_ns": duration_ns, "calls": calls}
-                for name, (duration_ns, calls) in runtime_totals.items()
-            ]
-            runtime = pl.DataFrame(
-                runtime_rows, schema=nsys_reader.RUNTIME_SCHEMA
-            )
-        else:
-            runtime = pl.DataFrame(schema=nsys_reader.RUNTIME_SCHEMA)
+        runtime_rows = [
+            {"name": name, "duration_ns": duration_ns, "calls": calls}
+            for name, (duration_ns, calls) in runtime_totals.items()
+        ]
+        runtime = pl.DataFrame(runtime_rows, schema=nsys_reader.RUNTIME_SCHEMA)
 
-        table_paths: dict[str, pathlib.Path] = {}
-        for table_name, table in (
-            ("kernels", kernels),
-            ("steps", steps),
-            ("runtime", runtime),
-        ):
-            table_path = out_dir / f"{table_name}.parquet"
-            table.write_parquet(table_path, compression="zstd")
-            table_paths[table_name] = table_path
-        return table_paths
-
-
-_CATEGORY_NAMES = {0: "compute", 1: "comm", 2: "memcpy"}
+        return bundle.write_tables(
+            out_dir,
+            {
+                "kernels": kernels,
+                "steps": steps,
+                "runtime": runtime,
+            },
+        )
 
 
 def _shard_rank(columns: dict[str, Any], path: pathlib.Path, index: int) -> int:
@@ -213,7 +182,9 @@ def _ingest_shard(
             "scope": pl.repeat("", row_count, dtype=pl.String, eager=True),
             "category": pl.Series(
                 columns["gpu_category"][order]
-            ).replace_strict(_CATEGORY_NAMES, return_dtype=pl.String),
+            ).replace_strict(
+                nsys_reader.GPU_CATEGORY_NAMES, return_dtype=pl.String
+            ),
             "start_ns": gpu_start_ns,
             "end_ns": gpu_end_ns,
             "duration_ns": gpu_end_ns - gpu_start_ns,

@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import argparse
 import pathlib
-import runpy
 import sys
+
+from cta.profile import runners
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,25 +55,10 @@ def main(argv: list[str] | None = None) -> int:
 
     out = pathlib.Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    status = 0
     with jax.profiler.trace(
         str(out), create_perfetto_trace=not args.no_perfetto
     ):
-        try:
-            if target[0] == "-m":
-                sys.argv = [target[1], *target[2:]]
-                runpy.run_module(target[1], run_name="__main__", alter_sys=True)
-            else:
-                sys.argv = target
-                runpy.run_path(target[0], run_name="__main__")
-        except SystemExit as exc:
-            status = exc.code if isinstance(exc.code, int) else 1
-        except Exception as exc:  # keep the trace collected up to the crash
-            print(
-                f"cta profile: target raised {type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            status = 1
+        status = runners.execute_target(target)
     print(f"wrote {out}", file=sys.stderr)
     return status
 

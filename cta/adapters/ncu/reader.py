@@ -33,6 +33,7 @@ from typing import Any
 import polars as pl
 
 from cta.core import alignment
+from cta.core import bundle
 from cta.core import models
 from cta.core import registry
 
@@ -120,7 +121,6 @@ _STALL_PREFIX = "smsp__average_warps_issue_stalled_"
 _STALL_SUFFIX = "_per_issue_active.ratio"
 _STALL_MEM = ("long_scoreboard", "lg_throttle", "tex_throttle", "membar")
 _STALL_COMPUTE = ("math_pipe_throttle", "gmma")
-_STALL_IGNORED = ("selected", "not_selected")  # issue slots, not stalls
 _STALL_ALL = (
     "barrier",
     "branch_resolving",
@@ -659,12 +659,8 @@ class NcuAdapter:
         if suffix in _REPORT_SUFFIXES:
             return True
         if suffix == ".csv":
-            try:
-                with path.open("r", encoding="utf-8", errors="ignore") as fh:
-                    head = "".join(fh.readline() for _ in range(15))
-                return any(marker in head for marker in _CSV_MARKERS)
-            except OSError:
-                return False
+            head = bundle.peek_text(path, 65536)
+            return any(marker in head for marker in _CSV_MARKERS)
         return False
 
     def ingest(
@@ -719,17 +715,11 @@ class NcuAdapter:
             kernels = kernels.select(list(NCU_SCHEMA.keys())).cast(NCU_SCHEMA)
         else:
             kernels = pl.DataFrame(schema=NCU_SCHEMA)
-        if finding_rows:
-            findings = pl.DataFrame(finding_rows, schema=FINDINGS_SCHEMA)
-        else:
-            findings = pl.DataFrame(schema=FINDINGS_SCHEMA)
-
-        table_paths: dict[str, pathlib.Path] = {}
-        for table_name, table in (
-            ("ncu_kernels", kernels),
-            ("ncu_findings", findings),
-        ):
-            table_path = out_dir / f"{table_name}.parquet"
-            table.write_parquet(table_path, compression="zstd")
-            table_paths[table_name] = table_path
-        return table_paths
+        findings = pl.DataFrame(finding_rows, schema=FINDINGS_SCHEMA)
+        return bundle.write_tables(
+            out_dir,
+            {
+                "ncu_kernels": kernels,
+                "ncu_findings": findings,
+            },
+        )

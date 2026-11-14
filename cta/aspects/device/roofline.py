@@ -113,7 +113,7 @@ def _findings_table(findings: list[pl.DataFrame]) -> pl.DataFrame:
     title="Nsight Compute Roofline, Utilization & Warp Stalls",
     required_formats=("ncu",),
 )
-class RooflineDiffAspect:
+class RooflineDiffAspect(registry.ComparisonAspect):
     """Compares Nsight Compute utilisation, roofline position and stalls.
 
     Attributes:
@@ -122,11 +122,6 @@ class RooflineDiffAspect:
         required_formats: Nsight Compute, which provides per-kernel counters.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "roofline_diff"
-    title = "Nsight Compute Roofline, Utilization & Warp Stalls"
-    required_formats = ("ncu",)
-    any_of_formats = False
 
     def run(
         self,
