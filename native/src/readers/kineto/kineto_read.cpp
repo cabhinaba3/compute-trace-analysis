@@ -1,4 +1,4 @@
-#include "kineto_read.hpp"
+#include "readers/kineto/kineto_read.hpp"
 
 #include <simdjson.h>
 #include <zlib.h>

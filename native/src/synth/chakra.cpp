@@ -1,4 +1,4 @@
-#include "chakra.hpp"
+#include "synth/chakra.hpp"
 
 #include <google/protobuf/util/delimited_message_util.h>
 
@@ -7,9 +7,9 @@
 #include <fstream>
 #include <stdexcept>
 
-#include "common.hpp"
+#include "common/common.hpp"
 #include "et_def.pb.h"
-#include "json_value.hpp"
+#include "common/json_value.hpp"
 
 namespace cta {
 namespace {

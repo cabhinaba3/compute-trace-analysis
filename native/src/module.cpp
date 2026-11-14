@@ -4,14 +4,14 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
-#include "chakra.hpp"
-#include "goal.hpp"
-#include "intervals.hpp"
-#include "kineto.hpp"
-#include "kineto_read.hpp"
-#include "nsys.hpp"
-#include "small.hpp"
-#include "training.hpp"
+#include "synth/chakra.hpp"
+#include "synth/goal.hpp"
+#include "core/intervals.hpp"
+#include "synth/kineto.hpp"
+#include "readers/kineto/kineto_read.hpp"
+#include "synth/nsys.hpp"
+#include "synth/profilers.hpp"
+#include "synth/training.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;

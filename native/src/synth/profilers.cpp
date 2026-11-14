@@ -1,11 +1,11 @@
-#include "small.hpp"
+#include "synth/profilers.hpp"
 
 #include <algorithm>
 #include <string>
 #include <vector>
 
-#include "common.hpp"
-#include "json_value.hpp"
+#include "common/common.hpp"
+#include "common/json_value.hpp"
 
 namespace cta {
 namespace {
