@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "common/cpus.hpp"
+#include "common/util.hpp"
 #include "common/interner.hpp"
 #include "common/ordered_pool.hpp"
 #include "et_def.pb.h"
@@ -301,21 +302,21 @@ class Merger {
 
     const std::size_t n = f.node_id.size();
     out_.rank.insert(out_.rank.end(), n, f.rank);
-    append(out_.node_id, f.node_id);
+    append_vector(out_.node_id, f.node_id);
     for (std::int32_t c : f.name) out_.name.push_back(name_map[static_cast<std::size_t>(c)]);
-    append(out_.op_class, f.op_class);
+    append_vector(out_.op_class, f.op_class);
     for (std::int32_t c : f.comm_type) out_.comm_type.push_back(type_map[static_cast<std::size_t>(c)]);
-    append(out_.duration_ns, f.duration_ns);
-    append(out_.size_bytes, f.size_bytes);
-    append(out_.num_ops, f.num_ops);
-    append(out_.src_rank, f.src_rank);
-    append(out_.dst_rank, f.dst_rank);
-    append(out_.message_tag, f.message_tag);
+    append_vector(out_.duration_ns, f.duration_ns);
+    append_vector(out_.size_bytes, f.size_bytes);
+    append_vector(out_.num_ops, f.num_ops);
+    append_vector(out_.src_rank, f.src_rank);
+    append_vector(out_.dst_rank, f.dst_rank);
+    append_vector(out_.message_tag, f.message_tag);
 
     out_.edge_rank.insert(out_.edge_rank.end(), f.edge_src.size(), f.rank);
-    append(out_.edge_src, f.edge_src);
-    append(out_.edge_dst, f.edge_dst);
-    append(out_.edge_kind, f.edge_kind);
+    append_vector(out_.edge_src, f.edge_src);
+    append_vector(out_.edge_dst, f.edge_dst);
+    append_vector(out_.edge_kind, f.edge_kind);
   }
 
   ChakraColumns finish() {
@@ -325,10 +326,6 @@ class Merger {
   }
 
  private:
-  template <typename T>
-  static void append(std::vector<T>& to, const std::vector<T>& from) {
-    to.insert(to.end(), from.begin(), from.end());
-  }
   ChakraColumns out_;
   Interner names_, comm_types_;
 };

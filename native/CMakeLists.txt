@@ -57,7 +57,6 @@ set(CTA_READER_SOURCES  # trace readers
   src/readers/kineto/kineto_read.cpp
   src/readers/kineto/chunk_parser.cpp
   src/readers/kineto/merger.cpp
-  src/readers/kineto/pipeline.cpp
   src/readers/kineto/source.cpp
   src/readers/kineto/splitter.cpp)
 set(CTA_BINDING_SOURCES  # the Python-visible functions

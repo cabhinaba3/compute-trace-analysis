@@ -82,10 +82,11 @@ interval helpers rather than a loop over events.
 
 ## readers/kineto
 
-A trace is read in three stages that run at the same time:
+A trace is read in three stages that run at the same time (the worker pool is
+`common/ordered_pool.hpp`, shared with the Chakra and GOAL readers):
 
 ```
-Source -> Splitter -> Pipeline { ChunkParser x N threads -> Merger }
+Source -> Splitter -> OrderedPool { ChunkParser x N threads } -> Merger
 file/gzip   cuts the event      parse chunks in parallel     merge in file order,
 blocks      array into chunks                                match launches to GPU
                                                              activities
@@ -98,8 +99,7 @@ blocks      array into chunks                                match launches to G
 | `splitter.*` | finds event boundaries while reading; keeps `distributedInfo` |
 | `chunk.hpp` | what a chunk and its parsed columns look like |
 | `chunk_parser.*` | simdjson parsing of one chunk; the only file that includes simdjson besides the CMake link |
-| `pipeline.*` | worker threads, bounded queue, ordered merge thread |
-| `merger.*`, `launch_map.hpp` | renumbers names and threads in file order; resolves CUDA launches |
+| `merger.*` | renumbers names and threads in file order; resolves CUDA launches (`common/launch_map.hpp`) |
 
 Two rules keep the output independent of thread count, chunk size and block
 size: chunks are merged in file order, and ids are assigned at the merge, not

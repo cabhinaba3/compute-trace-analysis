@@ -7,17 +7,11 @@
 #include <thread>
 
 #include "common/cpus.hpp"
+#include "common/scoped_join.hpp"
+#include "common/util.hpp"
 
 namespace cta {
 namespace {
-
-std::uint64_t mix(std::uint64_t x) {
-  x ^= x >> 30;
-  x *= 0xbf58476d1ce4e5b9ULL;
-  x ^= x >> 27;
-  x *= 0x94d049bb133111ebULL;
-  return x ^ (x >> 31);
-}
 
 // Finds the vertices of a (rank, node id). In a table where each rank is one
 // run of rows and node ids count 0, 1, 2, ... along the run (what the GOAL and
@@ -50,7 +44,7 @@ class VertexIndex {
     }
     if (slots_.empty()) return;
     const std::size_t mask = slots_.size() - 1;
-    for (std::size_t i = mix(rank * 0x9e3779b97f4a7c15ULL ^ id) & mask; slots_[i].head != kNone; i = (i + 1) & mask) {
+    for (std::size_t i = mix64(rank * 0x9e3779b97f4a7c15ULL ^ id) & mask; slots_[i].head != kNone; i = (i + 1) & mask) {
       if (slots_[i].rank == rank && slots_[i].id == id) {
         for (std::uint32_t v = slots_[i].head; v != kNone; v = next_[v]) f(v);
         return;
@@ -70,24 +64,25 @@ class VertexIndex {
   };
 
   bool try_dense(std::size_t n, const std::uint64_t* rank, const std::uint64_t* node_id) {
-    runs_.clear();
+    std::vector<Run> runs;
     for (std::size_t i = 0; i < n; ++i) {
-      if (runs_.empty() || runs_.back().rank != rank[i]) {
+      if (runs.empty() || runs.back().rank != rank[i]) {
         if (node_id[i] != 0) return false;
-        runs_.push_back({rank[i], i, 1});
+        runs.push_back({rank[i], i, 1});
       } else {
-        if (node_id[i] != runs_.back().length) return false;
-        ++runs_.back().length;
+        if (node_id[i] != runs.back().length) return false;
+        ++runs.back().length;
       }
     }
     // A rank in two runs would need both; the hash path handles that.
-    std::vector<std::uint64_t> seen;
-    seen.reserve(runs_.size());
-    for (const Run& r : runs_) seen.push_back(r.rank);
-    std::sort(seen.begin(), seen.end());
-    if (std::adjacent_find(seen.begin(), seen.end()) != seen.end()) return false;
-    sorted_runs_ = runs_;
-    std::sort(sorted_runs_.begin(), sorted_runs_.end(), [](const Run& a, const Run& b) { return a.rank < b.rank; });
+    sorted_runs_ = std::move(runs);
+    std::sort(sorted_runs_.begin(), sorted_runs_.end(),
+              [](const Run& a, const Run& b) { return a.rank < b.rank; });
+    if (std::adjacent_find(sorted_runs_.begin(), sorted_runs_.end(),
+                           [](const Run& a, const Run& b) { return a.rank == b.rank; }) != sorted_runs_.end()) {
+      sorted_runs_.clear();
+      return false;
+    }
     return true;
   }
 
@@ -105,7 +100,7 @@ class VertexIndex {
     next_.assign(n, kNone);
     const std::size_t mask = capacity - 1;
     for (std::size_t v = 0; v < n; ++v) {
-      std::size_t i = mix(rank[v] * 0x9e3779b97f4a7c15ULL ^ node_id[v]) & mask;
+      std::size_t i = mix64(rank[v] * 0x9e3779b97f4a7c15ULL ^ node_id[v]) & mask;
       while (slots_[i].head != kNone && !(slots_[i].rank == rank[v] && slots_[i].id == node_id[v])) i = (i + 1) & mask;
       if (slots_[i].head == kNone) {
         slots_[i].rank = rank[v];
@@ -117,7 +112,7 @@ class VertexIndex {
   }
 
   bool dense_ = false;
-  std::vector<Run> runs_, sorted_runs_;
+  std::vector<Run> sorted_runs_;
   std::vector<Slot> slots_;
   std::vector<std::uint32_t> next_;
 };
@@ -127,9 +122,9 @@ struct Channel {
   bool operator==(const Channel& o) const { return src == o.src && dst == o.dst && tag == o.tag; }
 };
 std::size_t hash_of(const Channel& c) {
-  return static_cast<std::size_t>(mix(static_cast<std::uint64_t>(c.src) * 0x9e3779b97f4a7c15ULL ^
-                                      mix(static_cast<std::uint64_t>(c.dst) * 0xc2b2ae3d27d4eb4fULL ^
-                                          static_cast<std::uint64_t>(c.tag))));
+  return static_cast<std::size_t>(mix64(static_cast<std::uint64_t>(c.src) * 0x9e3779b97f4a7c15ULL ^
+                                        mix64(static_cast<std::uint64_t>(c.dst) * 0xc2b2ae3d27d4eb4fULL ^
+                                              static_cast<std::uint64_t>(c.tag))));
 }
 
 // Links the k-th send of each channel to its k-th receive, in row order.
@@ -196,7 +191,6 @@ EdgeList build_dag_edges(std::size_t n, const std::uint64_t* rank, const std::ui
   if (threads == 0) threads = usable_cpus();
 
   using Clock = std::chrono::steady_clock;
-  auto seconds = [](Clock::duration d) { return std::chrono::duration<double>(d).count(); };
   const auto t0 = Clock::now();
   const VertexIndex index(n, rank, node_id);
   const auto t1 = Clock::now();
@@ -228,10 +222,10 @@ EdgeList build_dag_edges(std::size_t n, const std::uint64_t* rank, const std::ui
   if (blocks == 1) {
     run_block(0);
   } else {
-    std::vector<std::thread> pool;
-    for (std::size_t b = 1; b < blocks; ++b) pool.emplace_back(run_block, b);
+    ScopedJoin pool;
+    for (std::size_t b = 1; b < blocks; ++b) pool.emplace(run_block, b);
     run_block(0);
-    for (auto& t : pool) t.join();
+    pool.join_all();
   }
 
   const auto t2 = Clock::now();
@@ -247,9 +241,9 @@ EdgeList build_dag_edges(std::size_t n, const std::uint64_t* rank, const std::ui
   }
   link_point_to_point(n, is_send, is_recv, src_rank, dst_rank, tag, out);
   const auto t3 = Clock::now();
-  out.index_seconds = seconds(t1 - t0);
-  out.dependency_seconds = seconds(t2 - t1);
-  out.link_seconds = seconds(t3 - t2);
+  out.index_seconds = duration_seconds(t1 - t0);
+  out.dependency_seconds = duration_seconds(t2 - t1);
+  out.link_seconds = duration_seconds(t3 - t2);
   return out;
 }
 

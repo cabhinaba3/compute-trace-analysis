@@ -18,8 +18,10 @@ class ChunkParser {
   ChunkParser(const ChunkParser&) = delete;
   ChunkParser& operator=(const ChunkParser&) = delete;
 
-  // Throws std::invalid_argument for malformed JSON or non-numeric ts and dur.
-  void parse(Chunk& chunk, ChunkOut& out);
+  // Parses "[" + events separated by commas + "]". `text` gains the padding
+  // the JSON parser reads past its end. Throws std::invalid_argument for
+  // malformed JSON or non-numeric ts and dur.
+  void parse(std::string& text, ChunkOut& out);
 
  private:
   struct Impl;

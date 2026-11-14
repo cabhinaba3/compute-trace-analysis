@@ -6,8 +6,10 @@
 #include <string>
 #include <thread>
 
+#include "common/util.hpp"
 #include "common/interner.hpp"
 #include "common/launch_map.hpp"
+#include "common/scoped_join.hpp"
 #include "common/sqlite.hpp"
 
 namespace cta {
@@ -31,14 +33,6 @@ const char* memcpy_name(int64_t kind) {
 // "t.<name>" when the table has the column, else a default SQL expression.
 std::string column_or(const std::set<std::string>& columns, const char* name, const char* fallback) {
   return columns.count(name) ? std::string("t.") + name : std::string(fallback);
-}
-
-bool has_nccl(std::string_view s) {
-  for (std::size_t i = 0; i + 4 <= s.size(); ++i) {
-    auto low = [&](std::size_t j) { return static_cast<char>(s[i + j] | 0x20); };
-    if (low(0) == 'n' && low(1) == 'c' && low(2) == 'c' && low(3) == 'l') return true;
-  }
-  return false;
 }
 
 struct Events {
@@ -82,7 +76,7 @@ void read_events(const std::string& path, const std::set<std::string>& tables, E
                           " FROM CUPTI_ACTIVITY_KIND_KERNEL t " + join + " WHERE t.end > t.start");
     while (q.step()) {
       const std::string_view name = q.is_null(0) ? std::string_view("None") : q.text(0);
-      add_event(e, name, has_nccl(name) ? 1 : 0, q.integer(1), q.integer(2), 0, q.integer(4), q.integer(3),
+      add_event(e, name, contains_nccl(name) ? 1 : 0, q.integer(1), q.integer(2), 0, q.integer(4), q.integer(3),
                 correlation_of(q, 5));
     }
   }
@@ -219,17 +213,14 @@ NsysColumns read_nsys_sqlite(const std::string& path) {
     }
   };
   {
-    std::thread t1([&] { run(0, [&] { read_launches(path, tables, launches); }); });
-    std::thread t2([&] { run(1, [&] { read_nvtx(path, tables, ranges); }); });
-    std::thread t3([&] { run(2, [&] { read_metrics(path, tables, metrics); }); });
-    std::thread t4([&] { run(4, [&] { read_summary(path, tables, "CUPTI_ACTIVITY_KIND_RUNTIME", runtime); }); });
-    std::thread t5([&] { run(5, [&] { read_summary(path, tables, "OSRT_API", osrt); }); });
+    ScopedJoin pool;
+    pool.emplace([&] { run(0, [&] { read_launches(path, tables, launches); }); });
+    pool.emplace([&] { run(1, [&] { read_nvtx(path, tables, ranges); }); });
+    pool.emplace([&] { run(2, [&] { read_metrics(path, tables, metrics); }); });
+    pool.emplace([&] { run(4, [&] { read_summary(path, tables, "CUPTI_ACTIVITY_KIND_RUNTIME", runtime); }); });
+    pool.emplace([&] { run(5, [&] { read_summary(path, tables, "OSRT_API", osrt); }); });
     run(3, [&] { read_events(path, tables, events); });
-    t1.join();
-    t2.join();
-    t3.join();
-    t4.join();
-    t5.join();
+    pool.join_all();
   }
   for (const auto& e : errors)
     if (e) std::rethrow_exception(e);

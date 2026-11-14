@@ -1,4 +1,4 @@
-// What the chunk parser produces and what the pipeline moves around.
+// What the chunk parser produces from one chunk of events.
 #pragma once
 
 #include <cstddef>
@@ -65,12 +65,6 @@ struct ChunkOut {
 
   int32_t name_code(std::string_view s);
   int32_t thread_code(const Tag& pid, const Tag& tid);
-};
-
-// One piece of the trace-event array, cut at an event boundary.
-struct Chunk {
-  std::size_t seq = 0;
-  std::string data;  // "[" + events separated by commas + "]"
 };
 
 }  // namespace cta::kineto_reader

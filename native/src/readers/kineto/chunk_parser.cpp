@@ -9,22 +9,12 @@
 #include <stdexcept>
 #include <string_view>
 
+#include "common/util.hpp"
+
 namespace cta::kineto_reader {
 namespace od = simdjson::ondemand;
 
 static_assert(kChunkPadding >= simdjson::SIMDJSON_PADDING, "chunk padding is below what simdjson reads past the end");
-
-namespace {
-
-bool contains_nccl(std::string_view s) {
-  for (std::size_t i = 0; i + 4 <= s.size(); ++i) {
-    auto low = [&](std::size_t j) { return static_cast<char>(s[i + j] | 0x20); };
-    if (low(0) == 'n' && low(1) == 'c' && low(2) == 'c' && low(3) == 'l') return true;
-  }
-  return false;
-}
-
-}  // namespace
 
 int32_t ChunkOut::name_code(std::string_view s) {
   bool is_new = false;
@@ -333,11 +323,11 @@ struct ChunkParser::Impl {
 ChunkParser::ChunkParser() : impl_(std::make_unique<Impl>()) {}
 ChunkParser::~ChunkParser() = default;
 
-void ChunkParser::parse(Chunk& chunk, ChunkOut& out) {
+void ChunkParser::parse(std::string& text, ChunkOut& out) {
   try {
-    const std::size_t len = chunk.data.size();
-    chunk.data.reserve(len + simdjson::SIMDJSON_PADDING);
-    simdjson::padded_string_view view(chunk.data.data(), len, chunk.data.capacity());
+    const std::size_t len = text.size();
+    text.reserve(len + simdjson::SIMDJSON_PADDING);
+    simdjson::padded_string_view view(text.data(), len, text.capacity());
     od::document doc = impl_->parser.iterate(view).value();
     od::array events = doc.get_array().value();
     Event e;

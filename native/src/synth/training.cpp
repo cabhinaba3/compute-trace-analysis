@@ -15,6 +15,7 @@
 
 #include "common/cpus.hpp"
 #include "common/format.hpp"
+#include "common/scoped_join.hpp"
 #include "common/sink.hpp"
 #include "et_def.pb.h"
 #include "synth/goal_common.hpp"
@@ -203,17 +204,17 @@ class ChakraBuilder {
  public:
   ChakraBuilder(std::ostream& out, int rank) : out_(out), rank_(rank) {}
   int calc(std::int64_t ns, std::span<const int> dep) {
-    auto n = node("compute", ChakraProtoMsg::COMP_NODE, dep);
+    auto& n = prep_node("compute", ChakraProtoMsg::COMP_NODE, dep);
     n.set_duration_micros(static_cast<std::uint64_t>(ns / 1000));
     return emit(n);
   }
   int send(int peer, std::int64_t bytes, std::uint64_t tag, std::span<const int> dep) {
-    auto n = node("send", ChakraProtoMsg::COMM_SEND_NODE, dep);
+    auto& n = prep_node("send", ChakraProtoMsg::COMM_SEND_NODE, dep);
     p2p_attrs(n, rank_, peer, bytes, tag);
     return emit(n);
   }
   int recv(int peer, std::int64_t bytes, std::uint64_t tag, std::span<const int> dep) {
-    auto n = node("recv", ChakraProtoMsg::COMM_RECV_NODE, dep);
+    auto& n = prep_node("recv", ChakraProtoMsg::COMM_RECV_NODE, dep);
     p2p_attrs(n, peer, rank_, bytes, tag);
     return emit(n);
   }
@@ -229,13 +230,13 @@ class ChakraBuilder {
 
  private:
   static int last(std::span<const int> dep) { return dep.empty() ? -1 : dep[0]; }
-  ChakraProtoMsg::Node node(const char* name, ChakraProtoMsg::NodeType type, std::span<const int> dep) {
-    ChakraProtoMsg::Node n;
-    n.set_id(next_);
-    n.set_name(std::string(name) + "_" + std::to_string(next_));
-    n.set_type(type);
-    for (int x : dep) n.add_data_deps(static_cast<std::uint64_t>(x));
-    return n;
+  ChakraProtoMsg::Node& prep_node(const char* name, ChakraProtoMsg::NodeType type, std::span<const int> dep) {
+    node_.Clear();
+    node_.set_id(next_);
+    node_.set_name(std::string(name) + "_" + std::to_string(next_));
+    node_.set_type(type);
+    for (int x : dep) node_.add_data_deps(static_cast<std::uint64_t>(x));
+    return node_;
   }
   static void attr(ChakraProtoMsg::Node& n, const char* name, std::int64_t v) {
     auto* a = n.add_attr();
@@ -249,7 +250,7 @@ class ChakraBuilder {
     attr(n, "comm_tag", static_cast<std::int64_t>(tag));
   }
   int collective(const char* name, int comm_type, std::int64_t bytes, std::span<const int> dep) {
-    auto n = node(name, ChakraProtoMsg::COMM_COLL_NODE, dep);
+    auto& n = prep_node(name, ChakraProtoMsg::COMM_COLL_NODE, dep);
     n.set_duration_micros(static_cast<std::uint64_t>(std::max<std::int64_t>(10, bytes / 1000)));
     attr(n, "comm_type", comm_type);
     attr(n, "comm_size", bytes);
@@ -262,6 +263,7 @@ class ChakraBuilder {
   std::ostream& out_;
   int rank_;
   std::uint64_t next_ = 0;
+  ChakraProtoMsg::Node node_;
 };
 
 
@@ -331,9 +333,9 @@ std::uint64_t write_chakra_training(const std::string& out_dir, const TrainingSp
       next_rank = spec.ranks();  // stop the other workers
     }
   };
-  std::vector<std::thread> pool;
-  for (int i = 0; i < workers; ++i) pool.emplace_back(work);
-  for (auto& th : pool) th.join();
+  ScopedJoin pool;
+  for (int i = 0; i < workers; ++i) pool.emplace(work);
+  pool.join_all();
   if (failure) std::rethrow_exception(failure);
   return total;
 }

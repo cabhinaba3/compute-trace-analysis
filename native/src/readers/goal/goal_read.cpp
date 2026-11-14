@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "common/cpus.hpp"
+#include "common/util.hpp"
 #include "common/ordered_pool.hpp"
 #include "readers/goal/goal_text.hpp"
 
@@ -193,27 +194,23 @@ class Merger {
     GoalTextColumns& p = *piece;
     const std::uint64_t base = out_.name_bytes.size();
     for (std::uint64_t end : p.name_end) out_.name_end.push_back(base + end);
-    append(out_.name_bytes, p.name_bytes);
-    append(out_.rank, p.rank);
-    append(out_.node_id, p.node_id);
-    append(out_.op_class, p.op_class);
-    append(out_.duration_ns, p.duration_ns);
-    append(out_.size_bytes, p.size_bytes);
-    append(out_.src_rank, p.src_rank);
-    append(out_.dst_rank, p.dst_rank);
-    append(out_.message_tag, p.message_tag);
-    append(out_.edge_rank, p.edge_rank);
-    append(out_.edge_src, p.edge_src);
-    append(out_.edge_dst, p.edge_dst);
-    append(out_.edge_kind, p.edge_kind);
+    append_vector(out_.name_bytes, p.name_bytes);
+    append_vector(out_.rank, p.rank);
+    append_vector(out_.node_id, p.node_id);
+    append_vector(out_.op_class, p.op_class);
+    append_vector(out_.duration_ns, p.duration_ns);
+    append_vector(out_.size_bytes, p.size_bytes);
+    append_vector(out_.src_rank, p.src_rank);
+    append_vector(out_.dst_rank, p.dst_rank);
+    append_vector(out_.message_tag, p.message_tag);
+    append_vector(out_.edge_rank, p.edge_rank);
+    append_vector(out_.edge_src, p.edge_src);
+    append_vector(out_.edge_dst, p.edge_dst);
+    append_vector(out_.edge_kind, p.edge_kind);
   }
   GoalTextColumns finish() { return std::move(out_); }
 
  private:
-  template <typename T>
-  static void append(std::vector<T>& to, const std::vector<T>& from) {
-    to.insert(to.end(), from.begin(), from.end());
-  }
   GoalTextColumns out_;
 };
 
@@ -228,7 +225,6 @@ GoalTextColumns read_goal_text(const std::string& path, int threads, std::uint64
   if (file.size() == 0) return {};
 
   using Clock = std::chrono::steady_clock;
-  auto seconds = [](Clock::duration d) { return std::chrono::duration<double>(d).count(); };
   const auto start = Clock::now();
   double finish_seconds = 0;
 
@@ -261,10 +257,10 @@ GoalTextColumns read_goal_text(const std::string& path, int threads, std::uint64
   pool.submit(Piece{piece_begin, size});
   const auto scanned = Clock::now();
   pool.finish();
-  finish_seconds = seconds(Clock::now() - scanned);
+  finish_seconds = duration_seconds(Clock::now() - scanned);
 
   GoalTextColumns columns = merger.finish();
-  columns.scan_seconds = seconds(scanned - start);
+  columns.scan_seconds = duration_seconds(scanned - start);
   columns.finish_seconds = finish_seconds;
   return columns;
 }
