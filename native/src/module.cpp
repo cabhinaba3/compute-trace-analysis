@@ -8,6 +8,7 @@
 #include "kineto.hpp"
 #include "nsys.hpp"
 #include "small.hpp"
+#include "training.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -86,4 +87,32 @@ NB_MODULE(_native, m) {
         "idle_gap_ms"_a = 0.1, call_guard<Nogil>());
   m.def("write_trtexec_layers", &cta::write_trtexec_layers, "profile_path"_a, "engine_path"_a,
         "fused"_a = false, "precision"_a = "FP16", call_guard<Nogil>());
+
+  nb::class_<cta::TrainingSpec>(m, "TrainingSpec")
+      .def(nb::init<>())
+      .def_rw("dp", &cta::TrainingSpec::dp)
+      .def_rw("pp", &cta::TrainingSpec::pp)
+      .def_rw("tp", &cta::TrainingSpec::tp)
+      .def_rw("microbatches", &cta::TrainingSpec::microbatches)
+      .def_rw("layers_per_stage", &cta::TrainingSpec::layers_per_stage)
+      .def_rw("steps", &cta::TrainingSpec::steps)
+      .def_rw("moe_every", &cta::TrainingSpec::moe_every)
+      .def_rw("ep_size", &cta::TrainingSpec::ep_size)
+      .def_rw("dp_buckets", &cta::TrainingSpec::dp_buckets)
+      .def_rw("layer_fwd_ns", &cta::TrainingSpec::layer_fwd_ns)
+      .def_rw("layer_bwd_ns", &cta::TrainingSpec::layer_bwd_ns)
+      .def_rw("optimizer_ns", &cta::TrainingSpec::optimizer_ns)
+      .def_rw("expert_ns", &cta::TrainingSpec::expert_ns)
+      .def_rw("tp_bytes", &cta::TrainingSpec::tp_bytes)
+      .def_rw("pp_bytes", &cta::TrainingSpec::pp_bytes)
+      .def_rw("dp_bytes", &cta::TrainingSpec::dp_bytes)
+      .def_rw("moe_bytes", &cta::TrainingSpec::moe_bytes)
+      .def("ranks", &cta::TrainingSpec::ranks);
+
+  m.def("write_goal_training", &cta::write_goal_training, "path"_a, "spec"_a,
+        call_guard<Nogil>());
+  m.def("write_goal_training_bin", &cta::write_goal_training_bin, "path"_a, "spec"_a,
+        call_guard<Nogil>());
+  m.def("write_chakra_training", &cta::write_chakra_training, "out_dir"_a, "spec"_a,
+        "threads"_a = 0, call_guard<Nogil>());
 }
