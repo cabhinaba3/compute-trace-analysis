@@ -8,10 +8,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import glob
+import gzip
 import json
 import pathlib
 import re
-from typing import Any
+from typing import Any, TYPE_CHECKING
+import zlib
+
+if TYPE_CHECKING:
+    import polars as pl
 
 import yaml
 
@@ -41,6 +46,31 @@ def detect_format(path: pathlib.Path) -> str | None:
     return None
 
 
+def peek_text(path: pathlib.Path, max_bytes: int = 8192) -> str:
+    """Returns the first decompressed text bytes of a file, or '' on error."""
+    try:
+        if path.suffix.lower() == ".gz":
+            with gzip.open(path, "rb") as gz:
+                return gz.read(max_bytes).decode("utf-8", errors="ignore")
+        with path.open("rb") as fh:
+            return fh.read(max_bytes).decode("utf-8", errors="ignore")
+    except (OSError, EOFError, zlib.error):
+        return ""
+
+
+def write_tables(
+    out_dir: pathlib.Path, tables: dict[str, pl.DataFrame]
+) -> dict[str, pathlib.Path]:
+    """Writes tables as compressed Parquet files in out_dir."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    table_paths: dict[str, pathlib.Path] = {}
+    for table_name, table in tables.items():
+        table_path = out_dir / f"{table_name}.parquet"
+        table.write_parquet(table_path, compression="zstd")
+        table_paths[table_name] = table_path
+    return table_paths
+
+
 def infer_rank(path: pathlib.Path, fallback: int) -> int:
     """Returns the rank encoded in a per-rank trace file name.
 
@@ -61,11 +91,7 @@ def _infer_world_size(paths: list[pathlib.Path]) -> int:
     """Returns the larger of the file count and the distinct encoded ranks."""
     if len(paths) <= 1:
         return 1
-    ranks = set()
-    for path in paths:
-        match = _RANK_RE.search(path.name)
-        if match:
-            ranks.add(int(match.group(1)))
+    ranks = {r for path in paths if (r := infer_rank(path, -1)) >= 0}
     return max(len(ranks), len(paths))
 
 
@@ -279,6 +305,8 @@ def resolve_trial_group(
     """
     if isinstance(source, models.TrialGroup):
         return source
+    if isinstance(source, (str, pathlib.Path)):
+        source = resolve_bundle(source, label=label, metadata=tags)
     if isinstance(source, models.RunBundle):
         group_label = label or source.label
         return models.TrialGroup(
@@ -286,14 +314,6 @@ def resolve_trial_group(
             label=group_label,
             trials=(source,),
             tags=dict(tags or source.metadata),
-        )
-    if isinstance(source, (str, pathlib.Path)):
-        run_bundle = resolve_bundle(source, label=label, metadata=tags)
-        return models.TrialGroup(
-            group_id=run_bundle.run_id,
-            label=run_bundle.label,
-            trials=(run_bundle,),
-            tags=dict(tags or run_bundle.metadata),
         )
     bundles = tuple(
         item if isinstance(item, models.RunBundle) else resolve_bundle(item)

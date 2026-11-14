@@ -88,7 +88,7 @@ def _mean_over_trials(
     required_formats=_KERNEL_FORMATS,
     any_of_formats=True,
 )
-class KernelDiffAspect:
+class KernelDiffAspect(registry.ComparisonAspect):
     """Compares GPU kernel time by category, kernel, op family and scope.
 
     Attributes:
@@ -97,11 +97,6 @@ class KernelDiffAspect:
         required_formats: Formats that provide a kernel table.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "kernel_diff"
-    title = "Kernel & Operator Family Diff"
-    required_formats = _KERNEL_FORMATS
-    any_of_formats = True
 
     def run(
         self,

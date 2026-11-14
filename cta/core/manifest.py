@@ -28,10 +28,7 @@ def _optional_int_tuple(
 
 def _trial_path(base_dir: pathlib.Path, trial_spec: Any) -> pathlib.Path:
     """Returns a trial path, resolving relative ones against ``base_dir``."""
-    spec_path = pathlib.Path(str(trial_spec))
-    if not spec_path.is_absolute():
-        return base_dir / str(trial_spec)
-    return spec_path
+    return base_dir / str(trial_spec)
 
 
 def load_manifest(
@@ -105,9 +102,7 @@ def load_manifest(
         str(metric): float(threshold)
         for metric, threshold in config_section.get("gates", {}).items()
     }
-    cache_dir = pathlib.Path(config_section.get("cache_dir", ".cta_cache"))
-    if not cache_dir.is_absolute():
-        cache_dir = base_dir / cache_dir
+    cache_dir = base_dir / config_section.get("cache_dir", ".cta_cache")
 
     config = models.CompareConfig(
         aspects=aspects,

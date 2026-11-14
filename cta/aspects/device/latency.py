@@ -19,7 +19,7 @@ from cta.core import stats
     required_formats=step_slicing.TIMELINE_FORMATS,
     any_of_formats=True,
 )
-class LatencyThroughputAspect:
+class LatencyThroughputAspect(registry.ComparisonAspect):
     """Compares step latency percentiles, throughput and CUDA runtime time.
 
     Attributes:
@@ -28,11 +28,6 @@ class LatencyThroughputAspect:
         required_formats: Formats that provide a step table.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "latency_throughput"
-    title = "End-to-End Latency, Tail Percentiles & Throughput"
-    required_formats = step_slicing.TIMELINE_FORMATS
-    any_of_formats = True
 
     def run(
         self,

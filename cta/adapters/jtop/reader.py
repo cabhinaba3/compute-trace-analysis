@@ -16,6 +16,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from cta.core import bundle
 from cta.core import models
 from cta.core import registry
 
@@ -205,16 +206,10 @@ class JtopAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        try:
-            with path.open("rb") as fh:
-                head = fh.read(8192).decode("utf-8", errors="ignore")
-            has_power_rail = "Power TOT" in head or "VDD_IN" in head
-            has_usage_keys = (
-                "CPU1" in head and '"GPU"' in head and '"RAM"' in head
-            )
-            return has_power_rail or has_usage_keys
-        except OSError:
-            return False
+        head = bundle.peek_text(path)
+        has_power_rail = "Power TOT" in head or "VDD_IN" in head
+        has_usage_keys = "CPU1" in head and '"GPU"' in head and '"RAM"' in head
+        return has_power_rail or has_usage_keys
 
     def ingest(
         self, artifact: models.TraceArtifact, out_dir: pathlib.Path
@@ -243,6 +238,4 @@ class JtopAdapter:
             if frames
             else pl.DataFrame(schema=JTOP_SAMPLES_SCHEMA)
         )
-        samples_path = out_dir / "samples.parquet"
-        samples.write_parquet(samples_path, compression="zstd")
-        return {"samples": samples_path}
+        return bundle.write_tables(out_dir, {"samples": samples})

@@ -96,6 +96,38 @@ def _run(argv: list[str]) -> int:
     return subprocess.run(argv, check=False).returncode
 
 
+def execute_target(target: Sequence[str]) -> int:
+    """Executes a target module or script file, returning the process exit code.
+
+    Args:
+        target: Target command line (e.g. ``["-m", "mymod", ...]`` or
+            ``["script.py", ...]``).
+
+    Returns:
+        The exit code (0 on success, 1 or SystemExit code on exit/failure).
+    """
+    import runpy
+
+    try:
+        if target[0] == "-m":
+            sys.argv = [target[1], *target[2:]]
+            runpy.run_module(target[1], run_name="__main__", alter_sys=True)
+        else:
+            sys.argv = list(target)
+            runpy.run_path(target[0], run_name="__main__")
+        return 0
+    except SystemExit as exc:
+        if exc.code is None:
+            return 0
+        return exc.code if isinstance(exc.code, int) else 1
+    except Exception as exc:
+        print(
+            f"cta profile: target raised {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+
 def nsys_command(
     command: Sequence[str],
     out_prefix: pathlib.Path,

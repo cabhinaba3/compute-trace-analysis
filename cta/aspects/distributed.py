@@ -50,7 +50,7 @@ def _pick_distributed_tables(
     required_formats=_DISTRIBUTED_FORMATS,
     any_of_formats=True,
 )
-class DagCriticalPathAspect:
+class DagCriticalPathAspect(registry.ComparisonAspect):
     """Compares the execution DAG's size, depth, critical path and slack.
 
     Attributes:
@@ -59,11 +59,6 @@ class DagCriticalPathAspect:
         required_formats: Formats that provide an execution graph.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "dag_critical_path"
-    title = "DAG Structure & Critical Path"
-    required_formats = _DISTRIBUTED_FORMATS
-    any_of_formats = True
 
     def run(
         self,
@@ -160,7 +155,7 @@ class DagCriticalPathAspect:
     required_formats=_DISTRIBUTED_FORMATS,
     any_of_formats=True,
 )
-class CommCollectivesAspect:
+class CommCollectivesAspect(registry.ComparisonAspect):
     """Compares communication volume, op count and message sizes.
 
     Attributes:
@@ -169,11 +164,6 @@ class CommCollectivesAspect:
         required_formats: Formats that provide an execution graph.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "comm_collectives"
-    title = "Communication & Collective Characterization"
-    required_formats = _DISTRIBUTED_FORMATS
-    any_of_formats = True
 
     def run(
         self,
@@ -317,7 +307,7 @@ def _per_rank_load(nodes: pl.DataFrame) -> pl.DataFrame:
     required_formats=_DISTRIBUTED_FORMATS,
     any_of_formats=True,
 )
-class RankSkewAspect:
+class RankSkewAspect(registry.ComparisonAspect):
     """Compares load balance across ranks and straggler skew.
 
     Attributes:
@@ -326,11 +316,6 @@ class RankSkewAspect:
         required_formats: Formats that provide an execution graph.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "rank_skew"
-    title = "Multi-Rank Load Balance & Straggler Skew"
-    required_formats = _DISTRIBUTED_FORMATS
-    any_of_formats = True
 
     def run(
         self,
@@ -453,7 +438,7 @@ def _link_volumes(traffic: pl.DataFrame) -> pl.DataFrame:
     required_formats=_DISTRIBUTED_FORMATS,
     any_of_formats=True,
 )
-class TrafficMatrixAspect:
+class TrafficMatrixAspect(registry.ComparisonAspect):
     """Compares the rank-to-rank traffic matrix and its hotspots.
 
     Attributes:
@@ -462,11 +447,6 @@ class TrafficMatrixAspect:
         required_formats: Formats that provide an execution graph.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "traffic_matrix"
-    title = "Rank-to-Rank Traffic Matrix & Topology Locality"
-    required_formats = _DISTRIBUTED_FORMATS
-    any_of_formats = True
 
     def run(
         self,
@@ -610,11 +590,6 @@ def _collective_send_factor(
         The send factor; 0.0 for collective types without a model.
     """
     if comm_type == "ALL_REDUCE":
-        if algorithm == "tree":
-            # Binomial/Rabenseifner or 2x tree broadcast/reduce approx
-            # 2 * ((P-1)/P) or 2*B; standard ring/rabenseifner =
-            # 2*(P-1)/P * B.
-            return 2.0 * (n_ranks - 1) / n_ranks
         if algorithm == "direct":
             return float(n_ranks - 1)
         return 2.0 * (n_ranks - 1) / n_ranks
@@ -623,11 +598,9 @@ def _collective_send_factor(
         "REDUCE_SCATTER",
         "REDUCE_SCATTER_BLOCK",
         "ALL_TO_ALL",
+        "BROADCAST",
+        "REDUCE",
     ):
-        return (n_ranks - 1) / n_ranks
-    if comm_type in ("BROADCAST", "REDUCE"):
-        # Across all P ranks total bytes sent is (P-1)*B -> average
-        # ((P-1)/P)*B per rank.
         return (n_ranks - 1) / n_ranks
     return 0.0
 
@@ -656,14 +629,12 @@ def _expected_goal_send_bytes(
         return p2p_bytes
 
     algorithm = collective_algorithm.lower()
-    collective_bytes = 0.0
-    for row in collectives.select("comm_type", "size_bytes").iter_rows(
-        named=True
-    ):
-        factor = _collective_send_factor(
-            str(row["comm_type"]), n_ranks, algorithm
-        )
-        collective_bytes += float(row["size_bytes"]) * factor
+    by_type = collectives.group_by("comm_type").agg(pl.col("size_bytes").sum())
+    collective_bytes = sum(
+        float(bytes_sum)
+        * _collective_send_factor(str(comm_type), n_ranks, algorithm)
+        for comm_type, bytes_sum in by_type.iter_rows()
+    )
     return p2p_bytes + collective_bytes
 
 
@@ -822,7 +793,7 @@ def verify_chakra_goal_equivalence(
     required_formats=("chakra_et", "goal"),
     any_of_formats=False,
 )
-class ScheduleEquivalenceAspect:
+class ScheduleEquivalenceAspect(registry.ComparisonAspect):
     """Compares how well each group's GOAL schedule conserves its Chakra-ET.
 
     Each trial bundle must hold both a Chakra-ET trace and the GOAL schedule
@@ -834,11 +805,6 @@ class ScheduleEquivalenceAspect:
         required_formats: Chakra-ET and GOAL, both needed in every bundle.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "schedule_equivalence"
-    title = "Chakra-ET to GOAL Conversion Conservation"
-    required_formats = ("chakra_et", "goal")
-    any_of_formats = False
 
     def run(
         self,
