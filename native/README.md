@@ -15,7 +15,7 @@ src/
   bindings/               what Python sees: names, arguments and defaults
     synth.cpp               synthetic trace generators
     readers.cpp             trace readers
-    core.cpp                interval helpers
+    core.cpp                the DAG solver and interval helpers
     numpy.hpp               hands std::vector to NumPy without a copy
   common/                 header-only helpers shared by the areas below
     sink.hpp                buffered file or gzip output
@@ -29,7 +29,7 @@ src/
                           chakra, training, profilers = ncu/jtop/trtexec)
   readers/chakra/         the Chakra .et reader (see below)
   readers/kineto/         the Kineto trace reader (see below)
-  core/                   interval helpers (nesting_parents)
+  core/                   dag (critical path and slack), intervals (nesting_parents)
 ```
 
 Changing a Python-visible name or default means changing `cta/_native.pyi`,

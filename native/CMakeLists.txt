@@ -39,6 +39,7 @@ protobuf_generate_cpp(CHAKRA_PROTO_SRCS CHAKRA_PROTO_HDRS
 # so every #include names its file from there ("common/sink.hpp"). The
 # helpers in src/common/ are header-only.
 set(CTA_CORE_SOURCES
+  src/core/dag.cpp
   src/core/intervals.cpp)
 set(CTA_SYNTH_SOURCES  # synthetic trace generators
   src/synth/kineto.cpp

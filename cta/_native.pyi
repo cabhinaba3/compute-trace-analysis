@@ -23,6 +23,17 @@ def read_chakra_et(
     """Reads Chakra .et files into dictionary-coded node and edge columns."""
     ...
 
+def solve_dag(
+    weights: np.ndarray,
+    is_comm: np.ndarray,
+    is_compute: np.ndarray,
+    size_bytes: np.ndarray,
+    edge_src: np.ndarray,
+    edge_dst: np.ndarray,
+) -> dict[str, Any]:
+    """Returns the critical path and slack of a graph as a dict."""
+    ...
+
 def nesting_parents(starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
     """Returns the enclosing range of each range, -1 for none."""
     ...
