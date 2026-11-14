@@ -153,6 +153,13 @@ def test_chakra_output_is_independent_of_the_thread_count(
         ).read_bytes()
 
 
+def test_a_hundred_million_nodes_fit_in_the_tag_space() -> None:
+    # About 100M GOAL nodes (or Chakra nodes at 30 steps per rank-thousand).
+    spec = training.TrainingSpec(dp=8, pp=8, tp=8, steps=1250, microbatches=8)
+    spec.validate()
+    assert spec.ranks == 512
+
+
 def test_goal_output_is_deterministic(tmp_path: pathlib.Path) -> None:
     training.write_goal_training(tmp_path / "a.goal", _SMALL)
     training.write_goal_training(tmp_path / "b.goal", _SMALL)
@@ -167,7 +174,7 @@ def test_goal_output_is_deterministic(tmp_path: pathlib.Path) -> None:
         training.TrainingSpec(dp=0),
         training.TrainingSpec(dp=3, ep_size=2),
         training.TrainingSpec(layers_per_stage=2, dp_buckets=3),
-        training.TrainingSpec(steps=100000),
+        training.TrainingSpec(steps=10_000_000),
     ],
 )
 def test_invalid_specs_are_rejected(

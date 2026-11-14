@@ -64,6 +64,16 @@ class TrainingSpec:
         """Number of ranks: ``dp * pp * tp``."""
         return self.dp * self.pp * self.tp
 
+    def validate(self) -> None:
+        """Checks that the spec can be generated.
+
+        Raises:
+            ValueError: A size is below 1, ``ep_size`` does not divide ``dp``,
+                ``dp_buckets`` exceeds ``layers_per_stage``, or the job has
+                too many steps for 31-bit message tags.
+        """
+        self.to_native().validate()
+
     def to_native(self) -> native.TrainingSpec:
         """Returns the C++ spec with the same values."""
         spec = native.TrainingSpec()
