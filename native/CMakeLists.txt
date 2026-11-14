@@ -39,6 +39,7 @@ nanobind_add_module(_native NB_STATIC
   src/goal.cpp
   src/nsys.cpp
   src/chakra.cpp
+  src/training.cpp
   src/small.cpp
   ${CHAKRA_PROTO_SRCS})
 target_include_directories(_native PRIVATE ${CMAKE_CURRENT_BINARY_DIR})

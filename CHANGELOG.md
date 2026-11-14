@@ -5,6 +5,7 @@
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported: the package requires Python 3.12 or newer. The CI matrix, the classifiers, ruff's `target-version` and mypy's `python_version` moved to 3.12.
 - The synthetic trace generators in `cta.synth` (Kineto, GOAL text and binary, Chakra `.et` and host-ET, nsys SQLite, ncu, jtop, trtexec) are now C++ in `native/`, built into the package as `cta._native` by the same `pip install` (a hatch build hook runs CMake with nanobind; there is no second distribution). The Python generators are removed, so the module is required. Output is byte-identical to the old Python writers (nsys SQLite: identical rows), checked on GPULab.
+- New: `cta.synth.training` writes 3D-parallel (data, pipeline, tensor, optional MoE) training graphs as GOAL text, GOAL binary and Chakra shards, up to 512 ranks and beyond. GOAL spells collectives out as send/recv; Chakra keeps each collective as one node and only pipeline traffic as send/recv. The graphs have the cross-rank edges and varying level widths that the ring all-reduce generator lacks.
 - New: `cta.synth.kineto.write_kineto_trace_large` (realistic event mix, any size, about 400 MB/s) and `cta.synth.goal.write_goal_allreduce_bin` (writes the `.bin` schedule directly).
 - macOS is no longer supported; the package needs Linux with a C++20 compiler and the zlib, SQLite and Protobuf development packages.
 
