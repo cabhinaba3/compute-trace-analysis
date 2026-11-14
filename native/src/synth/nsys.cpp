@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "common/common.hpp"
+#include "common/format.hpp"
 
 namespace cta {
 namespace {

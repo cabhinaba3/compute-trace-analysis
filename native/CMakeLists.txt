@@ -36,7 +36,7 @@ protobuf_generate_cpp(CHAKRA_PROTO_SRCS CHAKRA_PROTO_HDRS
   "${CHAKRA_PROTO_DIR}/et_def.proto" "${CHAKRA_PROTO_DIR}/storage.proto")
 
 # Sources by area. Paths are relative to src/, which is also the include root,
-# so every #include names its file from there ("common/common.hpp"). The
+# so every #include names its file from there ("common/sink.hpp"). The
 # helpers in src/common/ are header-only.
 set(CTA_CORE_SOURCES
   src/core/intervals.cpp)
@@ -48,10 +48,20 @@ set(CTA_SYNTH_SOURCES  # synthetic trace generators
   src/synth/training.cpp
   src/synth/profilers.cpp)
 set(CTA_READER_SOURCES  # trace readers
-  src/readers/kineto/kineto_read.cpp)
+  src/readers/kineto/kineto_read.cpp
+  src/readers/kineto/chunk_parser.cpp
+  src/readers/kineto/merger.cpp
+  src/readers/kineto/pipeline.cpp
+  src/readers/kineto/source.cpp
+  src/readers/kineto/splitter.cpp)
+set(CTA_BINDING_SOURCES  # the Python-visible functions
+  src/bindings/synth.cpp
+  src/bindings/readers.cpp
+  src/bindings/core.cpp)
 
 nanobind_add_module(_native NB_STATIC
   src/module.cpp
+  ${CTA_BINDING_SOURCES}
   ${CTA_CORE_SOURCES}
   ${CTA_SYNTH_SOURCES}
   ${CTA_READER_SOURCES}

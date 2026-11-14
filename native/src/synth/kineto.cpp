@@ -5,7 +5,9 @@
 #include <string>
 #include <string_view>
 
-#include "common/common.hpp"
+#include "common/format.hpp"
+#include "common/rng.hpp"
+#include "common/sink.hpp"
 
 namespace cta {
 namespace {

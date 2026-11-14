@@ -7,7 +7,8 @@
 #include <utility>
 #include <vector>
 
-#include "common/common.hpp"
+#include "common/format.hpp"
+#include "common/sink.hpp"
 #include "synth/goal_common.hpp"
 
 namespace cta {
