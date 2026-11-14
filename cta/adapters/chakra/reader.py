@@ -9,7 +9,6 @@ of their usual algorithm).
 from __future__ import annotations
 
 from collections.abc import Iterable
-from concurrent import futures
 import json
 import pathlib
 import re
@@ -18,7 +17,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 
-from cta.adapters.chakra import schema
+from cta import _native as native
 from cta.core import models
 from cta.core import registry
 
@@ -90,27 +89,6 @@ def _infer_rank(path: pathlib.Path, fallback_rank: int) -> int:
     return int(match.group(1)) if match else fallback_rank
 
 
-def _resolve_comm_type(
-    raw_comm_type: object,
-    op_class: str,
-    coll_names_by_number: dict[int, str],
-) -> str:
-    """Returns the comm_type of a .et node from its ``comm_type`` attribute.
-
-    Enum numbers map to their CollectiveCommType name, strings are upper-cased
-    and send/recv nodes without the attribute become SEND/RECV.
-    """
-    if isinstance(raw_comm_type, int):
-        return coll_names_by_number.get(raw_comm_type, f"COLL_{raw_comm_type}")
-    if isinstance(raw_comm_type, str):
-        return raw_comm_type.upper()
-    if op_class == "comm_send":
-        return "SEND"
-    if op_class == "comm_recv":
-        return "RECV"
-    return ""
-
-
 def _dependency_rows(
     rank: int, node_id: int, dep_ids: Iterable[Any], dep_kind: str
 ) -> list[dict[str, object]]:
@@ -126,117 +104,77 @@ def _dependency_rows(
     ]
 
 
-def _parse_single_et(
-    task: tuple[int, pathlib.Path],
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    """Parses one .et file into ``nodes`` and ``edges`` rows.
-
-    Args:
-        task: The file's index in sorted path order, used as its rank when
-            the file name carries none, and the file path.
-
-    Returns:
-        The node rows and the edge rows.
-    """
-    file_index, path = task
-    rank = _infer_rank(path, file_index)
-    _, nodes = schema.iter_et_messages(path)
-    node_rows: list[dict[str, object]] = []
-    edge_rows: list[dict[str, object]] = []
-
-    coll_names_by_number = schema.coll_type_names()
-    for node in nodes:
-        attrs_by_name = {
-            attr.name: schema.extract_attr_value(attr) for attr in node.attr
-        }
-        op_class = schema.NODE_TYPE_CLASS.get(int(node.type), "other")
-        comm_type = _resolve_comm_type(
-            attrs_by_name.get("comm_type"), op_class, coll_names_by_number
-        )
-
-        raw_size = attrs_by_name.get(
-            "comm_size", attrs_by_name.get("tensor_size", 0)
-        )
-        size_bytes = int(raw_size or 0)
-        if int(node.type) == schema.STORAGE_NODE and size_bytes == 0:
-            size_bytes = schema.storage_size_bytes(node)
-        default_src_rank = rank if op_class == "comm_send" else -1
-        default_dst_rank = rank if op_class == "comm_recv" else -1
-        src_rank = int(attrs_by_name.get("comm_src", default_src_rank))
-        dst_rank = int(attrs_by_name.get("comm_dst", default_dst_rank))
-        message_tag = int(attrs_by_name.get("comm_tag", 0) or 0)
-        num_ops = int(attrs_by_name.get("num_ops", 0) or 0)
-        duration_ns = int(node.duration_micros) * 1000
-
-        node_id = int(node.id)
-        node_rows.append(
-            {
-                "rank": rank,
-                "node_id": node_id,
-                "name": str(node.name),
-                "op_class": op_class,
-                "comm_type": comm_type,
-                "duration_ns": duration_ns,
-                "size_bytes": max(0, size_bytes),
-                "src_rank": src_rank,
-                "dst_rank": dst_rank,
-                "message_tag": max(0, message_tag),
-                "num_ops": max(0, num_ops),
-            }
-        )
-        edge_rows.extend(
-            _dependency_rows(rank, node_id, node.data_deps, "data")
-        )
-        edge_rows.extend(
-            _dependency_rows(rank, node_id, node.ctrl_deps, "ctrl")
-        )
-
-    return node_rows, edge_rows
-
-
-def _collective_traffic_rows(
-    src_rank: int, comm_type: str, size_bytes: int, world_size: int
-) -> list[dict[str, int]]:
-    """Expands one rank's collective into the peer traffic it generates.
+def _collective_traffic(nodes: pl.DataFrame, world_size: int) -> pl.DataFrame:
+    """Expands every collective into the peer traffic of its usual algorithm.
 
     Ring AllReduce sends ``2 * (P-1)/P * B`` bytes to the next rank over
     ``2 * (P-1)`` steps; ring AllGather, ReduceScatter, Broadcast and Reduce
     send ``(P-1)/P * B`` over ``P-1`` steps; AllToAll sends ``B/P`` to every
     other rank. Other collectives generate no rows.
+
+    Collectives are counted per (rank, type, size) first, so the work does not
+    grow with the number of collectives, only with the number of distinct
+    sizes. The per-collective byte counts are rounded down before they are
+    multiplied by the count, as when each collective is expanded on its own.
+
+    Args:
+        nodes: The ``nodes`` table.
+        world_size: The number of ranks P.
+
+    Returns:
+        Traffic rows per (src_rank, dst_rank), not yet summed.
     """
-    next_rank = (src_rank + 1) % world_size
-    if comm_type == "ALL_REDUCE":
-        return [
-            {
-                "src_rank": src_rank,
-                "dst_rank": next_rank,
-                "message_count": 2 * (world_size - 1),
-                "total_bytes": (2 * (world_size - 1) * size_bytes)
-                // world_size,
-            }
-        ]
-    if comm_type in _RING_COLLECTIVES:
-        return [
-            {
-                "src_rank": src_rank,
-                "dst_rank": next_rank,
-                "message_count": world_size - 1,
-                "total_bytes": ((world_size - 1) * size_bytes) // world_size,
-            }
-        ]
-    if comm_type == "ALL_TO_ALL":
-        bytes_per_peer = size_bytes // world_size
-        return [
-            {
-                "src_rank": src_rank,
-                "dst_rank": dst_rank,
-                "message_count": 1,
-                "total_bytes": bytes_per_peer,
-            }
-            for dst_rank in range(world_size)
-            if dst_rank != src_rank
-        ]
-    return []
+    groups = (
+        nodes.filter(
+            (pl.col("op_class") == "comm_coll") & (pl.col("size_bytes") > 0)
+        )
+        .group_by("rank", "comm_type", "size_bytes")
+        .len()
+        .select(
+            pl.col("rank").alias("src_rank"),
+            "comm_type",
+            pl.col("size_bytes"),
+            pl.col("len").cast(pl.UInt64).alias("count"),
+        )
+    )
+    size = pl.col("size_bytes")
+    count = pl.col("count")
+    ranks = pl.lit(world_size, dtype=pl.UInt64)
+    next_rank = ((pl.col("src_rank") + 1) % world_size).cast(pl.UInt32)
+
+    all_reduce = groups.filter(pl.col("comm_type") == "ALL_REDUCE").select(
+        "src_rank",
+        next_rank.alias("dst_rank"),
+        (count * (2 * (world_size - 1))).alias("message_count"),
+        (count * ((size * (2 * (world_size - 1))) // ranks)).alias(
+            "total_bytes"
+        ),
+    )
+    ring = groups.filter(pl.col("comm_type").is_in(_RING_COLLECTIVES)).select(
+        "src_rank",
+        next_rank.alias("dst_rank"),
+        (count * (world_size - 1)).alias("message_count"),
+        (count * ((size * (world_size - 1)) // ranks)).alias("total_bytes"),
+    )
+    all_to_all = (
+        groups.filter(pl.col("comm_type") == "ALL_TO_ALL")
+        .join(
+            pl.DataFrame(
+                {"dst_rank": pl.int_range(world_size, eager=True)}
+            ).cast({"dst_rank": pl.UInt32}),
+            how="cross",
+        )
+        .filter(pl.col("dst_rank") != pl.col("src_rank"))
+        .select(
+            "src_rank",
+            "dst_rank",
+            count.alias("message_count"),
+            (count * (size // ranks)).alias("total_bytes"),
+        )
+    )
+    return pl.concat(
+        [all_reduce, ring, all_to_all], how="vertical_relaxed"
+    ).cast(TRAFFIC_SCHEMA)
 
 
 def _build_traffic_df(nodes: pl.DataFrame, world_size: int) -> pl.DataFrame:
@@ -244,7 +182,7 @@ def _build_traffic_df(nodes: pl.DataFrame, world_size: int) -> pl.DataFrame:
 
     Point-to-point sends contribute their explicit (src_rank, dst_rank). With
     more than one rank, collectives also contribute the peer traffic of their
-    ring (or AllToAll) algorithm.
+    ring (or AllToAll) algorithm. Rows are sorted by (src_rank, dst_rank).
     """
     if nodes.is_empty():
         return pl.DataFrame(schema=TRAFFIC_SCHEMA)
@@ -263,37 +201,19 @@ def _build_traffic_df(nodes: pl.DataFrame, world_size: int) -> pl.DataFrame:
             pl.len().cast(pl.UInt64).alias("message_count"),
             pl.col("size_bytes").sum().cast(pl.UInt64).alias("total_bytes"),
         )
+        .cast(TRAFFIC_SCHEMA)
     )
-
-    collectives = nodes.filter(
-        (pl.col("op_class") == "comm_coll") & (pl.col("size_bytes") > 0)
-    )
-    if collectives.height == 0 or world_size <= 1:
-        if p2p_traffic.height:
-            return p2p_traffic.cast(TRAFFIC_SCHEMA)
-        return pl.DataFrame(schema=TRAFFIC_SCHEMA)
-
-    collective_rows: list[dict[str, int]] = []
-    collective_ops = collectives.select("rank", "comm_type", "size_bytes")
-    for row in collective_ops.iter_rows(named=True):
-        collective_rows.extend(
-            _collective_traffic_rows(
-                int(row["rank"]),
-                str(row["comm_type"]),
-                int(row["size_bytes"]),
-                world_size,
-            )
-        )
-
-    collective_traffic = (
-        pl.DataFrame(collective_rows, schema=TRAFFIC_SCHEMA)
-        if collective_rows
-        else pl.DataFrame(schema=TRAFFIC_SCHEMA)
-    )
+    if world_size <= 1:
+        return p2p_traffic.sort("src_rank", "dst_rank")
     return (
-        pl.concat([p2p_traffic.cast(TRAFFIC_SCHEMA), collective_traffic])
-        .group_by(["src_rank", "dst_rank"])
+        pl.concat(
+            [p2p_traffic, _collective_traffic(nodes, world_size)],
+            how="vertical_relaxed",
+        )
+        .group_by("src_rank", "dst_rank")
         .agg(pl.col("message_count").sum(), pl.col("total_bytes").sum())
+        .sort("src_rank", "dst_rank")
+        .cast(TRAFFIC_SCHEMA)
     )
 
 
@@ -308,8 +228,8 @@ def _rows_to_frame(
 
 def _write_tables(
     artifact: models.TraceArtifact,
-    node_rows: list[dict[str, object]],
-    edge_rows: list[dict[str, object]],
+    nodes: pl.DataFrame,
+    edges: pl.DataFrame,
     out_dir: pathlib.Path,
 ) -> dict[str, pathlib.Path]:
     """Writes the ``nodes``, ``edges`` and ``traffic`` Parquet tables.
@@ -317,8 +237,6 @@ def _write_tables(
     The world size used for collective traffic is the larger of the
     artifact's world size and the highest rank seen plus one.
     """
-    nodes = _rows_to_frame(node_rows, NODES_SCHEMA)
-    edges = _rows_to_frame(edge_rows, EDGES_SCHEMA)
     ranks_seen = (
         int(np.max(nodes["rank"].to_numpy())) + 1 if nodes.height else 1
     )
@@ -332,6 +250,25 @@ def _write_tables(
     edges.write_parquet(edges_path, compression="zstd")
     traffic.write_parquet(traffic_path, compression="zstd")
     return {"nodes": nodes_path, "edges": edges_path, "traffic": traffic_path}
+
+
+# Codes the native reader gives to the op classes and dependency kinds.
+_OP_CLASSES = {
+    0: "other",
+    1: "memory",
+    2: "compute",
+    3: "comm_send",
+    4: "comm_recv",
+    5: "comm_coll",
+    6: "storage",
+    7: "data_op",
+}
+_DEPENDENCY_KINDS = {0: "data", 1: "ctrl"}
+
+
+def _decode(codes: np.ndarray, dictionary: list[str]) -> pl.Series:
+    """Returns the strings that dictionary codes stand for."""
+    return pl.Series(dictionary, dtype=pl.String).gather(codes)
 
 
 @registry.register_adapter("chakra_et", version="1.1")
@@ -362,8 +299,8 @@ class ChakraEtAdapter:
     ) -> dict[str, pathlib.Path]:
         """Converts the artifact's .et files to nodes/edges/traffic tables.
 
-        Files are parsed in parallel when there is more than one. Each file's
-        rank comes from its name, else from its index in sorted path order.
+        Files are parsed in parallel, one task per file. Each file's rank
+        comes from its name, else from its index in sorted path order.
 
         Args:
             artifact: The Chakra .et artifact to read.
@@ -373,23 +310,43 @@ class ChakraEtAdapter:
             The table names ``"nodes"``, ``"edges"`` and ``"traffic"`` mapped
             to their Parquet paths.
         """
-        tasks = list(enumerate(sorted(artifact.paths)))
-        all_node_rows: list[dict[str, object]] = []
-        all_edge_rows: list[dict[str, object]] = []
-
-        if len(tasks) > 1:
-            with futures.ThreadPoolExecutor(
-                max_workers=min(8, len(tasks))
-            ) as pool:
-                for node_rows, edge_rows in pool.map(_parse_single_et, tasks):
-                    all_node_rows.extend(node_rows)
-                    all_edge_rows.extend(edge_rows)
-        else:
-            node_rows, edge_rows = _parse_single_et(tasks[0])
-            all_node_rows.extend(node_rows)
-            all_edge_rows.extend(edge_rows)
-
-        return _write_tables(artifact, all_node_rows, all_edge_rows, out_dir)
+        paths = sorted(artifact.paths)
+        columns = native.read_chakra_et(
+            [str(path) for path in paths],
+            [_infer_rank(path, index) for index, path in enumerate(paths)],
+        )
+        nodes = pl.DataFrame(
+            {
+                "rank": columns["rank"],
+                "node_id": columns["node_id"],
+                "name": _decode(columns["name"], columns["names"]),
+                "op_class": pl.Series(columns["op_class"]).replace_strict(
+                    _OP_CLASSES, return_dtype=pl.String
+                ),
+                "comm_type": _decode(
+                    columns["comm_type"], columns["comm_types"]
+                ),
+                "duration_ns": columns["duration_ns"],
+                "size_bytes": columns["size_bytes"],
+                "src_rank": columns["src_rank"],
+                "dst_rank": columns["dst_rank"],
+                "message_tag": columns["message_tag"],
+                "num_ops": columns["num_ops"],
+            },
+            schema=NODES_SCHEMA,
+        )
+        edges = pl.DataFrame(
+            {
+                "rank": columns["edge_rank"],
+                "src_id": columns["edge_src"],
+                "dst_id": columns["edge_dst"],
+                "dep_kind": pl.Series(columns["edge_kind"]).replace_strict(
+                    _DEPENDENCY_KINDS, return_dtype=pl.String
+                ),
+            },
+            schema=EDGES_SCHEMA,
+        )
+        return _write_tables(artifact, nodes, edges, out_dir)
 
 
 def _classify_host_op(name: str) -> tuple[str, str]:
@@ -508,4 +465,9 @@ class ChakraHostEtAdapter:
                     )
                 )
 
-        return _write_tables(artifact, node_rows, edge_rows, out_dir)
+        return _write_tables(
+            artifact,
+            _rows_to_frame(node_rows, NODES_SCHEMA),
+            _rows_to_frame(edge_rows, EDGES_SCHEMA),
+            out_dir,
+        )

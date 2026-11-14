@@ -10,6 +10,7 @@ from __future__ import annotations
 import pathlib
 from typing import Any
 
+import polars as pl
 import pytest
 from typer import testing
 
@@ -225,10 +226,17 @@ def test_chakra_storage_and_data_op_nodes(tmp_path: pathlib.Path) -> None:
     et_path = tmp_path / "t.0.et"
     et_path.write_bytes(bytes(encoded))
 
-    nodes, edges = reader._parse_single_et((0, et_path))
-    nodes_by_name = {node["name"]: node for node in nodes}
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    artifact = models.TraceArtifact(
+        format="chakra_et", paths=(et_path,), world_size=1
+    )
+    tables = reader.ChakraEtAdapter().ingest(artifact, out_dir)
+    nodes = pl.read_parquet(tables["nodes"])
+    edges = pl.read_parquet(tables["edges"])
+    nodes_by_name = {row["name"]: row for row in nodes.iter_rows(named=True)}
     pread = nodes_by_name["pread"]
     assert (pread["op_class"], pread["size_bytes"]) == ("storage", 4096)
     assert nodes_by_name["bio"]["size_bytes"] == 8 * 512
     assert nodes_by_name["ckpt"]["op_class"] == "data_op"
-    assert len(edges) == 1
+    assert edges.height == 1

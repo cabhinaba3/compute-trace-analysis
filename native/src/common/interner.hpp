@@ -7,7 +7,7 @@
 #include <string_view>
 #include <unordered_map>
 
-namespace cta::kineto_reader {
+namespace cta {
 
 // Distinct strings numbered in order of first appearance.
 class Interner {
@@ -32,4 +32,4 @@ class Interner {
   std::unordered_map<std::string_view, std::int32_t> index_;
 };
 
-}  // namespace cta::kineto_reader
+}  // namespace cta

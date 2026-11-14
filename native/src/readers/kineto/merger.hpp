@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "readers/kineto/chunk.hpp"
-#include "readers/kineto/interner.hpp"
+#include "common/interner.hpp"
 #include "readers/kineto/kineto_read.hpp"
 #include "readers/kineto/launch_map.hpp"
 

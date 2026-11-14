@@ -9,6 +9,12 @@
 - New: `cta.synth.kineto.write_kineto_trace_large` (realistic event mix, any size, about 400 MB/s) and `cta.synth.goal.write_goal_allreduce_bin` (writes the `.bin` schedule directly).
 - macOS is no longer supported; the package needs Linux with a C++20 compiler and the zlib, SQLite, Protobuf and simdjson development packages.
 
+### Native Chakra reader
+- The `chakra_et` adapter reads `.et` files in C++ (`cta._native.read_chakra_et`) with the generated protobuf classes: one task per rank file on a worker pool, results merged in file order, names and collective types dictionary-coded. The Python per-node loop and the varint reader in `cta.adapters.chakra.schema` are removed (the module keeps what tests need to write `.et` files). The Chakra feeder in `third_party/chakra` was not used: it is a windowed, dependency-ordered simulator front end, not a bulk reader. Nodes and edges are identical to the old reader's on the generator output, 12-rank training graphs and a hand-written file with every attribute kind.
+- On the 512-rank training graph at 10M nodes (16 CPUs): 5.4 s through the whole adapter instead of 295 s, and 3.7 GB of RSS instead of 11 GB. At 2M nodes the old reader takes 61.5 s and the new one 0.83 s.
+- The `traffic` table is built without a Python loop over collectives and is now sorted by (src_rank, dst_rank); its row order used to be arbitrary. Values are unchanged.
+- `host` execution trace JSON (`chakra_host_et`) is unchanged.
+
 ### Native Kineto reader
 - The Kineto adapter reads traces in C++ (`cta._native.read_kineto_trace`, simdjson). A splitter cuts the file into chunks at event boundaries while it reads (plain or gzip), worker threads parse the chunks, and the results are merged in file order, so the tables do not depend on the thread count. Launch correlation, step and CUDA-runtime totals are computed in C++; the Python adapter keeps the scope, step and table logic. The Python per-event loop is removed. Tables are identical to the old reader's on 17 fixtures (synthetic, adversarial, gzip, bare-list and epoch-scale timestamps), checked on GPULab.
 - On a 1 GB synthetic trace (16 CPUs): 3.8 s instead of 39.8 s, and 1.06 GB of RSS instead of 5.04 GB.
