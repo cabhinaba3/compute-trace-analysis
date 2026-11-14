@@ -13,6 +13,8 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 find_package(nanobind CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(SQLite3 REQUIRED)
+find_package(simdjson CONFIG REQUIRED)
+find_package(Threads REQUIRED)
 
 # Chakra's protobuf schema comes from the vendored submodule (third_party/chakra).
 set(protobuf_MODULE_COMPATIBLE TRUE)
@@ -36,6 +38,8 @@ protobuf_generate_cpp(CHAKRA_PROTO_SRCS CHAKRA_PROTO_HDRS
 nanobind_add_module(_native NB_STATIC
   src/module.cpp
   src/kineto.cpp
+  src/kineto_read.cpp
+  src/intervals.cpp
   src/goal.cpp
   src/nsys.cpp
   src/chakra.cpp
@@ -43,7 +47,7 @@ nanobind_add_module(_native NB_STATIC
   src/small.cpp
   ${CHAKRA_PROTO_SRCS})
 target_include_directories(_native PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(_native PRIVATE ZLIB::ZLIB SQLite::SQLite3 protobuf::libprotobuf)
+target_link_libraries(_native PRIVATE ZLIB::ZLIB SQLite::SQLite3 protobuf::libprotobuf simdjson::simdjson Threads::Threads)
 target_compile_options(_native PRIVATE -Wall -Wextra)
 
 if(NOT CTA_NATIVE_OUTPUT)

@@ -1,17 +1,73 @@
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
 #include "chakra.hpp"
 #include "goal.hpp"
+#include "intervals.hpp"
 #include "kineto.hpp"
+#include "kineto_read.hpp"
 #include "nsys.hpp"
 #include "small.hpp"
 #include "training.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
+
+namespace {
+
+template <typename T>
+const char* dtype_name();
+template <> const char* dtype_name<std::int8_t>() { return "int8"; }
+template <> const char* dtype_name<std::int32_t>() { return "int32"; }
+template <> const char* dtype_name<std::int64_t>() { return "int64"; }
+template <> const char* dtype_name<double>() { return "float64"; }
+
+// Hands a vector to NumPy without copying; NumPy frees it when the array dies.
+template <typename T>
+nb::object to_numpy(std::vector<T>&& values) {
+  if (values.empty()) return nb::module_::import_("numpy").attr("empty")(0, dtype_name<T>());
+  auto* owned = new std::vector<T>(std::move(values));
+  nb::capsule owner(owned, [](void* p) noexcept { delete static_cast<std::vector<T>*>(p); });
+  nb::ndarray<nb::numpy, T, nb::ndim<1>> array(owned->data(), {owned->size()}, owner);
+  return nb::cast(array);
+}
+
+nb::dict kineto_columns_to_dict(cta::KinetoColumns&& c) {
+  nb::dict d;
+  if (c.rank) d["rank"] = *c.rank; else d["rank"] = nb::none();
+  d["names"] = nb::cast(c.names);
+  d["gpu_name"] = to_numpy(std::move(c.gpu_name));
+  d["gpu_category"] = to_numpy(std::move(c.gpu_category));
+  d["gpu_start"] = to_numpy(std::move(c.gpu_start));
+  d["gpu_end"] = to_numpy(std::move(c.gpu_end));
+  d["gpu_bytes"] = to_numpy(std::move(c.gpu_bytes));
+  d["gpu_stream"] = to_numpy(std::move(c.gpu_stream));
+  d["gpu_device"] = to_numpy(std::move(c.gpu_device));
+  d["gpu_launch_ns"] = to_numpy(std::move(c.gpu_launch_ns));
+  d["gpu_launch_thread"] = to_numpy(std::move(c.gpu_launch_thread));
+  d["op_start"] = to_numpy(std::move(c.op_start));
+  d["op_end"] = to_numpy(std::move(c.op_end));
+  d["op_name"] = to_numpy(std::move(c.op_name));
+  d["op_thread"] = to_numpy(std::move(c.op_thread));
+  d["step_id"] = to_numpy(std::move(c.step_id));
+  d["step_start"] = to_numpy(std::move(c.step_start));
+  d["step_end"] = to_numpy(std::move(c.step_end));
+  d["runtime_name"] = to_numpy(std::move(c.runtime_name));
+  d["runtime_duration"] = to_numpy(std::move(c.runtime_duration));
+  d["runtime_calls"] = to_numpy(std::move(c.runtime_calls));
+  nb::dict timing;
+  timing["read"] = c.read_seconds;
+  timing["split"] = c.split_seconds;
+  timing["submit_wait"] = c.submit_wait_seconds;
+  timing["finish"] = c.finish_seconds;
+  d["timing"] = timing;
+  return d;
+}
+
+}  // namespace
 
 NB_MODULE(_native, m) {
   m.doc() = "Native helpers for compute-trace-analysis (synthetic trace generators).";
@@ -116,4 +172,29 @@ NB_MODULE(_native, m) {
         call_guard<Nogil>());
   m.def("write_chakra_training", &cta::write_chakra_training, "out_dir"_a, "spec"_a,
         "threads"_a = 0, call_guard<Nogil>());
+
+  m.def(
+      "read_kineto_trace",
+      [](const std::string& path, int threads, std::uint64_t chunk_bytes,
+         std::uint64_t block_bytes) {
+        cta::KinetoColumns columns;
+        {
+          nb::gil_scoped_release release;
+          columns = cta::read_kineto_columns(path, threads, chunk_bytes, block_bytes);
+        }
+        return kineto_columns_to_dict(std::move(columns));
+      },
+      "path"_a, "threads"_a = 0, "chunk_bytes"_a = 32ull << 20, "block_bytes"_a = 8ull << 20,
+      "Reads a Kineto trace (.json or .json.gz) into dictionary-coded columns.");
+
+  m.def(
+      "nesting_parents",
+      [](nb::ndarray<const std::int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> starts,
+         nb::ndarray<const std::int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> ends) {
+        if (starts.shape(0) != ends.shape(0))
+          throw std::invalid_argument("starts and ends must have the same length");
+        return to_numpy(cta::nesting_parents(starts.data(), ends.data(), starts.shape(0)));
+      },
+      "starts"_a, "ends"_a,
+      "Enclosing range of each range, for ranges sorted by start (-1 for none).");
 }
