@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 from typing import Protocol
 
@@ -16,6 +17,27 @@ class _NameLookup(Protocol):
     def __getitem__(self, index: int, /) -> str:
         """Returns the name of one range."""
         ...
+
+
+class CodedNames:
+    """Range names looked up through a code array, without a list of them.
+
+    ``names`` are the distinct strings; range ``i`` is called
+    ``names[codes[i]]``.
+    """
+
+    def __init__(self, names: Sequence[str], codes: np.ndarray) -> None:
+        """Holds the distinct names and the name code of each range."""
+        self.names = names
+        self.codes = codes
+
+    def __len__(self) -> int:
+        """Returns the number of ranges."""
+        return len(self.codes)
+
+    def __getitem__(self, index: int) -> str:
+        """Returns the name of range ``index``."""
+        return self.names[int(self.codes[index])]
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -278,23 +300,8 @@ def innermost_range(
     return range_ids
 
 
-def range_paths(
-    threads: dict[int, ThreadRanges],
-    range_ids: np.ndarray,
-    names: _NameLookup,
-    separator: str = " > ",
-) -> np.ndarray:
-    """Returns the outermost-to-innermost chain of range names per range id.
-
-    Args:
-        threads: Ranges per thread id; they define the nesting.
-        range_ids: Range ids to describe; -1 means no range.
-        names: Range name per global range id.
-        separator: Separator between the names in a chain.
-
-    Returns:
-        An object array of strings, ``""`` where ``range_ids`` is -1.
-    """
+def _parent_by_gid(threads: dict[int, ThreadRanges]) -> np.ndarray:
+    """Returns the enclosing range of every global range id (-1 for none)."""
     size = max(
         (
             int(t.range_ids.max()) + 1
@@ -310,6 +317,100 @@ def range_paths(
         has_parent = thread.parent >= 0
         enclosing = thread.range_ids[np.where(has_parent, thread.parent, 0)]
         parent_array[thread.range_ids] = np.where(has_parent, enclosing, -1)
+    return parent_array
+
+
+def _coded_range_paths(
+    parent_array: np.ndarray,
+    range_ids: np.ndarray,
+    names: CodedNames,
+    separator: str,
+) -> np.ndarray:
+    """Builds the chains of range names without a Python call per range.
+
+    Ranges are numbered by chain, level by level from the outermost: two
+    ranges share a chain number when their parents do and their names are the
+    same. Only the distinct chains become strings.
+    """
+    # Ranges that no thread lists have no parent: they are chains of one.
+    size = max(len(parent_array), len(names.codes))
+    parent_array = np.concatenate(
+        (parent_array, np.full(size - len(parent_array), -1, dtype=np.int64))
+    )
+    # How many ranges enclose each range.
+    depth = np.zeros(size, dtype=np.int64)
+    ancestor = parent_array.copy()
+    while True:
+        enclosed = ancestor >= 0
+        if not enclosed.any():
+            break
+        depth[enclosed] += 1
+        ancestor[enclosed] = parent_array[ancestor[enclosed]]
+
+    codes = np.asarray(names.codes[:size], dtype=np.int64)
+    width = len(names.names) + 1
+    chain = np.full(size, -1, dtype=np.int64)
+    chain_parent: list[np.ndarray] = []
+    chain_name: list[np.ndarray] = []
+    chain_count = 0
+    for level in range(int(depth.max()) + 1 if size else 0):
+        members = np.flatnonzero(depth == level)
+        if not len(members):
+            continue
+        parent = parent_array[members]
+        parent_chain = np.where(parent >= 0, chain[np.maximum(parent, 0)], -1)
+        key = (parent_chain + 1) * width + codes[members]
+        distinct, inverse = np.unique(key, return_inverse=True)
+        chain_parent.append(distinct // width - 1)
+        chain_name.append(distinct % width)
+        chain[members] = chain_count + inverse
+        chain_count += len(distinct)
+
+    paths: list[str] = []
+    if chain_count:
+        for parent_id, name_code in zip(
+            np.concatenate(chain_parent).tolist(),
+            np.concatenate(chain_name).tolist(),
+            strict=True,
+        ):
+            name = names.names[name_code]
+            paths.append(
+                name
+                if parent_id < 0
+                else f"{paths[parent_id]}{separator}{name}"
+            )
+    paths.append("")  # the path of range id -1
+    chain_of_request = np.where(
+        range_ids >= 0, chain[np.maximum(range_ids, 0)] if size else -1, -1
+    )
+    lookup = np.array(paths, dtype=object)
+    return lookup[
+        np.where(chain_of_request < 0, len(paths) - 1, chain_of_request)
+    ]
+
+
+def range_paths(
+    threads: dict[int, ThreadRanges],
+    range_ids: np.ndarray,
+    names: _NameLookup,
+    separator: str = " > ",
+) -> np.ndarray:
+    """Returns the outermost-to-innermost chain of range names per range id.
+
+    Args:
+        threads: Ranges per thread id; they define the nesting.
+        range_ids: Range ids to describe; -1 means no range.
+        names: Range name per global range id. Names held as a
+            ``CodedNames`` are chained without a Python call per range.
+        separator: Separator between the names in a chain.
+
+    Returns:
+        An object array of strings, ``""`` where ``range_ids`` is -1.
+    """
+    parent_array = _parent_by_gid(threads)
+    if isinstance(names, CodedNames):
+        return _coded_range_paths(parent_array, range_ids, names, separator)
+    size = len(parent_array)
     parent_by_gid = parent_array.tolist()
     path_by_gid: dict[int, str] = {-1: ""}
 

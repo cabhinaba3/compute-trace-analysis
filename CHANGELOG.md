@@ -9,6 +9,12 @@
 - New: `cta.synth.kineto.write_kineto_trace_large` (realistic event mix, any size, about 400 MB/s) and `cta.synth.goal.write_goal_allreduce_bin` (writes the `.bin` schedule directly).
 - macOS is no longer supported; the package needs Linux with a C++20 compiler and the zlib, SQLite, Protobuf and simdjson development packages.
 
+### Native Nsight Systems reader
+- The `nsys` adapter reads the SQLite export in C++ (`cta._native.read_nsys_sqlite`): kernels, memcpys and memsets, the CUDA runtime launches, the NVTX ranges, the GPU metrics table and the two API summaries are read at the same time on separate connections, and each activity's launch is resolved there. The per-row Python dicts, the `fetchall` calls and the per-range regular expression are gone: the step pattern is matched with Polars on the distinct NVTX texts, steps and scopes are found with NumPy, and the scope chains are built level by level instead of with a Python call per range (`cta.core.intervals.range_paths` does this for any `CodedNames`, which the Kineto reader uses too). GPU metrics stored as text (older exports and `GENERIC_EVENT`) are still parsed in Python.
+- On a 326 MB export (5.0M kernels, 1.7M steps; 16 CPUs) one report takes 7.1 s instead of 30.8 s, and about 3 GB of RSS instead of 4 GB. The reading itself is 3.1 s, which is about what SQLite needs to scan the tables.
+- Activities that start together now keep their table order; before, Polars put them in no defined order. A NULL `bytes`, stream or device in an export is read as 0.
+- `cta.core.intervals.CodedNames` is public.
+
 ### Native GOAL text reader
 - `cta.adapters.goal.reader.parse_goal_text` reads `.goal` text in C++ (`cta._native.read_goal_text`): the file is mapped, cut at rank headers into pieces of about 32 MiB, parsed in parallel and merged in file order. It follows the old Python parser rule for rule, including its quirks: comments come off in one pass per line, only the first `/* */` on a line is removed, `}` forgets labels but not ids, a rank header resets both, dependencies are case-sensitive and dropped when either label is not yet defined, options must come in the order tag, cpu, nic, and `tb` counts as bytes. Op names keep their labels, which a conversion to the binary form would lose.
 - On a 3.0M-node schedule (209 MB, 16 CPUs) the adapter takes 1.4 s instead of 20.8 s and 1.6 GB of RSS instead of 3.0 GB; a 10.9M-node schedule (792 MB) takes 3.8 s.

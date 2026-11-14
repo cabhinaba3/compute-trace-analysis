@@ -8,6 +8,7 @@
 #include "readers/chakra/chakra_read.hpp"
 #include "readers/goal/goal_read.hpp"
 #include "readers/kineto/kineto_read.hpp"
+#include "readers/nsys/nsys_read.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -92,6 +93,39 @@ nb::dict goal_columns_to_dict(cta::GoalTextColumns&& c) {
   return d;
 }
 
+nb::dict nsys_columns_to_dict(cta::NsysColumns&& c) {
+  nb::dict d;
+  d["names"] = nb::cast(c.names);
+  d["gpu_name"] = to_numpy(std::move(c.gpu_name));
+  d["gpu_category"] = to_numpy(std::move(c.gpu_category));
+  d["gpu_start"] = to_numpy(std::move(c.gpu_start));
+  d["gpu_end"] = to_numpy(std::move(c.gpu_end));
+  d["gpu_bytes"] = to_numpy(std::move(c.gpu_bytes));
+  d["gpu_stream"] = to_numpy(std::move(c.gpu_stream));
+  d["gpu_device"] = to_numpy(std::move(c.gpu_device));
+  d["gpu_launch_ns"] = to_numpy(std::move(c.gpu_launch_ns));
+  d["gpu_launch_thread"] = to_numpy(std::move(c.gpu_launch_thread));
+  d["nvtx_texts"] = nb::cast(c.nvtx_texts);
+  d["nvtx_text"] = to_numpy(std::move(c.nvtx_text));
+  d["nvtx_start"] = to_numpy(std::move(c.nvtx_start));
+  d["nvtx_end"] = to_numpy(std::move(c.nvtx_end));
+  d["nvtx_thread"] = to_numpy(std::move(c.nvtx_thread));
+  d["has_metrics"] = c.has_metrics;
+  d["metric_names"] = nb::cast(c.metric_names);
+  d["metric_name"] = to_numpy(std::move(c.metric_name));
+  d["metric_timestamp"] = to_numpy(std::move(c.metric_timestamp));
+  d["metric_value"] = to_numpy(std::move(c.metric_value));
+  for (auto [key, summary] : {std::pair<const char*, cta::NsysSummary*>{"runtime", &c.runtime},
+                              std::pair<const char*, cta::NsysSummary*>{"osrt", &c.osrt}}) {
+    nb::dict part;
+    part["names"] = nb::cast(summary->names);
+    part["duration_ns"] = to_numpy(std::move(summary->duration_ns));
+    part["calls"] = to_numpy(std::move(summary->calls));
+    d[key] = part;
+  }
+  return d;
+}
+
 }  // namespace
 
 void bind_readers(nb::module_& m) {
@@ -134,6 +168,19 @@ void bind_readers(nb::module_& m) {
       },
       "path"_a, "threads"_a = 0, "chunk_bytes"_a = 32ull << 20,
       "Reads a GOAL text schedule (.goal) into node and edge columns.");
+
+  m.def(
+      "read_nsys_sqlite",
+      [](const std::string& path) {
+        cta::NsysColumns columns;
+        {
+          nb::gil_scoped_release release;
+          columns = cta::read_nsys_sqlite(path);
+        }
+        return nsys_columns_to_dict(std::move(columns));
+      },
+      "path"_a,
+      "Reads the GPU activities, NVTX ranges and GPU metrics of an Nsight Systems SQLite export.");
 }
 
 }  // namespace cta::bindings

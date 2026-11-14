@@ -8,7 +8,7 @@
 #include "readers/kineto/chunk.hpp"
 #include "common/interner.hpp"
 #include "readers/kineto/kineto_read.hpp"
-#include "readers/kineto/launch_map.hpp"
+#include "common/launch_map.hpp"
 
 namespace cta::kineto_reader {
 
