@@ -1,11 +1,14 @@
 """Network-API helpers for the trace adapters and the ``network_api`` aspect.
 
-A ``network_ops`` table has one row per communication call as it ran on a GPU,
-in the same shape whichever API made it, so calls of different APIs on the
-same workload can be matched by logical operation and message size.
+A ``network_ops`` table has one row per communication call (an NCCL kernel, a
+GPU-to-GPU copy, an MPI or UCX call), in the same shape whichever API made
+it, so calls of different APIs on the same workload can be matched by logical
+operation and message size.
 """
 
 from __future__ import annotations
+
+import re
 
 import numpy as np
 import polars as pl
@@ -30,6 +33,9 @@ NETWORK_OPS_SCHEMA = pl.Schema(
         # Message size in bytes as nccl-tests counts it; 0 when the trace does
         # not record it.
         "bytes": pl.Int64(),
+        # True when the call only posts the transfer (MPI_Isend, a UCX
+        # submit): its duration says nothing about bandwidth.
+        "posted": pl.Boolean(),
         "start_ns": pl.Int64(),
         "end_ns": pl.Int64(),
         "duration_ns": pl.Int64(),
@@ -167,7 +173,7 @@ def ops_from_kernels(
         .str.to_lowercase()
         .replace_strict(DTYPE_BYTES, default=0)
     )
-    return rows.select(
+    nccl = rows.select(
         "rank",
         "device",
         "stream",
@@ -180,7 +186,85 @@ def ops_from_kernels(
         pl.col("group").fill_null(""),
         pl.col("group_size").fill_null(0),
         (elems.fill_null(0) * width).alias("bytes"),
+        pl.lit(False).alias("posted"),
         "start_ns",
         "end_ns",
         "duration_ns",
     ).cast(NETWORK_OPS_SCHEMA)
+    return pl.concat([nccl, peer_copies(kernels)])
+
+
+def peer_copies(kernels: pl.DataFrame) -> pl.DataFrame:
+    """Returns the GPU-to-GPU copies of a kernels table as network calls.
+
+    Args:
+        kernels: A kernels table; memcpys named ``P2P``, ``PtoP`` or
+            ``peer`` are taken.
+
+    Returns:
+        A ``network_ops`` frame with api ``p2p`` and op ``copy``.
+    """
+    copies = kernels.filter(
+        pl.col("category") == "memcpy",
+        pl.col("name").str.contains(r"(?i)p2p|ptop|peer"),
+    )
+    return copies.select(
+        "rank",
+        "device",
+        "stream",
+        "step",
+        pl.lit("p2p").alias("api"),
+        pl.lit("copy").alias("op"),
+        pl.lit("").alias("algo"),
+        pl.lit("").alias("proto"),
+        pl.lit("").alias("dtype"),
+        pl.lit("").alias("group"),
+        pl.lit(2).alias("group_size"),
+        "bytes",
+        pl.lit(False).alias("posted"),
+        "start_ns",
+        "end_ns",
+        "duration_ns",
+    ).cast(NETWORK_OPS_SCHEMA)
+
+
+_MPI_OPS = {
+    "bcast": "broadcast",
+    "allgatherv": "allgather",
+    "alltoallv": "alltoall",
+    "alltoallw": "alltoall",
+    "reduce_scatter_block": "reducescatter",
+    "reduce_scatter": "reducescatter",
+    "ssend": "send",
+    "bsend": "send",
+    "rsend": "send",
+}
+_MPI_POSTS = re.compile(
+    r"^I(send|recv|bsend|ssend|rsend|allreduce|bcast|allgatherv?|alltoall[vw]?"
+    r"|reduce|reduce_scatter(_block)?|gather|scatter|barrier)$"
+)
+
+
+def mpi_op(name: str) -> tuple[str, bool]:
+    """Maps an MPI function name to its logical operation.
+
+    Args:
+        name: For example ``MPI_Allreduce`` or ``MPI_Isend``.
+
+    Returns:
+        The logical operation (``MPI_Bcast`` is ``broadcast``, ``MPI_Isend``
+        is ``send``) and whether the function only posts the transfer.
+    """
+    base = name.removeprefix("MPI_")
+    posted = bool(_MPI_POSTS.match(base))
+    base = base[1:] if posted else base
+    lowered = base.lower()
+    return _MPI_OPS.get(lowered, lowered.replace("_", "")), posted
+
+
+def ucx_op(name: str) -> str:
+    """Maps a UCP function name such as ``ucp_tag_send_nbx`` to an operation."""
+    for op in ("send", "recv", "put", "get"):
+        if op in name:
+            return op
+    return "other"

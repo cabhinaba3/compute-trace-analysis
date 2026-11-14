@@ -48,12 +48,13 @@ class NetworkApiAspect(registry.ComparisonAspect):
                 level.
 
         Returns:
-            Summary metrics per operation and size bucket, and a per-group
-            table of totals for the same keys.
+            Summary metrics per API, operation and size bucket, and two detail
+            tables: time by API, and bus bandwidth by operation and bucket
+            with the APIs pooled, for groups that each ran one library.
         """
         labels = [group.label for group in groups]
         trials: list[dict[str, list[float]]] = []
-        totals: list[pl.DataFrame] = []
+        per_api: list[pl.DataFrame] = []
         for group in groups:
             metrics: dict[str, list[float]] = {}
             group_rows: list[pl.DataFrame] = []
@@ -65,38 +66,38 @@ class NetworkApiAspect(registry.ComparisonAspect):
                 group_rows.append(per_key)
                 _add_trial_metrics(metrics, ops, per_key)
             trials.append(metrics)
-            totals.append(
+            per_api.append(
                 pl.concat(group_rows)
-                .group_by("key")
-                .agg(
-                    pl.col("calls").sum(),
-                    pl.col("duration_ms").sum(),
-                )
                 if group_rows
-                else pl.DataFrame(
-                    schema={
-                        "key": pl.String,
-                        "calls": pl.UInt32,
-                        "duration_ms": pl.Float64,
-                    }
-                )
+                else pl.DataFrame(schema=_PER_OPERATION_SCHEMA)
             )
 
         summary = stats.compare_scalar_metrics(
             _metric_specs(trials), labels, trials, alpha=config.alpha
         )
-        by_operation = stats.compare_entity_tables(
-            labels,
-            totals,
-            key_column="key",
-            value_column="duration_ms",
-            count_column="calls",
-        )
+        details = {
+            "by_api": stats.compare_entity_tables(
+                labels,
+                [_totals(rows, "api", "op", "bucket") for rows in per_api],
+                key_column="key",
+                value_column="duration_ms",
+                count_column="calls",
+            ),
+            # Calls of every API pooled, so a group that ran one library
+            # lines up with a group that ran another.
+            "by_operation": stats.compare_entity_tables(
+                labels,
+                [_bandwidth(rows) for rows in per_api],
+                key_column="key",
+                value_column="busbw",
+                count_column="calls",
+            ),
+        }
         return models.AspectResult(
             name=self.name,
             title=self.title,
             summary=summary,
-            details={"by_operation": by_operation} if summary.height else {},
+            details=details if summary.height else {},
         )
 
 
@@ -118,16 +119,37 @@ def _read_ops(
     return pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA)
 
 
+_PER_OPERATION_SCHEMA = pl.Schema(
+    {
+        "api": pl.String,
+        "op": pl.String,
+        "bucket": pl.String,
+        "calls": pl.UInt32,
+        "duration_ms": pl.Float64,
+        "bytes": pl.Int64,
+        "timed_bytes": pl.Int64,
+        "timed_ns": pl.Int64,
+        "weighted_bytes": pl.Float64,
+    }
+)
+
+
 def per_operation(ops: pl.DataFrame) -> pl.DataFrame:
-    """Aggregates calls by logical operation and message-size bucket.
+    """Aggregates calls by API, logical operation and message-size bucket.
+
+    Bandwidth uses only the calls that run for the whole transfer: a call
+    that merely posts it (``posted``) is counted but not timed. The bus
+    bandwidth factor follows the group size, or the number of ranks when the
+    trace does not say.
 
     Args:
         ops: A ``network_ops`` table.
 
     Returns:
-        One row per ``key`` (``op|bucket``) with ``calls``, ``duration_ms``,
-        the total ``bytes`` and ``algbw`` / ``busbw`` in GB/s (0 where the
-        trace records no sizes).
+        One row per API, operation and bucket with ``calls``, ``duration_ms``
+        and ``bytes``, the ``timed_bytes`` and ``timed_ns`` of the calls that
+        count towards bandwidth, and ``weighted_bytes`` (``timed_bytes`` times
+        the bus-bandwidth factor).
     """
     rank_count = max(1, ops["rank"].n_unique())
     sized = ops.with_columns(
@@ -138,34 +160,64 @@ def per_operation(ops: pl.DataFrame) -> pl.DataFrame:
         .then(pl.col("group_size"))
         .otherwise(rank_count)
         .alias("ranks"),
-    ).with_columns(
-        pl.struct("op", "ranks")
-        .map_batches(
-            lambda s: pl.Series(
-                [
-                    network.busbw_factor(row["op"], row["ranks"])
-                    for row in s.to_list()
-                ],
-                dtype=pl.Float64,
-            )
-        )
-        .alias("factor")
     )
+    pairs = sized.select("op", "ranks").unique()
+    factors = pairs.with_columns(
+        pl.Series(
+            "factor",
+            [network.busbw_factor(op, n) for op, n in pairs.iter_rows()],
+            dtype=pl.Float64,
+        )
+    )
+    timed = ~pl.col("posted")
     return (
-        sized.group_by("op", "bucket")
+        sized.join(factors, on=["op", "ranks"])
+        .group_by("api", "op", "bucket")
         .agg(
             pl.len().alias("calls"),
             (pl.col("duration_ns").sum() / 1e6).alias("duration_ms"),
             pl.col("bytes").sum(),
-            pl.col("factor").mean(),
-            pl.col("duration_ns").sum().alias("_ns"),
+            pl.col("bytes").filter(timed).sum().alias("timed_bytes"),
+            pl.col("duration_ns").filter(timed).sum().alias("timed_ns"),
+            (pl.col("bytes") * pl.col("factor"))
+            .filter(timed)
+            .sum()
+            .alias("weighted_bytes"),
         )
-        .with_columns(
-            (pl.col("op") + "|" + pl.col("bucket")).alias("key"),
-            (pl.col("bytes") / pl.col("_ns")).alias("algbw"),
+        .select(list(_PER_OPERATION_SCHEMA))
+        .cast(_PER_OPERATION_SCHEMA)
+    )
+
+
+def _totals(rows: pl.DataFrame, *parts: str) -> pl.DataFrame:
+    """Sums calls and time over the trials by the joined ``parts``."""
+    return (
+        rows.with_columns(
+            pl.concat_str(list(parts), separator="|").alias("key")
         )
-        .with_columns((pl.col("algbw") * pl.col("factor")).alias("busbw"))
-        .select("key", "calls", "duration_ms", "bytes", "algbw", "busbw")
+        .group_by("key")
+        .agg(pl.col("calls").sum(), pl.col("duration_ms").sum())
+    )
+
+
+def _bandwidth(rows: pl.DataFrame) -> pl.DataFrame:
+    """Pools the APIs: bus bandwidth in GB/s per operation and bucket."""
+    return (
+        rows.with_columns(
+            pl.concat_str(["op", "bucket"], separator="|").alias("key")
+        )
+        .group_by("key")
+        .agg(
+            pl.col("calls").sum(),
+            pl.col("weighted_bytes").sum(),
+            pl.col("timed_ns").sum(),
+        )
+        .filter(pl.col("timed_ns") > 0)
+        .select(
+            "key",
+            "calls",
+            (pl.col("weighted_bytes") / pl.col("timed_ns")).alias("busbw"),
+        )
     )
 
 
@@ -175,24 +227,26 @@ def wait_skew_us(ops: pl.DataFrame) -> pl.DataFrame:
     The k-th call of an operation with one message size in one process group
     is taken to be the same collective on every rank. The rank that arrives
     last waits least, so the spread of the call durations is the arrival skew.
-    It does not depend on the ranks' clocks.
+    It does not depend on the ranks' clocks. Posted calls are left out.
 
     Args:
         ops: A ``network_ops`` table.
 
     Returns:
-        One row per ``op`` with ``skew_us``, the mean spread over collectives
-        seen on more than one rank; no row for an operation seen on one rank.
+        One row per API and operation with ``skew_us``, the mean spread over
+        collectives seen on more than one rank; none for an operation seen on
+        one rank.
     """
     seq = (
-        ops.sort("rank", "start_ns")
+        ops.filter(~pl.col("posted"))
+        .sort("rank", "start_ns")
         .with_columns(
             pl.col("start_ns")
             .cum_count()
-            .over("rank", "group", "op", "bytes")
+            .over("rank", "api", "group", "op", "bytes")
             .alias("seq")
         )
-        .group_by("group", "op", "bytes", "seq")
+        .group_by("api", "group", "op", "bytes", "seq")
         .agg(
             pl.col("rank").n_unique().alias("n"),
             (pl.col("duration_ns").max() - pl.col("duration_ns").min()).alias(
@@ -201,7 +255,7 @@ def wait_skew_us(ops: pl.DataFrame) -> pl.DataFrame:
         )
         .filter(pl.col("n") > 1)
     )
-    return seq.group_by("op").agg(
+    return seq.group_by("api", "op").agg(
         (pl.col("spread").mean() / 1e3).alias("skew_us")
     )
 
@@ -210,19 +264,29 @@ def _add_trial_metrics(
     metrics: dict[str, list[float]], ops: pl.DataFrame, per_key: pl.DataFrame
 ) -> None:
     """Appends one trial's values to the metric lists."""
-    per_rank_ns = ops.group_by("rank").agg(pl.col("duration_ns").sum())
-    metrics.setdefault("comm_time_ms", []).append(
-        float(per_rank_ns["duration_ns"].to_numpy().mean() / 1e6)
-    )
-    metrics.setdefault("comm_calls", []).append(float(ops.height))
+    timed = ops.filter(~pl.col("posted"))
+    for (api,), rows in ops.group_by("api"):
+        per_rank_ns = (
+            timed.filter(pl.col("api") == api)
+            .group_by("rank")
+            .agg(pl.col("duration_ns").sum())
+        )
+        metrics.setdefault(f"comm_time_ms|{api}", []).append(
+            float(per_rank_ns["duration_ns"].to_numpy().mean() / 1e6)
+            if per_rank_ns.height
+            else 0.0
+        )
+        metrics.setdefault(f"comm_calls|{api}", []).append(float(rows.height))
     for row in per_key.iter_rows(named=True):
-        key = row["key"]
+        key = f"{row['api']}|{row['op']}|{row['bucket']}"
         metrics.setdefault(f"time_ms|{key}", []).append(row["duration_ms"])
-        if row["bytes"] > 0:
-            metrics.setdefault(f"algbw_GBps|{key}", []).append(row["algbw"])
-            metrics.setdefault(f"busbw_GBps|{key}", []).append(row["busbw"])
+        if row["timed_bytes"] > 0 and row["timed_ns"] > 0:
+            algbw = row["timed_bytes"] / row["timed_ns"]
+            busbw = row["weighted_bytes"] / row["timed_ns"]
+            metrics.setdefault(f"algbw_GBps|{key}", []).append(algbw)
+            metrics.setdefault(f"busbw_GBps|{key}", []).append(busbw)
     for row in wait_skew_us(ops).iter_rows(named=True):
-        metrics.setdefault(f"wait_skew_us|{row['op']}", []).append(
+        metrics.setdefault(f"wait_skew_us|{row['api']}|{row['op']}", []).append(
             row["skew_us"]
         )
 
