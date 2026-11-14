@@ -42,13 +42,18 @@ def test_kernel_name_gives_operation_algorithm_and_protocol() -> None:
                 "ncclDevKernel_AllReduce_Sum_f32_RING_LL(args)",
                 "ncclDevKernel_Broadcast_TREE_SIMPLE(x)",
                 "ncclDevKernel_Generic_1(x)",
+                # NCCL 2.32 drops the reduction and the protocol.
+                "ncclDevKernel_AllReduce_f32_RING",
+                "ncclDevKernel_SendRecv",
             ]
         )
     )
-    assert ops["op"].to_list() == ["allreduce", "broadcast", "other"]
-    assert ops["algo"].to_list() == ["RING", "TREE", ""]
-    assert ops["proto"].to_list() == ["LL", "SIMPLE", ""]
-    assert ops["bytes"].to_list() == [0, 0, 0]
+    assert ops["op"].to_list() == [
+        "allreduce", "broadcast", "other", "allreduce", "sendrecv",
+    ]  # fmt: skip
+    assert ops["algo"].to_list() == ["RING", "TREE", "", "RING", ""]
+    assert ops["proto"].to_list() == ["LL", "SIMPLE", "", "", ""]
+    assert ops["bytes"].to_list() == [0, 0, 0, 0, 0]
 
 
 def test_collective_metadata_sets_operation_and_bytes() -> None:
