@@ -1,4 +1,7 @@
-"""Trace format adapters."""
+"""Trace format adapters.
+
+Importing this package registers every built-in adapter with the registry.
+"""
 
 from cta.adapters import chakra as _chakra  # noqa: F401
 from cta.adapters import goal as _goal  # noqa: F401

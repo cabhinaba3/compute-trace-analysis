@@ -1,204 +1,529 @@
-"""Data access for plots: named raw tables (kernels, steps, gpu_metrics, ...) and report tables, plus SQL.
+"""Data access for plots: named raw tables, report tables and SQL.
 
-Raw tables come from the cache paths the report keeps. They are sliced with the same function the aspects use
-(``--warmup-steps/--max-steps`` per rank) so plots and tables always agree, resolved through format-qualified keys
-with explicit precedence, and carry ``label`` (group label), ``trial``, and times relative to each rank's first step
-(ranks have independent clocks, so absolute times are never mixed across ranks).
+Raw tables (kernels, steps, gpu_metrics, ...) come from the cache paths the
+report keeps. They are sliced with the same function the aspects use
+(``--warmup-steps``/``--max-steps`` per rank) so plots and tables always
+agree, resolved through format-qualified keys with explicit precedence, and
+carry ``label`` (group label), ``trial``, and times relative to each rank's
+first event (ranks have independent clocks, so absolute times are never mixed
+across ranks).
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
+import pathlib
 import re
-from collections.abc import Mapping
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import polars as pl
 
-from cta.core.models import CompareConfig
-from cta.viz.spec import NotApplicable
+from cta.core import models
+from cta.viz import spec
 
-if TYPE_CHECKING:
-    from cta.core.models import ComparisonReport
-
-SOURCES = ("kernels", "steps", "gpu_metrics", "runtime", "ncu_kernels", "ncu_findings", "jtop", "osrt")
-_FMT_PRECEDENCE = ("nsys", "kineto", "jax", "trtexec_timing")
+SOURCES = (
+    "kernels",
+    "steps",
+    "gpu_metrics",
+    "runtime",
+    "ncu_kernels",
+    "ncu_findings",
+    "jtop",
+    "osrt",
+)
+# Trace formats with step tables, in precedence order: a trial that has
+# several of them is read from the first.
+_TRACE_FORMAT_PRECEDENCE = ("nsys", "kineto", "jax", "trtexec_timing")
+# Raw tables read as cached, without slicing: (source name, cache table key).
+_UNSLICED_TABLES = (
+    ("ncu_kernels", "ncu.ncu_kernels"),
+    ("ncu_findings", "ncu.ncu_findings"),
+    ("jtop", "jtop.samples"),
+)
 
 
 class DataContext:
-    def __init__(self, report: ComparisonReport | None = None, *, history: str | None = None) -> None:
+    """The data a plot draws from: one report's tables, raw tables and SQL.
+
+    Raw tables are loaded on first use and then kept.
+
+    Attributes:
+        report: The report being plotted; None for plots that need no report
+            (such as ``history``).
+        history: Glob of saved ``report.json`` files for the ``history`` plot.
+    """
+
+    def __init__(
+        self,
+        report: models.ComparisonReport | None = None,
+        *,
+        history: str | None = None,
+    ) -> None:
+        """Initialises the context.
+
+        Args:
+            report: The report to plot, if any.
+            history: Glob of saved ``report.json`` files, if any.
+        """
         self.report = report
         self.history = history
-        self._raw: dict[str, pl.DataFrame] = {}
-        self._built = False
+        self._raw_tables: dict[str, pl.DataFrame] = {}
+        self._is_built = False
 
-    # ---- report side -------------------------------------------------------------------------------------------
+    # Report side.
+
     @property
     def labels(self) -> list[str]:
-        return [g.label for g in self.report.groups] if self.report else []
+        """The group labels, in group order (empty without a report)."""
+        if not self.report:
+            return []
+        return [group.label for group in self.report.groups]
 
     @property
-    def config(self) -> CompareConfig:
-        return (self.report.config if self.report else None) or CompareConfig()
+    def config(self) -> models.CompareConfig:
+        """The report's analysis config, or the default config."""
+        report_config = self.report.config if self.report else None
+        return report_config or models.CompareConfig()
 
-    def require_report(self) -> ComparisonReport:
+    def require_report(self) -> models.ComparisonReport:
+        """Returns the report.
+
+        Returns:
+            The report being plotted.
+
+        Raises:
+            spec.NotApplicableError: If the context has no report.
+        """
         if self.report is None:
-            raise NotApplicable("this plot needs a trace/report (give trace paths or --manifest)")
+            raise spec.NotApplicableError(
+                "this plot needs a trace/report "
+                "(give trace paths or --manifest)"
+            )
         return self.report
 
     def report_table(self, aspect: str, table: str = "summary") -> pl.DataFrame:
-        rep = self.require_report()
-        if aspect not in rep.aspects:
-            raise NotApplicable(f"needs the '{aspect}' aspect (have: {', '.join(rep.aspects) or 'none'})")
+        """Returns one table of an aspect's results.
+
+        Args:
+            aspect: Aspect name.
+            table: ``"summary"`` or the name of one of the aspect's detail
+                tables.
+
+        Returns:
+            The table.
+
+        Raises:
+            spec.NotApplicableError: If there is no report, the report lacks the
+                aspect, or the aspect has no such table.
+        """
+        report = self.require_report()
+        if aspect not in report.aspects:
+            available = ", ".join(report.aspects) or "none"
+            raise spec.NotApplicableError(
+                f"needs the '{aspect}' aspect (have: {available})"
+            )
         try:
-            return rep.aspects[aspect].to_polars(table)
+            return report.aspects[aspect].to_polars(table)
         except KeyError as exc:
-            raise NotApplicable(str(exc.args[0])) from exc
+            raise spec.NotApplicableError(str(exc.args[0])) from exc
 
     def has_aspect(self, aspect: str) -> bool:
+        """Returns whether the report has results for an aspect.
+
+        Args:
+            aspect: Aspect name.
+
+        Returns:
+            True if there is a report and it has the aspect.
+        """
         return self.report is not None and aspect in self.report.aspects
 
     def metric(self, aspect: str, metric: str) -> dict[str, float]:
-        """Per-label value of a summary metric (missing labels are omitted)."""
-        df = self.report_table(aspect)
-        row = df.filter(pl.col("metric") == metric)
-        if row.is_empty():
-            return {}
-        r = row.row(0, named=True)
-        labels = self.labels
-        if len(labels) == 2 and "baseline" in r and "candidate" in r:
-            return {labels[0]: float(r["baseline"] or 0.0), labels[1]: float(r["candidate"] or 0.0)}
-        return {lb: float(r[lb]) for lb in labels if r.get(lb) is not None}
+        """Returns the per-label value of a summary metric.
 
-    # ---- raw tables --------------------------------------------------------------------------------------------
-    def _trials(self) -> list[tuple[str, int, dict[str, Path]]]:
-        rep = self.require_report()
-        out = []
-        for g in rep.groups:
-            for i, tmap in enumerate(rep.sources.get(g.group_id, [])):
-                out.append((g.label, i, tmap))
-        if not out:
-            raise NotApplicable("the report has no cached trace tables (re-run the analysis)")
-        return out
+        With exactly two groups and a summary in baseline/candidate form, the
+        baseline and candidate columns map to the first and second label.
+
+        Args:
+            aspect: Aspect whose summary holds the metric.
+            metric: Metric name.
+
+        Returns:
+            Group label -> value; labels without a value are omitted, and an
+            unknown metric gives an empty dict.
+
+        Raises:
+            spec.NotApplicableError: If there is no report or it lacks the
+                aspect.
+        """
+        summary = self.report_table(aspect)
+        matching_rows = summary.filter(pl.col("metric") == metric)
+        if matching_rows.is_empty():
+            return {}
+        metric_row = matching_rows.row(0, named=True)
+        labels = self.labels
+        if (
+            len(labels) == 2
+            and "baseline" in metric_row
+            and "candidate" in metric_row
+        ):
+            return {
+                labels[0]: float(metric_row["baseline"] or 0.0),
+                labels[1]: float(metric_row["candidate"] or 0.0),
+            }
+        return {
+            label: float(metric_row[label])
+            for label in labels
+            if metric_row.get(label) is not None
+        }
+
+    # Raw tables.
+
+    def _trials(self) -> list[tuple[str, int, dict[str, pathlib.Path]]]:
+        """Lists (group label, trial index, cache table paths) of every trial.
+
+        Raises:
+            spec.NotApplicableError: If there is no report or it has no cached
+                trace tables.
+        """
+        report = self.require_report()
+        trials = []
+        for group in report.groups:
+            group_sources = report.sources.get(group.group_id, [])
+            for trial, table_paths in enumerate(group_sources):
+                trials.append((group.label, trial, table_paths))
+        if not trials:
+            raise spec.NotApplicableError(
+                "the report has no cached trace tables (re-run the analysis)"
+            )
+        return trials
 
     def _build_raw(self) -> None:
-        if self._built:
+        """Loads, slices and tags the raw tables of every trial, once."""
+        if self._is_built:
             return
-        from cta.aspects.device import _gpu_metrics_in_steps, _slice_steps_and_kernels
-
-        cfg = self.config
-        acc: dict[str, list[pl.DataFrame]] = {n: [] for n in SOURCES}
-        for label, trial, tmap in self._trials():
-            tag = {"label": label, "trial": trial}
-
-            def add(name: str, df: pl.DataFrame, _tag: dict[str, Any] = tag) -> None:
-                if df.height:
-                    acc[name].append(df.with_columns([pl.lit(v).alias(k) for k, v in _tag.items()]))
-
-            fmt = next((f for f in _FMT_PRECEDENCE if f"{f}.steps" in tmap), None)
-            if fmt is not None:
-                steps_raw = pl.read_parquet(tmap[f"{fmt}.steps"])
-                kern_raw = pl.read_parquet(tmap[f"{fmt}.kernels"]) if f"{fmt}.kernels" in tmap else pl.DataFrame()
-                steps, kern = _slice_steps_and_kernels(steps_raw, kern_raw, cfg)  # same slicing as the aspects, also when there are no kernels
-                steps = steps.sort("rank", "start_ns").with_columns((pl.col("start_ns").cum_count().over("rank").cast(pl.Int32) - 1).alias("idx"))
-                t0 = steps.group_by("rank").agg(pl.col("start_ns").min().alias("_t0"))
-                if kern.height:
-                    kern = kern.join(steps.select("rank", "step", "idx").unique(["rank", "step"]), on=["rank", "step"], how="left")
-                    t0 = pl.concat([t0, kern.group_by("rank").agg(pl.col("start_ns").min().alias("_t0"))]).group_by("rank").agg(pl.col("_t0").min())
-                    kern = _with_times(kern, t0)
-                add("steps", _with_times(steps, t0))
-                add("kernels", kern)
-                if f"{fmt}.runtime" in tmap:
-                    add("runtime", pl.read_parquet(tmap[f"{fmt}.runtime"]))
-                if f"{fmt}.gpu_metrics" in tmap:
-                    gm = _gpu_metrics_in_steps(pl.read_parquet(tmap[f"{fmt}.gpu_metrics"]), steps)
-                    if gm.height:
-                        gm = gm.join(t0, on="rank", how="left").with_columns(
-                            ((pl.col("timestamp_ns") - pl.col("_t0")) / 1e6).alias("t_ms"), pl.col("value").alias("value")
-                        ).drop("_t0")
-                        add("gpu_metrics", gm)
-                if f"{fmt}.osrt" in tmap:
-                    add("osrt", pl.read_parquet(tmap[f"{fmt}.osrt"]))
-            for src, key in (("ncu_kernels", "ncu.ncu_kernels"), ("ncu_findings", "ncu.ncu_findings"), ("jtop", "jtop.samples")):
-                if key in tmap:
-                    add(src, pl.read_parquet(tmap[key]))
-        self._raw = {n: pl.concat(frames, how="diagonal_relaxed") for n, frames in acc.items() if frames}
-        self._built = True
+        config = self.config
+        frames_by_source: dict[str, list[pl.DataFrame]] = {
+            name: [] for name in SOURCES
+        }
+        for label, trial, table_paths in self._trials():
+            trial_tag = {"label": label, "trial": trial}
+            for source, frame in _trial_tables(table_paths, config):
+                if frame.height:
+                    frames_by_source[source].append(
+                        _with_constants(frame, trial_tag)
+                    )
+        self._raw_tables = {
+            name: pl.concat(frames, how="diagonal_relaxed")
+            for name, frames in frames_by_source.items()
+            if frames
+        }
+        self._is_built = True
 
     def available(self) -> list[str]:
-        self._build_raw()
-        return [n for n in SOURCES if n in self._raw]
+        """Returns the raw sources this report has.
 
-    def frame(self, name: str, opts: Mapping[str, Any] | None = None) -> pl.DataFrame:
-        """A raw table with the common filters (labels, rank, device, steps, where) applied."""
+        Returns:
+            Source names, in ``SOURCES`` order.
+
+        Raises:
+            spec.NotApplicableError: If there is no report or it has no cached
+                trace tables.
+        """
+        self._build_raw()
+        return [name for name in SOURCES if name in self._raw_tables]
+
+    def frame(
+        self, name: str, opts: Mapping[str, Any] | None = None
+    ) -> pl.DataFrame:
+        """Returns a raw table with the common plot filters applied.
+
+        Args:
+            name: Source name, one of ``SOURCES``.
+            opts: Resolved plot options; ``labels``, ``rank``, ``device``,
+                ``steps`` and ``where`` filter the rows. Filters on a column
+                the table lacks (rank, device, step index) are skipped.
+
+        Returns:
+            The filtered table.
+
+        Raises:
+            spec.NotApplicableError: If the source is unknown, missing from the
+                report, or empty after filtering.
+            ValueError: If the ``where`` predicate is invalid SQL.
+        """
         if name not in SOURCES:
-            raise NotApplicable(f"unknown source '{name}'. Sources: {', '.join(SOURCES)}")
+            raise spec.NotApplicableError(
+                f"unknown source '{name}'. Sources: {', '.join(SOURCES)}"
+            )
         self._build_raw()
-        if name not in self._raw:
-            raise NotApplicable(f"source '{name}' is not in this report (available: {', '.join(self.available()) or 'none'})")
-        df = self._raw[name]
-        o = opts or {}
-        if o.get("labels"):
-            df = df.filter(pl.col("label").is_in(o["labels"]))
-        if o.get("rank") and "rank" in df.columns:
-            df = df.filter(pl.col("rank").is_in([int(r) for r in o["rank"]]))
-        if o.get("device") and "device" in df.columns:
-            df = df.filter(pl.col("device").is_in([int(d) for d in o["device"]]))
-        if o.get("steps") and "idx" in df.columns:
-            lo, hi = o["steps"]
-            if lo is not None:
-                df = df.filter(pl.col("idx") >= lo)
-            if hi is not None:
-                df = df.filter(pl.col("idx") < hi)
-        if o.get("where"):
-            df = _sql_filter(df, str(o["where"]))
-        if df.is_empty():
-            raise NotApplicable(f"source '{name}' is empty after filters")
-        return df
+        if name not in self._raw_tables:
+            available = ", ".join(self.available()) or "none"
+            raise spec.NotApplicableError(
+                f"source '{name}' is not in this report "
+                f"(available: {available})"
+            )
+        table = self._raw_tables[name]
+        options = opts or {}
+        if options.get("labels"):
+            table = table.filter(pl.col("label").is_in(options["labels"]))
+        if options.get("rank") and "rank" in table.columns:
+            ranks = [int(rank) for rank in options["rank"]]
+            table = table.filter(pl.col("rank").is_in(ranks))
+        if options.get("device") and "device" in table.columns:
+            devices = [int(device) for device in options["device"]]
+            table = table.filter(pl.col("device").is_in(devices))
+        if options.get("steps") and "idx" in table.columns:
+            first_step, end_step = options["steps"]
+            if first_step is not None:
+                table = table.filter(pl.col("idx") >= first_step)
+            if end_step is not None:
+                table = table.filter(pl.col("idx") < end_step)
+        if options.get("where"):
+            table = _sql_filter(table, str(options["where"]))
+        if table.is_empty():
+            raise spec.NotApplicableError(
+                f"source '{name}' is empty after filters"
+            )
+        return table
 
-    # ---- SQL ---------------------------------------------------------------------------------------------------
-    def sql(self, query: str, opts: Mapping[str, Any] | None = None) -> pl.DataFrame:
-        """Run DuckDB SQL over the named tables used in the query (see ``cta plot --list-sources``)."""
+    # SQL.
+
+    def sql(
+        self, query: str, opts: Mapping[str, Any] | None = None
+    ) -> pl.DataFrame:
+        """Runs DuckDB SQL over the named tables the query mentions.
+
+        Raw sources are registered under their name (see
+        ``cta plot --list-sources``) with ``opts`` filters applied; report
+        tables as ``report_<aspect>`` (summary) and
+        ``report_<aspect>_<table>`` (details).
+
+        Args:
+            query: The SQL query.
+            opts: Resolved plot options used to filter the raw tables.
+
+        Returns:
+            The query result.
+
+        Raises:
+            spec.NotApplicableError: If a raw table the query mentions is
+                missing or empty after filtering.
+            ValueError: If DuckDB rejects the query.
+        """
         import duckdb
 
-        con = duckdb.connect()
+        connection = duckdb.connect()
         try:
             for name in SOURCES:
                 if re.search(rf"\b{name}\b", query):
-                    con.register(name, self.frame(name, opts).to_arrow())
+                    raw_table = self.frame(name, opts)
+                    connection.register(name, raw_table.to_arrow())
             if self.report is not None:
-                for asp_name, asp in self.report.aspects.items():
-                    for tname, df in {"": asp.summary, **{f"_{t}": d for t, d in asp.details.items()}}.items():
-                        view = f"report_{asp_name}{tname}"
-                        if re.search(rf"\b{view}\b", query) and df.height:
-                            con.register(view, df.to_arrow())
-            return _to_polars(con.sql(query))
+                for aspect_name, result in self.report.aspects.items():
+                    tables_by_suffix = {
+                        "": result.summary,
+                        **{
+                            f"_{table_name}": table
+                            for table_name, table in result.details.items()
+                        },
+                    }
+                    for suffix, table in tables_by_suffix.items():
+                        view_name = f"report_{aspect_name}{suffix}"
+                        if (
+                            re.search(rf"\b{view_name}\b", query)
+                            and table.height
+                        ):
+                            connection.register(view_name, table.to_arrow())
+            return _to_polars(connection.sql(query))
         except duckdb.Error as exc:
-            raise ValueError(f"SQL error: {exc}\nTables: {', '.join(SOURCES)}, report_<aspect>[_<table>]") from exc
+            raise ValueError(
+                f"SQL error: {exc}\nTables: {', '.join(SOURCES)}, "
+                "report_<aspect>[_<table>]"
+            ) from exc
         finally:
-            con.close()
+            connection.close()
 
     def describe(self) -> dict[str, list[str]]:
-        """Source name -> column names, for ``--list-sources`` (raw tables first, then report tables)."""
-        out = {n: self._raw[n].columns for n in self.available()}
+        """Returns the columns of every table, for ``--list-sources``.
+
+        Returns:
+            Table name -> column names; raw tables first, then report tables
+            under their SQL names.
+
+        Raises:
+            spec.NotApplicableError: If there is no report or it has no cached
+                trace tables.
+        """
+        columns_by_table = {
+            name: self._raw_tables[name].columns for name in self.available()
+        }
         if self.report is not None:
-            for asp_name, asp in self.report.aspects.items():
-                out[f"report_{asp_name}"] = asp.summary.columns
-                for t, d in asp.details.items():
-                    out[f"report_{asp_name}_{t}"] = d.columns
-        return out
+            for aspect_name, result in self.report.aspects.items():
+                columns_by_table[f"report_{aspect_name}"] = (
+                    result.summary.columns
+                )
+                for table_name, table in result.details.items():
+                    columns_by_table[f"report_{aspect_name}_{table_name}"] = (
+                        table.columns
+                    )
+        return columns_by_table
+
+
+def _trial_tables(
+    table_paths: Mapping[str, pathlib.Path], config: models.CompareConfig
+) -> Iterator[tuple[str, pl.DataFrame]]:
+    """Yields (source name, frame) for every raw table of one trial.
+
+    Args:
+        table_paths: Cache table key -> Parquet path, for one trial.
+        config: Analysis config with the step slicing options.
+
+    Yields:
+        The trace-format tables (see :func:`_trace_format_tables`), then the
+        unsliced profiler tables. Frames may be empty.
+    """
+    trace_format = next(
+        (
+            candidate
+            for candidate in _TRACE_FORMAT_PRECEDENCE
+            if f"{candidate}.steps" in table_paths
+        ),
+        None,
+    )
+    if trace_format is not None:
+        yield from _trace_format_tables(table_paths, trace_format, config)
+    for source, table_key in _UNSLICED_TABLES:
+        if table_key in table_paths:
+            yield source, pl.read_parquet(table_paths[table_key])
+
+
+def _trace_format_tables(
+    table_paths: Mapping[str, pathlib.Path],
+    trace_format: str,
+    config: models.CompareConfig,
+) -> Iterator[tuple[str, pl.DataFrame]]:
+    """Yields the sliced and timed tables of one trace format of one trial.
+
+    Steps and kernels are sliced like the aspects slice them. Steps get a
+    per-rank step index ``idx``; kernels get the ``idx`` of their step. Steps,
+    kernels and GPU metrics get times relative to their rank's origin.
+
+    Args:
+        table_paths: Cache table key -> Parquet path, for one trial.
+        trace_format: Format whose ``<format>.*`` tables are read.
+        config: Analysis config with the step slicing options.
+
+    Yields:
+        (source name, frame) for steps, kernels, runtime, gpu_metrics and
+        osrt, in that order, for the tables the trial has. Frames may be
+        empty.
+    """
+    from cta.aspects.device import step_slicing
+
+    steps_raw = pl.read_parquet(table_paths[f"{trace_format}.steps"])
+    kernels_key = f"{trace_format}.kernels"
+    kernels_raw = (
+        pl.read_parquet(table_paths[kernels_key])
+        if kernels_key in table_paths
+        else pl.DataFrame()
+    )
+    # Same slicing as the aspects, also when there are no kernels.
+    steps, kernels = step_slicing.slice_steps_and_kernels(
+        steps_raw, kernels_raw, config
+    )
+    steps = _with_step_index(steps)
+    origins = _rank_origins(steps, kernels)
+    if kernels.height:
+        step_index = steps.select("rank", "step", "idx").unique(
+            ["rank", "step"]
+        )
+        kernels = kernels.join(step_index, on=["rank", "step"], how="left")
+        kernels = _with_times(kernels, origins)
+    yield "steps", _with_times(steps, origins)
+    yield "kernels", kernels
+    runtime_key = f"{trace_format}.runtime"
+    if runtime_key in table_paths:
+        yield "runtime", pl.read_parquet(table_paths[runtime_key])
+    gpu_metrics_key = f"{trace_format}.gpu_metrics"
+    if gpu_metrics_key in table_paths:
+        gpu_metrics = step_slicing.gpu_metrics_in_steps(
+            pl.read_parquet(table_paths[gpu_metrics_key]), steps
+        )
+        if gpu_metrics.height:
+            yield "gpu_metrics", _with_sample_times(gpu_metrics, origins)
+    osrt_key = f"{trace_format}.osrt"
+    if osrt_key in table_paths:
+        yield "osrt", pl.read_parquet(table_paths[osrt_key])
+
+
+def _with_step_index(steps: pl.DataFrame) -> pl.DataFrame:
+    """Sorts steps by rank and start, numbering them per rank in ``idx``."""
+    step_index = (
+        pl.col("start_ns").cum_count().over("rank").cast(pl.Int32) - 1
+    ).alias("idx")
+    return steps.sort("rank", "start_ns").with_columns(step_index)
+
+
+def _rank_origins(steps: pl.DataFrame, kernels: pl.DataFrame) -> pl.DataFrame:
+    """Returns each rank's time origin: its earliest step or kernel start.
+
+    Args:
+        steps: Step table with ``rank`` and ``start_ns`` columns.
+        kernels: Kernel table with the same columns; may be empty.
+
+    Returns:
+        One row per rank, with the origin in the temporary ``_t0`` column.
+    """
+    origins = steps.group_by("rank").agg(pl.col("start_ns").min().alias("_t0"))
+    if not kernels.height:
+        return origins
+    kernel_origins = kernels.group_by("rank").agg(
+        pl.col("start_ns").min().alias("_t0")
+    )
+    return (
+        pl.concat([origins, kernel_origins])
+        .group_by("rank")
+        .agg(pl.col("_t0").min())
+    )
+
+
+def _with_constants(
+    df: pl.DataFrame, values: Mapping[str, Any]
+) -> pl.DataFrame:
+    """Adds one constant column per entry of ``values`` (name -> value)."""
+    return df.with_columns(
+        [pl.lit(value).alias(column) for column, value in values.items()]
+    )
 
 
 def _to_polars(result: Any) -> pl.DataFrame:
-    res = cast(Any, result)
-    table = res.to_arrow_table() if hasattr(res, "to_arrow_table") else res.fetch_arrow_table()  # duckdb >= 2 / older
-    out = pl.from_arrow(table)
-    return out if isinstance(out, pl.DataFrame) else out.to_frame()
+    """Converts a DuckDB query result to a Polars frame."""
+    relation = cast(Any, result)
+    # duckdb >= 2 has to_arrow_table; older versions have fetch_arrow_table.
+    table = (
+        relation.to_arrow_table()
+        if hasattr(relation, "to_arrow_table")
+        else relation.fetch_arrow_table()
+    )
+    converted = pl.from_arrow(table)
+    if isinstance(converted, pl.DataFrame):
+        return converted
+    return converted.to_frame()
 
 
-def _with_times(df: pl.DataFrame, t0: pl.DataFrame) -> pl.DataFrame:
+def _with_times(df: pl.DataFrame, origins: pl.DataFrame) -> pl.DataFrame:
+    """Adds ``t_ms``/``end_ms`` relative to the rank origin and ``duration_ms``.
+
+    Args:
+        df: Table with ``rank``, ``start_ns``, ``end_ns`` and ``duration_ns``.
+        origins: Rank origins from :func:`_rank_origins`.
+
+    Returns:
+        ``df`` with the three millisecond columns added.
+    """
     return (
-        df.join(t0, on="rank", how="left")
+        df.join(origins, on="rank", how="left")
         .with_columns(
             ((pl.col("start_ns") - pl.col("_t0")) / 1e6).alias("t_ms"),
             ((pl.col("end_ns") - pl.col("_t0")) / 1e6).alias("end_ms"),
@@ -208,14 +533,42 @@ def _with_times(df: pl.DataFrame, t0: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _with_sample_times(
+    gpu_metrics: pl.DataFrame, origins: pl.DataFrame
+) -> pl.DataFrame:
+    """Adds ``t_ms``: each GPU-metric sample's time relative to its rank."""
+    return (
+        gpu_metrics.join(origins, on="rank", how="left")
+        .with_columns(
+            ((pl.col("timestamp_ns") - pl.col("_t0")) / 1e6).alias("t_ms"),
+            pl.col("value").alias("value"),
+        )
+        .drop("_t0")
+    )
+
+
 def _sql_filter(df: pl.DataFrame, predicate: str) -> pl.DataFrame:
+    """Keeps the rows of ``df`` that satisfy a SQL predicate (DuckDB).
+
+    Args:
+        df: Any table; the predicate sees it as table ``t``.
+        predicate: SQL boolean expression.
+
+    Returns:
+        The matching rows.
+
+    Raises:
+        ValueError: If DuckDB rejects the predicate.
+    """
     import duckdb
 
-    con = duckdb.connect()
+    connection = duckdb.connect()
     try:
-        con.register("t", df.to_arrow())
-        return _to_polars(con.sql(f"SELECT * FROM t WHERE {predicate}"))
+        connection.register("t", df.to_arrow())
+        return _to_polars(connection.sql(f"SELECT * FROM t WHERE {predicate}"))
     except duckdb.Error as exc:
-        raise ValueError(f"invalid 'where' predicate {predicate!r}: {exc}") from exc
+        raise ValueError(
+            f"invalid 'where' predicate {predicate!r}: {exc}"
+        ) from exc
     finally:
-        con.close()
+        connection.close()

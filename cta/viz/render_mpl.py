@@ -1,4 +1,7 @@
-"""Draw a :class:`~cta.viz.ir.Chart` with Matplotlib (static PDF/SVG/PNG, Type-42 fonts)."""
+"""Matplotlib renderer for :class:`~cta.viz.ir.Chart` (static PDF/SVG/PNG).
+
+Figures use the theme's rcParams, which select Type-42 (TrueType) fonts.
+"""
 
 from __future__ import annotations
 
@@ -8,151 +11,462 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-from matplotlib.axes import Axes  # noqa: E402
-from matplotlib.figure import Figure  # noqa: E402
+from matplotlib import axes as matplotlib_axes
+from matplotlib import figure
+import matplotlib.pyplot as plt
 
-from cta.viz.ir import Chart, Panel, Trace  # noqa: E402
-from cta.viz.theme import STYLE_SIZES, palette, rc_for  # noqa: E402
+from cta.viz import ir
+from cta.viz import theme as viz_theme
 
 
-def render(chart: Chart, *, style: str = "paper_single_col", theme: str = "light", colors: str | None = None,
-           width: float | None = None, height: float | None = None) -> Figure:  # fmt: skip
-    cols = palette(colors)
-    base_w, base_h = STYLE_SIZES.get(style, STYLE_SIZES["paper_single_col"])
-    w, h = chart.size or (base_w * chart.cols, base_h * chart.rows)
-    w, h = width or w, height or h
-    with plt.rc_context(cast(Any, rc_for(theme))):
-        fig = plt.figure(figsize=(w, h), constrained_layout=True)
-        axes = fig.subplots(chart.rows, chart.cols, squeeze=False, sharey=chart.sharey) if len(chart.panels) > 1 else [[fig.add_subplot(111)]]
-        flat = [ax for row in axes for ax in row]
-        for ax, panel in zip(flat, chart.panels, strict=False):
-            _draw_panel(ax, panel, cols, fig)
-        for ax in flat[len(chart.panels):]:
+def render(
+    chart: ir.Chart,
+    *,
+    style: str = "paper_single_col",
+    theme: str = "light",
+    palette: str | None = None,
+    width: float | None = None,
+    height: float | None = None,
+) -> figure.Figure:
+    """Draws a chart as a Matplotlib figure.
+
+    Args:
+        chart: The chart to draw.
+        style: Per-panel size preset from ``theme.STYLE_SIZES``; unknown
+            names use ``paper_single_col``. Ignored when the chart has a size.
+        theme: ``"light"`` or ``"dark"``.
+        palette: Palette name or colour list (see ``theme.palette``).
+        width: Figure width in inches; overrides the computed width.
+        height: Figure height in inches; overrides the computed height.
+
+    Returns:
+        The figure; the caller saves and closes it.
+
+    Raises:
+        ValueError: If the theme or palette is unknown.
+    """
+    palette_colors = viz_theme.palette(palette)
+    panel_width, panel_height = viz_theme.STYLE_SIZES.get(
+        style, viz_theme.STYLE_SIZES["paper_single_col"]
+    )
+    fig_width, fig_height = chart.size or (
+        panel_width * chart.cols,
+        panel_height * chart.rows,
+    )
+    fig_width, fig_height = width or fig_width, height or fig_height
+    with plt.rc_context(cast(Any, viz_theme.rc_for(theme))):
+        fig = plt.figure(
+            figsize=(fig_width, fig_height), constrained_layout=True
+        )
+        axes_grid = (
+            fig.subplots(
+                chart.rows, chart.cols, squeeze=False, sharey=chart.sharey
+            )
+            if len(chart.panels) > 1
+            else [[fig.add_subplot(111)]]
+        )
+        flat_axes = [ax for row in axes_grid for ax in row]
+        for ax, panel in zip(flat_axes, chart.panels, strict=False):
+            _draw_panel(ax, panel, palette_colors, fig)
+        for ax in flat_axes[len(chart.panels) :]:
             ax.set_visible(False)
         if len(chart.panels) > 1 or not chart.panels[0].title:
             fig.suptitle(chart.title, fontsize=9)
         if chart.notes:
-            fig.text(0.01, -0.02, chart.notes, fontsize=5.5, va="top", wrap=True)
+            fig.text(
+                0.01, -0.02, chart.notes, fontsize=5.5, va="top", wrap=True
+            )
         return fig
 
 
-def _color(tr: Trace, i: int, cols: tuple[str, ...]) -> Any:
-    if tr.color is not None:
-        return tr.color
-    return cols[int(tr.style.get("ci", i)) % len(cols)]
+def _color(trace: ir.Trace, index: int, palette_colors: tuple[str, ...]) -> Any:
+    """Returns the trace's own colour, else a palette colour.
+
+    The palette index is ``trace.style["ci"]`` if set, else ``index``.
+    """
+    if trace.color is not None:
+        return trace.color
+    palette_index = int(trace.style.get("ci", index))
+    return palette_colors[palette_index % len(palette_colors)]
 
 
-def _draw_panel(ax: Axes, p: Panel, cols: tuple[str, ...], fig: Figure) -> None:
-    labelled = False
-    boxes = [t for t in p.traces if t.mark == "box"]
-    bars = [t for t in p.traces if t.mark == "bar"]
-    barhs = [t for t in p.traces if t.mark == "barh"]
-    ci = 0
-    if boxes:
-        data = [np.asarray(t.y, dtype=float) for t in boxes]
-        bp = ax.boxplot(data, tick_labels=[t.name or "" for t in boxes], patch_artist=True)
-        for k, patch in enumerate(bp["boxes"]):
-            patch.set_facecolor(_color(boxes[k], k, cols))
-            patch.set_alpha(0.75)
-    if bars:
-        _draw_bars(ax, bars, cols, p.stacked, vertical=True, overlay=p.overlay)
-        labelled = True
-    if barhs:
-        _draw_bars(ax, barhs, cols, p.stacked, vertical=False, overlay=p.overlay)
-        labelled = True
-    for tr in p.traces:
-        if tr.mark in ("box", "bar", "barh"):
+def _draw_panel(
+    ax: matplotlib_axes.Axes,
+    panel: ir.Panel,
+    palette_colors: tuple[str, ...],
+    fig: figure.Figure,
+) -> None:
+    """Draws one panel's traces, axis settings and legend on ``ax``."""
+    is_labelled = False
+    box_traces = [trace for trace in panel.traces if trace.mark == "box"]
+    bar_traces = [trace for trace in panel.traces if trace.mark == "bar"]
+    barh_traces = [trace for trace in panel.traces if trace.mark == "barh"]
+    if box_traces:
+        _draw_boxes(ax, box_traces, palette_colors)
+    if bar_traces:
+        _draw_bars(
+            ax,
+            bar_traces,
+            palette_colors,
+            panel.stacked,
+            vertical=True,
+            overlay=panel.overlay,
+        )
+        is_labelled = True
+    if barh_traces:
+        _draw_bars(
+            ax,
+            barh_traces,
+            palette_colors,
+            panel.stacked,
+            vertical=False,
+            overlay=panel.overlay,
+        )
+        is_labelled = True
+    # Traces without their own colour or palette index take the next colour.
+    color_index = 0
+    for trace in panel.traces:
+        if trace.mark in ("box", "bar", "barh"):
             continue
-        c = _color(tr, ci, cols)
-        ci += 1 if (tr.color is None and "ci" not in tr.style) else 0
-        st = tr.style
-        label = tr.name if tr.name and not st.get("nolegend") else None
-        x = np.asarray(tr.x) if tr.x is not None and tr.mark != "heatmap" else None
-        y = np.asarray(tr.y) if tr.y is not None and tr.mark != "heatmap" else None
-        if tr.mark == "line":
-            ax.plot(x, y, color=c, lw=st.get("width", 1.2), ls=st.get("dash", "-"), marker=st.get("marker"), ms=3, label=label, alpha=st.get("alpha", 1.0))
-        elif tr.mark == "step":
-            ax.step(x, y, where="post", color=c, lw=st.get("width", 1.2), label=label, alpha=st.get("alpha", 1.0))
-        elif tr.mark == "scatter":
-            sizes = np.asarray(tr.size) if tr.size is not None else st.get("s", 28)
-            sc = ax.scatter(x, y, s=sizes, c=tr.color if (tr.color is not None and not isinstance(tr.color, str)) else c,
-                            cmap=st.get("cmap"), alpha=st.get("alpha", 0.9), label=label, zorder=3, marker=st.get("marker", "o"))  # fmt: skip
-            if st.get("cmap") and p.colorbar:
-                fig.colorbar(sc, ax=ax, label=p.colorbar)
-        elif tr.mark == "hist":
-            vals = np.asarray(tr.y, dtype=float)
-            ax.hist(vals, bins=st.get("bins", 30), density=st.get("density", False), color=c, alpha=st.get("alpha", 0.55), label=label)
-        elif tr.mark == "band":
-            ax.fill_between(x, np.asarray(tr.y, dtype=float), np.asarray(tr.y1, dtype=float), color=c, alpha=st.get("alpha", 0.2), lw=0, label=label)
-        elif tr.mark == "segment":
-            _draw_segments(ax, tr, c)
-        elif tr.mark == "heatmap":
-            z = np.asarray(tr.z, dtype=float)
-            im = ax.imshow(z, aspect="auto", cmap=st.get("cmap", "viridis"), origin="upper", vmin=st.get("vmin"), vmax=st.get("vmax"))
-            fig.colorbar(im, ax=ax, label=p.colorbar)
-            if tr.x is not None:
-                step = max(1, len(tr.x) // 12)
-                ax.set_xticks(range(0, len(tr.x), step), [str(v) for v in list(tr.x)[::step]])
-            if tr.y is not None:
-                step = max(1, len(tr.y) // 25)
-                ax.set_yticks(range(0, len(tr.y), step), [str(v) for v in list(tr.y)[::step]])
-            ax.grid(False)
-        elif tr.mark == "hline":
-            ax.axhline(float(tr.y[0]), color=c, lw=st.get("width", 0.9), ls=st.get("dash", "--"), label=label)  # type: ignore[index]
-        elif tr.mark == "vline":
-            ax.axvline(float(tr.x[0]), color=c, lw=st.get("width", 0.9), ls=st.get("dash", "--"), label=label)  # type: ignore[index]
-        elif tr.mark == "text":
-            for xi, yi, s in zip(tr.x or [], tr.y or [], tr.text or [], strict=False):
-                ax.annotate(s, (xi, yi), fontsize=6, xytext=(2, 2), textcoords="offset points", color=c)
-        labelled = labelled or label is not None
-    if p.xscale != "linear":  # set_xscale resets tick labels, so only touch it when needed
-        ax.set_xscale(p.xscale)
-    if p.yscale != "linear":
-        ax.set_yscale(p.yscale)
-    ax.set_title(p.title)
-    ax.set_xlabel(p.xlabel)
-    ax.set_ylabel(p.ylabel)
-    if p.xrange:
-        ax.set_xlim(*p.xrange)
-    if p.invert_y:
+        color = _color(trace, color_index, palette_colors)
+        if trace.color is None and "ci" not in trace.style:
+            color_index += 1
+        has_legend_entry = bool(trace.name) and not trace.style.get("nolegend")
+        label = trace.name if has_legend_entry else None
+        _draw_trace(ax, trace, color, label, panel, fig)
+        is_labelled = is_labelled or label is not None
+    _finish_axes(ax, panel, is_labelled)
+
+
+def _draw_trace(
+    ax: matplotlib_axes.Axes,
+    trace: ir.Trace,
+    color: Any,
+    label: str | None,
+    panel: ir.Panel,
+    fig: figure.Figure,
+) -> None:
+    """Draws one non-bar, non-box trace.
+
+    Args:
+        ax: The panel's axes.
+        trace: The trace.
+        color: Resolved trace colour.
+        label: Legend label; None draws no legend entry.
+        panel: The panel (for its colour bar label).
+        fig: The figure (for colour bars).
+    """
+    style = trace.style
+    x = (
+        np.asarray(trace.x)
+        if trace.x is not None and trace.mark != "heatmap"
+        else None
+    )
+    y = (
+        np.asarray(trace.y)
+        if trace.y is not None and trace.mark != "heatmap"
+        else None
+    )
+    if trace.mark == "line":
+        ax.plot(
+            x,
+            y,
+            color=color,
+            lw=style.get("width", 1.2),
+            ls=style.get("dash", "-"),
+            marker=style.get("marker"),
+            ms=3,
+            label=label,
+            alpha=style.get("alpha", 1.0),
+        )
+    elif trace.mark == "step":
+        ax.step(
+            x,
+            y,
+            where="post",
+            color=color,
+            lw=style.get("width", 1.2),
+            label=label,
+            alpha=style.get("alpha", 1.0),
+        )
+    elif trace.mark == "scatter":
+        _draw_scatter(ax, trace, x, y, color, label, panel, fig)
+    elif trace.mark == "hist":
+        ax.hist(
+            np.asarray(trace.y, dtype=float),
+            bins=style.get("bins", 30),
+            density=style.get("density", False),
+            color=color,
+            alpha=style.get("alpha", 0.55),
+            label=label,
+        )
+    elif trace.mark == "band":
+        ax.fill_between(
+            x,
+            np.asarray(trace.y, dtype=float),
+            np.asarray(trace.y1, dtype=float),
+            color=color,
+            alpha=style.get("alpha", 0.2),
+            lw=0,
+            label=label,
+        )
+    elif trace.mark == "segment":
+        _draw_segments(ax, trace, color)
+    elif trace.mark == "heatmap":
+        _draw_heatmap(ax, trace, panel, fig)
+    elif trace.mark == "hline":
+        ax.axhline(
+            float(trace.y[0]),  # type: ignore[index]
+            color=color,
+            lw=style.get("width", 0.9),
+            ls=style.get("dash", "--"),
+            label=label,
+        )
+    elif trace.mark == "vline":
+        ax.axvline(
+            float(trace.x[0]),  # type: ignore[index]
+            color=color,
+            lw=style.get("width", 0.9),
+            ls=style.get("dash", "--"),
+            label=label,
+        )
+    elif trace.mark == "text":
+        for x_value, y_value, text in zip(
+            trace.x or [], trace.y or [], trace.text or [], strict=False
+        ):
+            ax.annotate(
+                text,
+                (x_value, y_value),
+                fontsize=6,
+                xytext=(2, 2),
+                textcoords="offset points",
+                color=color,
+            )
+
+
+def _draw_scatter(
+    ax: matplotlib_axes.Axes,
+    trace: ir.Trace,
+    x: Any,
+    y: Any,
+    color: Any,
+    label: str | None,
+    panel: ir.Panel,
+    fig: figure.Figure,
+) -> None:
+    """Draws a scatter trace, with a colour bar for per-point colour values.
+
+    Args:
+        ax: The panel's axes.
+        trace: The scatter trace.
+        x: X values as an array.
+        y: Y values as an array.
+        color: Resolved trace colour, used unless the trace has one colour
+            value per point.
+        label: Legend label; None draws no legend entry.
+        panel: The panel; its ``colorbar`` label enables the colour bar.
+        fig: The figure the colour bar is added to.
+    """
+    style = trace.style
+    sizes = (
+        np.asarray(trace.size) if trace.size is not None else style.get("s", 28)
+    )
+    has_point_colors = trace.color is not None and not isinstance(
+        trace.color, str
+    )
+    points = ax.scatter(
+        x,
+        y,
+        s=sizes,
+        c=trace.color if has_point_colors else color,
+        cmap=style.get("cmap"),
+        alpha=style.get("alpha", 0.9),
+        label=label,
+        zorder=3,
+        marker=style.get("marker", "o"),
+    )
+    if style.get("cmap") and panel.colorbar:
+        fig.colorbar(points, ax=ax, label=panel.colorbar)
+
+
+def _draw_heatmap(
+    ax: matplotlib_axes.Axes,
+    trace: ir.Trace,
+    panel: ir.Panel,
+    fig: figure.Figure,
+) -> None:
+    """Draws a heatmap trace with a colour bar and thinned tick labels."""
+    style = trace.style
+    image = ax.imshow(
+        np.asarray(trace.z, dtype=float),
+        aspect="auto",
+        cmap=style.get("cmap", "viridis"),
+        origin="upper",
+        vmin=style.get("vmin"),
+        vmax=style.get("vmax"),
+    )
+    fig.colorbar(image, ax=ax, label=panel.colorbar)
+    # Label at most about 12 columns and 25 rows.
+    if trace.x is not None:
+        tick_step = max(1, len(trace.x) // 12)
+        ax.set_xticks(
+            range(0, len(trace.x), tick_step),
+            [str(value) for value in list(trace.x)[::tick_step]],
+        )
+    if trace.y is not None:
+        tick_step = max(1, len(trace.y) // 25)
+        ax.set_yticks(
+            range(0, len(trace.y), tick_step),
+            [str(value) for value in list(trace.y)[::tick_step]],
+        )
+    ax.grid(False)
+
+
+def _draw_boxes(
+    ax: matplotlib_axes.Axes,
+    box_traces: list[ir.Trace],
+    palette_colors: tuple[str, ...],
+) -> None:
+    """Draws all box traces of a panel as one box plot."""
+    box_values = [np.asarray(trace.y, dtype=float) for trace in box_traces]
+    box_artists = ax.boxplot(
+        box_values,
+        tick_labels=[trace.name or "" for trace in box_traces],
+        patch_artist=True,
+    )
+    for k, patch in enumerate(box_artists["boxes"]):
+        patch.set_facecolor(_color(box_traces[k], k, palette_colors))
+        patch.set_alpha(0.75)
+
+
+def _finish_axes(
+    ax: matplotlib_axes.Axes, panel: ir.Panel, is_labelled: bool
+) -> None:
+    """Applies the panel's scales, titles, limits and legend to ``ax``."""
+    # set_xscale resets tick labels, so only touch it when needed.
+    if panel.xscale != "linear":
+        ax.set_xscale(panel.xscale)
+    if panel.yscale != "linear":
+        ax.set_yscale(panel.yscale)
+    ax.set_title(panel.title)
+    ax.set_xlabel(panel.xlabel)
+    ax.set_ylabel(panel.ylabel)
+    if panel.xrange:
+        ax.set_xlim(*panel.xrange)
+    if panel.invert_y:
         ax.invert_yaxis()
-    handles, names = ax.get_legend_handles_labels()
-    if p.legend and handles and (labelled or names):
+    handles, legend_labels = ax.get_legend_handles_labels()
+    if panel.legend and handles and (is_labelled or legend_labels):
         ax.legend(frameon=False, loc="best")
 
 
-def _draw_bars(ax: Axes, bars: list[Trace], cols: tuple[str, ...], stacked: bool, *, vertical: bool, overlay: bool = False) -> None:
-    cats = list(dict.fromkeys(str(v) for t in bars for v in (t.x if vertical else t.y) or []))
-    idx = {c: i for i, c in enumerate(cats)}
+def _draw_bars(
+    ax: matplotlib_axes.Axes,
+    bars: list[ir.Trace],
+    palette_colors: tuple[str, ...],
+    stacked: bool,
+    *,
+    vertical: bool,
+    overlay: bool = False,
+) -> None:
+    """Draws bar traces over shared categories.
+
+    Bars of different traces sit side by side, or share one position when
+    ``stacked`` (each trace on top of the previous ones) or ``overlay``. A
+    trace's ``y1`` sets its bars' base explicitly.
+
+    Args:
+        ax: The panel's axes.
+        bars: The bar traces, all vertical or all horizontal.
+        palette_colors: Palette for traces without their own colour.
+        stacked: If True, stack the traces.
+        vertical: True for ``bar`` traces (categories on x), False for
+            ``barh`` traces (categories on y).
+        overlay: If True, draw all traces at the same position.
+    """
+    categories = list(
+        dict.fromkeys(
+            str(value)
+            for trace in bars
+            for value in (trace.x if vertical else trace.y) or []
+        )
+    )
+    position_by_category = {
+        category: i for i, category in enumerate(categories)
+    }
     n = len(bars)
     width = 0.6 if (stacked or overlay) else 0.8 / max(1, n)
-    base = np.zeros(len(cats))
-    for k, t in enumerate(bars):
-        pos = np.array([idx[str(v)] for v in (t.x if vertical else t.y) or []], dtype=float)
-        vals = np.asarray(t.y if vertical else t.x, dtype=float)
-        c = _color(t, k, cols)
-        off = 0.0 if (stacked or overlay) else (k - (n - 1) / 2) * width
-        label = t.name
-        under = np.asarray(t.y1, dtype=float) if t.y1 is not None else (base[pos.astype(int)] if stacked else None)
+    stack_base = np.zeros(len(categories))
+    for k, trace in enumerate(bars):
+        trace_categories = (trace.x if vertical else trace.y) or []
+        positions = np.array(
+            [position_by_category[str(value)] for value in trace_categories],
+            dtype=float,
+        )
+        values = np.asarray(trace.y if vertical else trace.x, dtype=float)
+        color = _color(trace, k, palette_colors)
+        offset = 0.0 if (stacked or overlay) else (k - (n - 1) / 2) * width
+        base = (
+            np.asarray(trace.y1, dtype=float)
+            if trace.y1 is not None
+            else (stack_base[positions.astype(int)] if stacked else None)
+        )
         if vertical:
-            ax.bar(pos + off, vals, width=width, bottom=under, color=c, label=label)
+            ax.bar(
+                positions + offset,
+                values,
+                width=width,
+                bottom=base,
+                color=color,
+                label=trace.name,
+            )
         else:
-            ax.barh(pos + off, vals, height=width * (1 if stacked else 1), left=under, color=c, label=label)
+            ax.barh(
+                positions + offset,
+                values,
+                height=width,
+                left=base,
+                color=color,
+                label=trace.name,
+            )
         if stacked:
-            np.add.at(base, pos.astype(int), vals)
-    if vertical and (len(cats) > 4 or max((len(c) for c in cats), default=0) > 9):
-        ax.set_xticks(range(len(cats)), cats, rotation=35, ha="right")
+            np.add.at(stack_base, positions.astype(int), values)
+    longest_category = max(
+        (len(category) for category in categories), default=0
+    )
+    if vertical and (len(categories) > 4 or longest_category > 9):
+        ax.set_xticks(
+            range(len(categories)), categories, rotation=35, ha="right"
+        )
+    elif vertical:
+        ax.set_xticks(range(len(categories)), categories)
     else:
-        (ax.set_xticks if vertical else ax.set_yticks)(range(len(cats)), cats)
+        ax.set_yticks(range(len(categories)), categories)
 
 
-def _draw_segments(ax: Axes, tr: Trace, c: Any) -> None:
-    lanes = tr.style.get("lanes") or []
-    ypos = {ln: i for i, ln in enumerate(lanes)}
-    xs = np.asarray(tr.x, dtype=float)
-    xe = np.asarray(tr.x1, dtype=float)
-    ys = np.array([ypos.get(v, v) for v in tr.y or []], dtype=float)
-    ax.hlines(ys, xs, xe, colors=c, lw=tr.style.get("width", 4), label=tr.name or "_nolegend_")
+def _draw_segments(
+    ax: matplotlib_axes.Axes, trace: ir.Trace, color: Any
+) -> None:
+    """Draws a segment trace as horizontal lines, one lane per y value.
+
+    Lanes listed in ``trace.style["lanes"]`` map to rows 0, 1, ...; other y
+    values are used as numeric positions.
+    """
+    lanes = trace.style.get("lanes") or []
+    position_by_lane = {lane: i for i, lane in enumerate(lanes)}
+    starts = np.asarray(trace.x, dtype=float)
+    ends = np.asarray(trace.x1, dtype=float)
+    y_positions = np.array(
+        [position_by_lane.get(value, value) for value in trace.y or []],
+        dtype=float,
+    )
+    ax.hlines(
+        y_positions,
+        starts,
+        ends,
+        colors=color,
+        lw=trace.style.get("width", 4),
+        label=trace.name or "_nolegend_",
+    )
     if lanes:
         ax.set_yticks(range(len(lanes)), lanes)

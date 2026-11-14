@@ -89,11 +89,31 @@ packages = ["cta"]
 
 [tool.ruff]
 target-version = "py311"
-line-length = 100
+line-length = 80  # Google Python Style Guide
+extend-exclude = ["third_party", "scripts"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
-ignore = ["E501"]
+# E/W pycodestyle, F pyflakes, I isort, N pep8-naming, D pydocstyle, B bugbear, UP pyupgrade,
+# SIM simplify. Module-only imports (Google 2.2) has no ruff rule; tests/unit/test_code_style.py
+# enforces it.
+select = ["E", "W", "F", "I", "N", "D", "B", "UP", "SIM"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.isort]
+# Google style: one import per line (typing / collections.abc excepted), sorted lexicographically
+# within each section regardless of `import` vs `from`.
+force-single-line = true
+force-sort-within-sections = true
+single-line-exclusions = ["typing", "collections.abc", "typing_extensions"]
+order-by-type = false
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D103"]  # test function names state what they check
+
+[tool.ruff.format]
+docstring-code-format = true
 
 [tool.mypy]
 python_version = "3.11"

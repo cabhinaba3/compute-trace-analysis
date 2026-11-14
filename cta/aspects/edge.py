@@ -2,23 +2,35 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+import pathlib
 
 import numpy as np
 import polars as pl
 
-from cta.core.models import AspectResult, CompareConfig, TrialGroup
-from cta.core.registry import register_aspect
-from cta.core.stats import compare_entity_tables, compare_scalar_metrics
+from cta.core import models
+from cta.core import registry
+from cta.core import stats
+
+# Engine-layer precisions counted as low precision.
+_LOW_PRECISIONS = ["INT8", "FP8", "FP16", "BF16"]
 
 
-@register_aspect(
+@registry.register_aspect(
     "layer_fusion",
     title="TensorRT Layer Timing, Fusion & Precision Mix",
     required_formats=("trtexec_profile", "trtexec_engine"),
     any_of_formats=True,
 )
 class LayerFusionAspect:
+    """Compares TensorRT layer time, layer fusion and precision mix.
+
+    Attributes:
+        name: Aspect key used by ``--aspects`` and in reports.
+        title: Report heading.
+        required_formats: trtexec layer profile and engine layer info.
+        any_of_formats: Whether one of ``required_formats`` is enough.
+    """
+
     name = "layer_fusion"
     title = "TensorRT Layer Timing, Fusion & Precision Mix"
     required_formats = ("trtexec_profile", "trtexec_engine")
@@ -26,62 +38,111 @@ class LayerFusionAspect:
 
     def run(
         self,
-        groups: tuple[TrialGroup, ...],
-        tables: dict[str, list[dict[str, Path]]],
-        config: CompareConfig,
-    ) -> AspectResult:
-        labels = [g.label for g in groups]
-        trials: list[dict[str, list[float]]] = []
-        layer_dfs: list[pl.DataFrame] = []
-        prec_dfs: list[pl.DataFrame] = []
+        groups: tuple[models.TrialGroup, ...],
+        tables: dict[str, list[dict[str, pathlib.Path]]],
+        config: models.CompareConfig,
+    ) -> models.AspectResult:
+        """Compares TensorRT layers across the trial groups.
 
-        for g in groups:
-            acc: dict[str, list[float]] = {
+        Layer counts and fusion come from the engine layer info when present,
+        else from the layer profile; precision needs the engine layer info.
+
+        Args:
+            groups: Trial groups to compare, baseline first.
+            tables: Per group id, one mapping of table key to Parquet path
+                per trial.
+            config: Comparison settings; only the significance level is
+                used.
+
+        Returns:
+            Summary metrics plus ``by_layer`` and ``by_precision`` detail
+            tables when any group has the data for them.
+        """
+        labels = [group.label for group in groups]
+        trials: list[dict[str, list[float]]] = []
+        layer_totals: list[pl.DataFrame] = []
+        precision_totals: list[pl.DataFrame] = []
+
+        for group in groups:
+            metric_values: dict[str, list[float]] = {
                 "total_layer_ms": [],
                 "layer_count": [],
                 "fused_layer_count": [],
                 "fusion_ratio_pct": [],
                 "low_precision_layer_pct": [],
             }
-            t_layers, t_precs = [], []
-            for tmap in tables[g.group_id]:
-                has_prof = "trtexec_profile.trt_profile" in tmap
-                has_eng = "trtexec_engine.trt_engine" in tmap
-                pdf = pl.read_parquet(tmap["trtexec_profile.trt_profile"]) if has_prof else pl.DataFrame()
-                edf = pl.read_parquet(tmap["trtexec_engine.trt_engine"]) if has_eng else pl.DataFrame()
+            trial_layers: list[pl.DataFrame] = []
+            trial_precisions: list[pl.DataFrame] = []
+            for table_paths in tables[group.group_id]:
+                has_profile = "trtexec_profile.trt_profile" in table_paths
+                has_engine = "trtexec_engine.trt_engine" in table_paths
+                profile_layers = (
+                    pl.read_parquet(table_paths["trtexec_profile.trt_profile"])
+                    if has_profile
+                    else pl.DataFrame()
+                )
+                engine_layers = (
+                    pl.read_parquet(table_paths["trtexec_engine.trt_engine"])
+                    if has_engine
+                    else pl.DataFrame()
+                )
 
-                if pdf.height:
-                    acc["total_layer_ms"].append(float(pdf["avg_ms"].to_numpy().sum()))
-                    t_layers.append(pdf.select("name", "avg_ms"))
-                if edf.height:
-                    n_l = edf.height
-                    n_f = int(edf.filter(pl.col("is_fused")).height)
-                    n_low = int(edf.filter(pl.col("precision").is_in(["INT8", "FP8", "FP16", "BF16"])).height)
-                    acc["layer_count"].append(float(n_l))
-                    acc["fused_layer_count"].append(float(n_f))
-                    acc["fusion_ratio_pct"].append(n_f / n_l * 100.0)
-                    acc["low_precision_layer_pct"].append(n_low / n_l * 100.0)
-                    t_precs.append(edf.group_by("precision").agg(pl.len().cast(pl.Float64).alias("layers")))
-                elif pdf.height:
-                    n_l = pdf.height
-                    n_f = int(pdf.filter(pl.col("is_fused")).height)
-                    acc["layer_count"].append(float(n_l))
-                    acc["fused_layer_count"].append(float(n_f))
-                    acc["fusion_ratio_pct"].append(n_f / n_l * 100.0)
+                if profile_layers.height:
+                    metric_values["total_layer_ms"].append(
+                        float(profile_layers["avg_ms"].to_numpy().sum())
+                    )
+                    trial_layers.append(profile_layers.select("name", "avg_ms"))
+                if engine_layers.height:
+                    n_layers = engine_layers.height
+                    n_fused = int(
+                        engine_layers.filter(pl.col("is_fused")).height
+                    )
+                    n_low_precision = int(
+                        engine_layers.filter(
+                            pl.col("precision").is_in(_LOW_PRECISIONS)
+                        ).height
+                    )
+                    metric_values["layer_count"].append(float(n_layers))
+                    metric_values["fused_layer_count"].append(float(n_fused))
+                    metric_values["fusion_ratio_pct"].append(
+                        n_fused / n_layers * 100.0
+                    )
+                    metric_values["low_precision_layer_pct"].append(
+                        n_low_precision / n_layers * 100.0
+                    )
+                    trial_precisions.append(
+                        engine_layers.group_by("precision").agg(
+                            pl.len().cast(pl.Float64).alias("layers")
+                        )
+                    )
+                elif profile_layers.height:
+                    n_layers = profile_layers.height
+                    n_fused = int(
+                        profile_layers.filter(pl.col("is_fused")).height
+                    )
+                    metric_values["layer_count"].append(float(n_layers))
+                    metric_values["fused_layer_count"].append(float(n_fused))
+                    metric_values["fusion_ratio_pct"].append(
+                        n_fused / n_layers * 100.0
+                    )
 
-            trials.append(acc)
-            layer_dfs.append(
-                pl.concat(t_layers).group_by("name").agg(pl.col("avg_ms").mean())
-                if t_layers
+            trials.append(metric_values)
+            layer_totals.append(
+                pl.concat(trial_layers)
+                .group_by("name")
+                .agg(pl.col("avg_ms").mean())
+                if trial_layers
                 else pl.DataFrame({"name": [], "avg_ms": []})
             )
-            prec_dfs.append(
-                pl.concat(t_precs).group_by("precision").agg(pl.col("layers").mean())
-                if t_precs
+            precision_totals.append(
+                pl.concat(trial_precisions)
+                .group_by("precision")
+                .agg(pl.col("layers").mean())
+                if trial_precisions
                 else pl.DataFrame({"precision": [], "layers": []})
             )
 
-        summary = compare_scalar_metrics(
+        summary = stats.compare_scalar_metrics(
             [
                 ("total_layer_ms", "ms", True),
                 ("layer_count", "layers", True),
@@ -94,31 +155,74 @@ class LayerFusionAspect:
             alpha=config.alpha,
         )
         details: dict[str, pl.DataFrame] = {}
-        if any(d.height for d in layer_dfs):
-            details["by_layer"] = compare_entity_tables(labels, layer_dfs, key_col="name", val_col="avg_ms")
-        if any(d.height for d in prec_dfs):
-            details["by_precision"] = compare_entity_tables(labels, prec_dfs, key_col="precision", val_col="layers")
-        return AspectResult(name=self.name, title=self.title, summary=summary, details=details)
+        if any(totals.height for totals in layer_totals):
+            details["by_layer"] = stats.compare_entity_tables(
+                labels, layer_totals, key_column="name", value_column="avg_ms"
+            )
+        if any(totals.height for totals in precision_totals):
+            details["by_precision"] = stats.compare_entity_tables(
+                labels,
+                precision_totals,
+                key_column="precision",
+                value_column="layers",
+            )
+        return models.AspectResult(
+            name=self.name, title=self.title, summary=summary, details=details
+        )
 
 
-def _count_bundle_queries(tmap: dict[str, Path], warmup_steps: int, max_steps: int | None) -> int:
-    for fmt in ("trtexec_timing", "nsys", "kineto", "jax"):
-        key = f"{fmt}.steps"
-        if key in tmap:
-            sdf = pl.read_parquet(tmap[key])
-            # one query per step; with several ranks/reports count the steps of a single rank, not their sum
-            total = int(sdf.group_by("rank").len()["len"].to_numpy().max()) if "rank" in sdf.columns and sdf.height else sdf.height
-            n = max(0, total - warmup_steps)
-            return min(n, max_steps) if max_steps is not None else n
+def _count_bundle_queries(
+    table_paths: dict[str, pathlib.Path],
+    warmup_steps: int,
+    max_steps: int | None,
+) -> int:
+    """Returns the number of queries (steps) a trial ran after slicing.
+
+    Uses the first steps table among trtexec timing, nsys, Kineto and JAX.
+
+    Args:
+        table_paths: Mapping of table key to Parquet path for one trial.
+        warmup_steps: Steps to skip at the start.
+        max_steps: Most steps to count, or None for no limit.
+
+    Returns:
+        The query count, or 0 when the trial has no steps table.
+    """
+    for trace_format in ("trtexec_timing", "nsys", "kineto", "jax"):
+        steps_key = f"{trace_format}.steps"
+        if steps_key in table_paths:
+            steps = pl.read_parquet(table_paths[steps_key])
+            # One query per step; with several ranks/reports count the steps
+            # of a single rank, not their sum.
+            total_steps = (
+                int(steps.group_by("rank").len()["len"].to_numpy().max())
+                if "rank" in steps.columns and steps.height
+                else steps.height
+            )
+            n_queries = max(0, total_steps - warmup_steps)
+            return (
+                min(n_queries, max_steps)
+                if max_steps is not None
+                else n_queries
+            )
     return 0
 
 
-@register_aspect(
+@registry.register_aspect(
     "system_energy",
     title="System Utilization, Thermals & Energy Efficiency",
     required_formats=("jtop",),
 )
 class SystemEnergyAspect:
+    """Compares Jetson power, energy per query, utilisation and thermals.
+
+    Attributes:
+        name: Aspect key used by ``--aspects`` and in reports.
+        title: Report heading.
+        required_formats: jtop telemetry.
+        any_of_formats: Whether one of ``required_formats`` is enough.
+    """
+
     name = "system_energy"
     title = "System Utilization, Thermals & Energy Efficiency"
     required_formats = ("jtop",)
@@ -126,16 +230,32 @@ class SystemEnergyAspect:
 
     def run(
         self,
-        groups: tuple[TrialGroup, ...],
-        tables: dict[str, list[dict[str, Path]]],
-        config: CompareConfig,
-    ) -> AspectResult:
-        labels = [g.label for g in groups]
+        groups: tuple[models.TrialGroup, ...],
+        tables: dict[str, list[dict[str, pathlib.Path]]],
+        config: models.CompareConfig,
+    ) -> models.AspectResult:
+        """Compares jtop telemetry across the trial groups.
+
+        Energy per query uses the trial's steps table (see
+        ``_count_bundle_queries``) when the bundle has one.
+
+        Args:
+            groups: Trial groups to compare, baseline first.
+            tables: Per group id, one mapping of table key to Parquet path
+                per trial.
+            config: Comparison settings: warm-up and step limit for the
+                query count, and the significance level.
+
+        Returns:
+            Summary metrics plus a ``share_Thermal-Throttle`` scalar for
+            groups whose GPU reached 83 C.
+        """
+        labels = [group.label for group in groups]
         trials: list[dict[str, list[float]]] = []
         scalars: dict[str, dict[str, float]] = {}
 
-        for g in groups:
-            acc: dict[str, list[float]] = {
+        for group in groups:
+            metric_values: dict[str, list[float]] = {
                 "total_energy_j": [],
                 "avg_power_w": [],
                 "peak_power_w": [],
@@ -147,40 +267,73 @@ class SystemEnergyAspect:
                 "peak_ram_mb": [],
                 "max_gpu_temp_c": [],
             }
-            for tmap in tables[g.group_id]:
-                sdf = pl.read_parquet(tmap["jtop.samples"])
-                if sdf.is_empty():
+            for table_paths in tables[group.group_id]:
+                samples = pl.read_parquet(table_paths["jtop.samples"])
+                if samples.is_empty():
                     continue
-                # one telemetry file per device: energies add, the run lasts as long as the longest device
-                per_dev = sdf.group_by("device", maintain_order=True).agg(
-                    pl.col("cum_energy_j").last().alias("e"),
-                    (pl.col("elapsed_s").last() - pl.col("elapsed_s").first()).alias("span"),
+                # One telemetry file per device: energies add, the run lasts
+                # as long as the longest device.
+                per_device = samples.group_by(
+                    "device", maintain_order=True
+                ).agg(
+                    pl.col("cumulative_energy_j").last().alias("e"),
+                    (
+                        pl.col("elapsed_s").last() - pl.col("elapsed_s").first()
+                    ).alias("span"),
                 )
-                tot_e = float(per_dev["e"].sum())
-                span_s = float(np.max(per_dev["span"].to_numpy()))
-                p_arr = sdf["power_tot_w"].to_numpy()
-                avg_p = (tot_e / span_s) if span_s > 0 else float(np.mean(p_arr))
+                total_energy_j = float(per_device["e"].sum())
+                span_s = float(np.max(per_device["span"].to_numpy()))
+                power_w = samples["power_total_w"].to_numpy()
+                avg_power_w = (
+                    (total_energy_j / span_s)
+                    if span_s > 0
+                    else float(np.mean(power_w))
+                )
 
-                acc["total_energy_j"].append(tot_e)
-                acc["avg_power_w"].append(avg_p)
-                acc["peak_power_w"].append(float(np.max(p_arr)))
-                acc["mean_gpu_util_pct"].append(float(np.mean(sdf["gpu_util_pct"].to_numpy())))
-                acc["mean_cpu_util_pct"].append(float(np.mean(sdf["cpu_util_pct"].to_numpy())))
-                acc["peak_gpu_mem_mb"].append(float(np.max(sdf["gpu_mem_mb"].to_numpy())))
-                acc["peak_ram_mb"].append(float(np.max(sdf["ram_mb"].to_numpy())))
-                acc["max_gpu_temp_c"].append(float(np.max(sdf["gpu_temp_c"].to_numpy())))
+                metric_values["total_energy_j"].append(total_energy_j)
+                metric_values["avg_power_w"].append(avg_power_w)
+                metric_values["peak_power_w"].append(float(np.max(power_w)))
+                metric_values["mean_gpu_util_pct"].append(
+                    float(np.mean(samples["gpu_util_pct"].to_numpy()))
+                )
+                metric_values["mean_cpu_util_pct"].append(
+                    float(np.mean(samples["cpu_util_pct"].to_numpy()))
+                )
+                metric_values["peak_gpu_mem_mb"].append(
+                    float(np.max(samples["gpu_mem_mb"].to_numpy()))
+                )
+                metric_values["peak_ram_mb"].append(
+                    float(np.max(samples["ram_mb"].to_numpy()))
+                )
+                metric_values["max_gpu_temp_c"].append(
+                    float(np.max(samples["gpu_temp_c"].to_numpy()))
+                )
 
-                n_queries = _count_bundle_queries(tmap, config.warmup_steps, config.max_steps)
-                if n_queries > 0 and tot_e > 0:
-                    acc["energy_per_query_mj"].append((tot_e * 1e3) / n_queries)
-                    acc["queries_per_joule"].append(n_queries / tot_e)
+                n_queries = _count_bundle_queries(
+                    table_paths, config.warmup_steps, config.max_steps
+                )
+                if n_queries > 0 and total_energy_j > 0:
+                    metric_values["energy_per_query_mj"].append(
+                        (total_energy_j * 1e3) / n_queries
+                    )
+                    metric_values["queries_per_joule"].append(
+                        n_queries / total_energy_j
+                    )
 
-            trials.append(acc)
-            max_t = float(np.max(acc["max_gpu_temp_c"])) if acc["max_gpu_temp_c"] else 0.0
-            if max_t >= 83.0:
-                scalars[g.label] = {"share_Thermal-Throttle": min(1.0, (max_t - 80.0) / 15.0)}
+            trials.append(metric_values)
+            max_temp_c = (
+                float(np.max(metric_values["max_gpu_temp_c"]))
+                if metric_values["max_gpu_temp_c"]
+                else 0.0
+            )
+            if max_temp_c >= 83.0:
+                scalars[group.label] = {
+                    "share_Thermal-Throttle": min(
+                        1.0, (max_temp_c - 80.0) / 15.0
+                    )
+                }
 
-        summary = compare_scalar_metrics(
+        summary = stats.compare_scalar_metrics(
             [
                 ("total_energy_j", "J", True),
                 ("avg_power_w", "W", True),
@@ -197,4 +350,6 @@ class SystemEnergyAspect:
             trials,
             alpha=config.alpha,
         )
-        return AspectResult(name=self.name, title=self.title, summary=summary, scalars=scalars)
+        return models.AspectResult(
+            name=self.name, title=self.title, summary=summary, scalars=scalars
+        )

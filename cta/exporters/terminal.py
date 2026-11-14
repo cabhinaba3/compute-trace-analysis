@@ -1,57 +1,110 @@
+"""Prints a comparison report to the terminal with Rich."""
+
 from __future__ import annotations
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
+from typing import Any
 
-from cta.core.models import ComparisonReport
+from rich import console as rich_console
+from rich import panel
+from rich import table
+
+from cta.core import models
+
+# Summary columns left out of the terminal tables (besides every ci95_* one).
+_HIDDEN_COLUMNS = ("p_mannwhitney", "cohens_d")
 
 
-def render_terminal_report(report: ComparisonReport, console: Console | None = None) -> None:
-    con = console or Console()
-    lbls = " vs ".join(f"[bold cyan]{g.label}[/]" for g in report.groups)
-    title_kind = "Analysis" if report.mode == "single" else f"Comparison ({report.mode.upper()})"
-    con.print(Panel(f"CTA {title_kind}: {lbls}", expand=False))
+def _delta_color(delta_pct: float, speedup: Any) -> str:
+    """Picks the Rich color of a ``*delta_pct`` cell.
+
+    A float ``speedup`` (pair comparisons) is direction-aware: above 1
+    means the candidate is better. Otherwise the change itself decides:
+    more than +2% is red, less than -2% green.
+    """
+    if isinstance(speedup, float):
+        if speedup > 1.02:
+            return "green"
+        return "red" if speedup < 0.98 else "white"
+    if delta_pct > 2.0:
+        return "red"
+    return "green" if delta_pct < -2.0 else "white"
+
+
+def _format_cell(column: str, value: Any, row: dict[str, Any]) -> str:
+    """Formats one summary value as Rich table cell markup."""
+    if value is None:
+        return "-"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, float):
+        if column.endswith("delta_pct"):
+            color = _delta_color(value, row.get("speedup"))
+            return f"[{color}]{value:+.2f}%[/{color}]"
+        if column == "speedup":
+            return f"{value:.2f}x"
+        return f"{value:.4g}"
+    return str(value)
+
+
+def render_terminal_report(
+    report: models.ComparisonReport, console: rich_console.Console | None = None
+) -> None:
+    """Prints a report to the terminal.
+
+    Prints a title panel, one line per bottleneck diagnosis (yellow when
+    the regime shifted), one table per aspect with a non-empty summary
+    (without CI, Mann-Whitney and Cohen's d columns) and the gate
+    violations in red.
+
+    Args:
+        report: The report to print.
+        console: Rich console to print to; None creates a new one.
+    """
+    console = console or rich_console.Console()
+    group_labels = " vs ".join(
+        f"[bold cyan]{group.label}[/]" for group in report.groups
+    )
+    title_kind = (
+        "Analysis"
+        if report.mode == "single"
+        else f"Comparison ({report.mode.upper()})"
+    )
+    console.print(
+        panel.Panel(f"CTA {title_kind}: {group_labels}", expand=False)
+    )
 
     for shift in report.diagnoses:
-        color = "yellow" if shift.baseline_regime != shift.candidate_regime else "green"
-        con.print(f"[{color}]• {shift.summary}[/{color}]")
+        color = (
+            "yellow"
+            if shift.baseline_regime != shift.candidate_regime
+            else "green"
+        )
+        console.print(f"[{color}]• {shift.summary}[/{color}]")
 
     for aspect in report.aspects.values():
-        df = aspect.summary
-        if df.is_empty():
+        summary = aspect.summary
+        if summary.is_empty():
             continue
-        tbl = Table(title=f"{aspect.title} [{aspect.name}]", show_lines=False)
-        for col in df.columns:
-            if col.startswith("ci95_") or col in ("p_mannwhitney", "cohens_d"):
-                continue
-            tbl.add_column(col, justify="left" if col in ("metric", "unit") else "right")
+        summary_table = table.Table(
+            title=f"{aspect.title} [{aspect.name}]", show_lines=False
+        )
+        visible_columns = [
+            column
+            for column in summary.columns
+            if not column.startswith("ci95_") and column not in _HIDDEN_COLUMNS
+        ]
+        for column in visible_columns:
+            summary_table.add_column(
+                column,
+                justify="left" if column in ("metric", "unit") else "right",
+            )
+        for row in summary.select(visible_columns).iter_rows(named=True):
+            cells = [
+                _format_cell(column, value, row)
+                for column, value in row.items()
+            ]
+            summary_table.add_row(*cells)
+        console.print(summary_table)
 
-        vis_cols = [c for c in df.columns if not c.startswith("ci95_") and c not in ("p_mannwhitney", "cohens_d")]
-        for row in df.select(vis_cols).iter_rows(named=True):
-            cells: list[str] = []
-            for k, v in row.items():
-                if v is None:
-                    cells.append("-")
-                elif isinstance(v, bool):
-                    cells.append("yes" if v else "no")
-                elif isinstance(v, float):
-                    if k.endswith("delta_pct"):
-                        # `speedup` (pairs) is direction-aware: >1 means the candidate is better.
-                        sp = row.get("speedup")
-                        if isinstance(sp, float):
-                            color = "green" if sp > 1.02 else ("red" if sp < 0.98 else "white")
-                        else:
-                            color = "red" if v > 2.0 else ("green" if v < -2.0 else "white")
-                        cells.append(f"[{color}]{v:+.2f}%[/{color}]")
-                    elif k == "speedup":
-                        cells.append(f"{v:.2f}x")
-                    else:
-                        cells.append(f"{v:.4g}")
-                else:
-                    cells.append(str(v))
-            tbl.add_row(*cells)
-        con.print(tbl)
-
-    for v in report.violations:
-        con.print(f"[bold red]✗ {v.message}[/bold red]")
+    for violation in report.violations:
+        console.print(f"[bold red]✗ {violation.message}[/bold red]")

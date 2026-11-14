@@ -1,84 +1,156 @@
-"""PyTorch Profiler / Kineto Chrome Trace (.json and .json.gz) adapter."""
+"""PyTorch Profiler / Kineto Chrome Trace (.json and .json.gz) adapter.
+
+Every file of an artifact is one rank's trace with its own clock. GPU kernels,
+memcpys and memsets are attributed to the CPU op and ``ProfilerStep#N`` range
+that launched them, matched through the CUDA runtime call's correlation id.
+"""
 
 from __future__ import annotations
 
 import gzip
 import json
+import pathlib
 import re
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import polars as pl
 
-from cta.adapters.nsys.reader import KERNELS_SCHEMA, RUNTIME_SCHEMA, STEPS_SCHEMA, conform
-from cta.core.alignment import enrich_ops_df
-from cta.core.bundle import infer_rank
-from cta.core.intervals import assign_ranges, build_thread_ranges, range_paths
-from cta.core.models import TraceArtifact
-from cta.core.registry import register_adapter
+from cta.adapters.nsys import reader as nsys_reader
+from cta.core import alignment
+from cta.core import bundle
+from cta.core import intervals
+from cta.core import models
+from cta.core import registry
 
-_XPROF_HEAD = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
+_XPROF_HEAD_RE = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
 _STEP_RE = re.compile(r"profilerstep#\s*(\d+)", re.IGNORECASE)
 
+# Event categories (lower-cased ``cat``) of CPU ops, CUDA API calls and GPU
+# activities.
+_CPU_OP_CATEGORIES = ("cpu_op", "operator", "user_annotation")
+_RUNTIME_CATEGORIES = ("cuda_runtime", "cuda_driver", "runtime")
+_GPU_CATEGORIES = ("kernel", "gpu_memcpy", "gpu_memset", "memcpy", "memset")
 
-def _open_text_head(path: Path, nbytes: int = 8192) -> str:
+
+def _open_text_head(path: pathlib.Path, max_bytes: int = 8192) -> str:
+    """Returns the first bytes of a (possibly gzipped) file as text.
+
+    Args:
+        path: The file to read; a ``.gz`` suffix means gzip-compressed.
+        max_bytes: The number of (decompressed) bytes to read at most.
+
+    Returns:
+        The decoded head, or "" if the file cannot be read.
+    """
     try:
         if path.suffix.lower() == ".gz":
             with gzip.open(path, "rb") as gz:
-                return gz.read(nbytes).decode("utf-8", errors="ignore")
+                return gz.read(max_bytes).decode("utf-8", errors="ignore")
         with path.open("rb") as fh:
-            return fh.read(nbytes).decode("utf-8", errors="ignore")
+            return fh.read(max_bytes).decode("utf-8", errors="ignore")
     except OSError:
         return ""
 
 
-@register_adapter("kineto", version="2.2")
+@registry.register_adapter("kineto", version="2.2")
 class KinetoAdapter:
+    """Reads PyTorch Profiler (Kineto) Chrome traces, one file per rank.
+
+    Attributes:
+        format_name: The registered format name, ``"kineto"``.
+        version: The adapter version, part of the ingest cache key.
+    """
+
     format_name = "kineto"
     version = "2.2"
 
-    def detect(self, path: Path) -> bool:
-        name_low = path.name.lower()
-        if not (name_low.endswith(".json") or name_low.endswith(".json.gz")):
+    def detect(self, path: pathlib.Path) -> bool:
+        """Returns whether a file looks like a Kineto Chrome trace.
+
+        Args:
+            path: The candidate file.
+
+        Returns:
+            True for a ``.json`` or ``.json.gz`` file whose head contains
+            ``"traceEvents"``. JAX/XProf traces (``displayTimeUnit`` "ns")
+            are rejected: they belong to the jax adapter.
+        """
+        lower_name = path.name.lower()
+        if not (
+            lower_name.endswith(".json") or lower_name.endswith(".json.gz")
+        ):
             return False
         head = _open_text_head(path)
-        if _XPROF_HEAD.match(head.lstrip()):  # JAX/XProf traces (displayTimeUnit "ns") belong to the jax adapter
+        if _XPROF_HEAD_RE.match(head.lstrip()):
             return False
         return '"traceEvents"' in head
 
-    def ingest(self, artifact: TraceArtifact, out_dir: Path) -> dict[str, Path]:
-        """Ingest every shard of the artifact (one trace per rank). Each shard keeps its own clock and rank."""
+    def ingest(
+        self, artifact: models.TraceArtifact, out_dir: pathlib.Path
+    ) -> dict[str, pathlib.Path]:
+        """Ingests every shard of the artifact (one trace per rank).
+
+        Each shard keeps its own clock and rank. CUDA runtime totals are
+        summed over all shards.
+
+        Args:
+            artifact: The artifact whose trace files are read.
+            out_dir: The directory the Parquet tables are written to.
+
+        Returns:
+            The paths of the ``kernels``, ``steps`` and ``runtime`` Parquet
+            tables, by table name.
+        """
         kernel_frames: list[pl.DataFrame] = []
         step_frames: list[pl.DataFrame] = []
-        rt_agg: dict[str, list[int]] = {}
+        # Runtime API name -> [total duration in ns, number of calls].
+        runtime_totals: dict[str, list[int]] = {}
 
-        for idx, path in enumerate(sorted(artifact.paths)):
-            doc = _load(path)
-            rank = _trace_rank(doc, path, idx)
-            kdf, sdf = _ingest_shard(doc, rank, rt_agg)
-            if kdf.height:
-                kernel_frames.append(kdf)
-            if sdf.height:
-                step_frames.append(sdf)
+        for shard_index, path in enumerate(sorted(artifact.paths)):
+            trace = _load_trace(path)
+            rank = _trace_rank(trace, path, shard_index)
+            shard_kernels, shard_steps = _ingest_shard(
+                trace, rank, runtime_totals
+            )
+            if shard_kernels.height:
+                kernel_frames.append(shard_kernels)
+            if shard_steps.height:
+                step_frames.append(shard_steps)
 
-        kernels_df = pl.concat(kernel_frames).sort("rank", "start_ns") if kernel_frames else pl.DataFrame(schema=KERNELS_SCHEMA)
-        steps_df = pl.concat(step_frames).sort("rank", "start_ns") if step_frames else pl.DataFrame(schema=STEPS_SCHEMA)
-        runtime_df = (
-            pl.DataFrame([{"name": k, "duration_ns": v[0], "calls": v[1]} for k, v in rt_agg.items()], schema=RUNTIME_SCHEMA)
-            if rt_agg
-            else pl.DataFrame(schema=RUNTIME_SCHEMA)
-        )
+        if kernel_frames:
+            kernels = pl.concat(kernel_frames).sort("rank", "start_ns")
+        else:
+            kernels = pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA)
+        if step_frames:
+            steps = pl.concat(step_frames).sort("rank", "start_ns")
+        else:
+            steps = pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA)
+        if runtime_totals:
+            runtime_rows = [
+                {"name": name, "duration_ns": duration_ns, "calls": calls}
+                for name, (duration_ns, calls) in runtime_totals.items()
+            ]
+            runtime = pl.DataFrame(
+                runtime_rows, schema=nsys_reader.RUNTIME_SCHEMA
+            )
+        else:
+            runtime = pl.DataFrame(schema=nsys_reader.RUNTIME_SCHEMA)
 
-        out: dict[str, Path] = {}
-        for tname, df in (("kernels", kernels_df), ("steps", steps_df), ("runtime", runtime_df)):
-            p = out_dir / f"{tname}.parquet"
-            df.write_parquet(p, compression="zstd")
-            out[tname] = p
-        return out
+        table_paths: dict[str, pathlib.Path] = {}
+        for table_name, table in (
+            ("kernels", kernels),
+            ("steps", steps),
+            ("runtime", runtime),
+        ):
+            table_path = out_dir / f"{table_name}.parquet"
+            table.write_parquet(table_path, compression="zstd")
+            table_paths[table_name] = table_path
+        return table_paths
 
 
-def _load(path: Path) -> Any:
+def _load_trace(path: pathlib.Path) -> Any:
+    """Parses a (possibly gzipped) JSON trace file."""
     if path.suffix.lower() == ".gz":
         with gzip.open(path, "rt", encoding="utf-8") as gz:
             return json.load(gz)
@@ -86,135 +158,244 @@ def _load(path: Path) -> Any:
         return json.load(fh)
 
 
-def _trace_rank(doc: Any, path: Path, index: int) -> int:
-    """Rank of a shard: the trace's own ``distributedInfo.rank``, else a rank in the file name, else its index."""
-    info = doc.get("distributedInfo") if isinstance(doc, dict) else None
+def _trace_rank(trace: Any, path: pathlib.Path, index: int) -> int:
+    """Returns the rank of a shard.
+
+    The rank is the trace's own ``distributedInfo.rank``, else a rank in the
+    file name, else the shard's index.
+    """
+    info = trace.get("distributedInfo") if isinstance(trace, dict) else None
     if isinstance(info, dict) and isinstance(info.get("rank"), int):
         return int(info["rank"])
-    return infer_rank(path, index)
+    return bundle.infer_rank(path, index)
 
 
-def _ingest_shard(doc: Any, rank: int, rt_agg: dict[str, list[int]]) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Kernels and steps of one rank's trace (single clock), plus its CUDA runtime totals accumulated into rt_agg."""
-    events = doc.get("traceEvents", []) if isinstance(doc, dict) else doc
+def _event_span_ns(event: dict[str, Any]) -> tuple[int, int]:
+    """Returns an event's (start, duration) in ns.
+
+    Kineto timestamps and durations are in microseconds and can be floats
+    with a fractional nanosecond part.
+    """
+    start_ns = int(round(float(event.get("ts", 0.0)) * 1000.0))
+    duration_ns = int(round(float(event.get("dur", 0.0)) * 1000.0))
+    return start_ns, duration_ns
+
+
+def _ingest_shard(
+    trace: Any, rank: int, runtime_totals: dict[str, list[int]]
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Builds the kernels and steps tables of one rank's trace.
+
+    All timestamps of a shard share one clock. CUDA runtime call durations
+    and counts are added to ``runtime_totals`` as a side effect.
+
+    Args:
+        trace: The parsed trace: a dict with ``traceEvents`` or a bare list
+            of events.
+        rank: The rank written to every row.
+        runtime_totals: Runtime API name -> [total duration in ns, calls];
+            updated in place.
+
+    Returns:
+        The kernels and steps tables, conformed to the nsys schemas.
+    """
+    events = trace.get("traceEvents", []) if isinstance(trace, dict) else trace
     gpu_rows: list[dict[str, object]] = []
+    # (step id, start ns, end ns) of every ProfilerStep range.
     step_rows: list[tuple[int, int, int]] = []
     op_names: list[str] = []
-    ops_by_thread: dict[int, list[tuple[int, int, int]]] = {}  # thread id -> (start, end, index into op_names)
-    thread_ids: dict[tuple[object, object], int] = {}
-    launches: dict[int, tuple[int, int]] = {}  # correlation id -> (launch time ns, thread id)
+    # Thread id -> (start ns, end ns, index into op_names) of its CPU ops.
+    ops_by_thread: dict[int, list[tuple[int, int, int]]] = {}
+    thread_id_by_pid_tid: dict[tuple[object, object], int] = {}
+    # Correlation id -> (launch time ns, thread id) of a CUDA runtime call.
+    launch_by_correlation: dict[int, tuple[int, int]] = {}
 
-    def tid_of(ev: dict[str, Any]) -> int:
-        return thread_ids.setdefault((ev.get("pid"), ev.get("tid")), len(thread_ids))
+    def thread_id_of(event: dict[str, Any]) -> int:
+        """Returns a dense id for the event's (pid, tid) pair."""
+        return thread_id_by_pid_tid.setdefault(
+            (event.get("pid"), event.get("tid")), len(thread_id_by_pid_tid)
+        )
 
-    # Pass 1: collect ProfilerStep intervals, CPU ops per thread, and the thread/time of every CUDA launch
-    for ev in events:
-        if not isinstance(ev, dict) or ev.get("ph") != "X":
+    # Pass 1: collect ProfilerStep intervals, CPU ops per thread, and the
+    # thread and time of every CUDA launch.
+    for event in events:
+        if not isinstance(event, dict) or event.get("ph") != "X":
             continue
-        cat = str(ev.get("cat", "")).lower()
-        name = str(ev.get("name", ""))
-        # Kineto timestamps & durations are in microseconds (can be float with fractional ns)
-        start_ns = int(round(float(ev.get("ts", 0.0)) * 1000.0))
-        dur_ns = int(round(float(ev.get("dur", 0.0)) * 1000.0))
-        if dur_ns <= 0:
+        category = str(event.get("cat", "")).lower()
+        name = str(event.get("name", ""))
+        start_ns, duration_ns = _event_span_ns(event)
+        if duration_ns <= 0:
             continue
-        end_ns = start_ns + dur_ns
+        end_ns = start_ns + duration_ns
 
-        m_step = _STEP_RE.search(name)
-        if m_step:
-            # PyTorch also emits each step as a `gpu_user_annotation` (the GPU-side projection of the same
-            # step); counting it would add a second, differently-timed step with the same id.
-            if cat != "gpu_user_annotation":
-                step_rows.append((int(m_step.group(1)), start_ns, end_ns))
+        step_match = _STEP_RE.search(name)
+        if step_match:
+            # PyTorch also emits each step as a `gpu_user_annotation` (the
+            # GPU-side projection of the same step); counting it would add a
+            # second, differently-timed step with the same id.
+            if category != "gpu_user_annotation":
+                step_rows.append((int(step_match.group(1)), start_ns, end_ns))
             continue
 
-        if cat in ("cpu_op", "operator", "user_annotation"):
-            ops_by_thread.setdefault(tid_of(ev), []).append((start_ns, end_ns, len(op_names)))
+        if category in _CPU_OP_CATEGORIES:
+            ops_by_thread.setdefault(thread_id_of(event), []).append(
+                (start_ns, end_ns, len(op_names))
+            )
             op_names.append(name)
-        elif cat in ("cuda_runtime", "cuda_driver", "runtime"):
-            prev = rt_agg.setdefault(name, [0, 0])
-            prev[0] += dur_ns
-            prev[1] += 1
-            args = ev.get("args")
+        elif category in _RUNTIME_CATEGORIES:
+            totals = runtime_totals.setdefault(name, [0, 0])
+            totals[0] += duration_ns
+            totals[1] += 1
+            args = event.get("args")
             if isinstance(args, dict) and "correlation" in args:
-                launches[int(args["correlation"])] = (start_ns, tid_of(ev))
+                launch_by_correlation[int(args["correlation"])] = (
+                    start_ns,
+                    thread_id_of(event),
+                )
 
-    # Pass 2: collect GPU kernels & memcpy/memset; remember when and from which thread each was launched
-    launch_t: list[float] = []
-    launch_tid: list[int] = []
-    for ev in events:
-        if not isinstance(ev, dict) or ev.get("ph") != "X":
+    # Pass 2: collect GPU kernels and memcpy/memset; remember when and from
+    # which thread each was launched.
+    launch_times: list[float] = []
+    launch_thread_ids: list[int] = []
+    for event in events:
+        if not isinstance(event, dict) or event.get("ph") != "X":
             continue
-        cat = str(ev.get("cat", "")).lower()
-        if cat not in ("kernel", "gpu_memcpy", "gpu_memset", "memcpy", "memset"):
+        category = str(event.get("cat", "")).lower()
+        if category not in _GPU_CATEGORIES:
             continue
-        name = str(ev.get("name", ""))
-        start_ns = int(round(float(ev.get("ts", 0.0)) * 1000.0))
-        dur_ns = int(round(float(ev.get("dur", 0.0)) * 1000.0))
-        if dur_ns <= 0:
+        name = str(event.get("name", ""))
+        start_ns, duration_ns = _event_span_ns(event)
+        if duration_ns <= 0:
             continue
-        end_ns = start_ns + dur_ns
-        raw_args = ev.get("args")
-        k_args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
-        corr = int(k_args["correlation"]) if "correlation" in k_args else -1
-        stream = int(k_args.get("stream", ev.get("tid", 0)) or 0)
-        nbytes = int(k_args.get("bytes", 0) or 0)
-        device = int(k_args["device"]) if isinstance(k_args.get("device"), int) else int(ev.get("pid", 0) or 0)
-
-        if "memcpy" in cat or "memset" in cat:
-            ev_cat = "memcpy"
-        elif "nccl" in name.lower():
-            ev_cat = "comm"
+        end_ns = start_ns + duration_ns
+        raw_args = event.get("args")
+        gpu_args: dict[str, Any] = (
+            raw_args if isinstance(raw_args, dict) else {}
+        )
+        correlation_id = (
+            int(gpu_args["correlation"]) if "correlation" in gpu_args else -1
+        )
+        stream = int(gpu_args.get("stream", event.get("tid", 0)) or 0)
+        nbytes = int(gpu_args.get("bytes", 0) or 0)
+        if isinstance(gpu_args.get("device"), int):
+            device = int(gpu_args["device"])
         else:
-            ev_cat = "compute"
+            device = int(event.get("pid", 0) or 0)
 
-        launched = launches.get(corr)
-        launch_t.append(float(launched[0]) if launched else float("nan"))
-        launch_tid.append(launched[1] if launched else -1)
+        if "memcpy" in category or "memset" in category:
+            row_category = "memcpy"
+        elif "nccl" in name.lower():
+            row_category = "comm"
+        else:
+            row_category = "compute"
+
+        launch = launch_by_correlation.get(correlation_id)
+        launch_times.append(float(launch[0]) if launch else float("nan"))
+        launch_thread_ids.append(launch[1] if launch else -1)
         gpu_rows.append(
             {
-                "name": name, "scope": "", "category": ev_cat, "start_ns": start_ns, "end_ns": end_ns,
-                "duration_ns": dur_ns, "bytes": nbytes, "stream": stream, "device": device, "rank": rank,
+                "name": name,
+                "scope": "",
+                "category": row_category,
+                "start_ns": start_ns,
+                "end_ns": end_ns,
+                "duration_ns": duration_ns,
+                "bytes": nbytes,
+                "stream": stream,
+                "device": device,
+                "rank": rank,
             }
-        )  # fmt: skip
+        )
 
     if not gpu_rows:
-        return pl.DataFrame(schema=KERNELS_SCHEMA), pl.DataFrame(schema=STEPS_SCHEMA)
+        return (
+            pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA),
+            pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA),
+        )
 
-    order = np.argsort([r["start_ns"] for r in gpu_rows], kind="stable")  # keep launch info aligned with sorted rows
-    kdf = enrich_ops_df(pl.DataFrame(gpu_rows)[order.tolist()], "name")
-    lt = np.asarray(launch_t, dtype=np.float64)[order]
-    ltid = np.asarray(launch_tid, dtype=np.int64)[order]
-    gpu_t = kdf["start_ns"].to_numpy()
+    # Sort by GPU start time; the launch arrays are permuted alongside so
+    # they stay aligned with the sorted rows.
+    order = np.argsort([row["start_ns"] for row in gpu_rows], kind="stable")
+    kernels = alignment.enrich_ops_df(
+        pl.DataFrame(gpu_rows)[order.tolist()], "name"
+    )
+    launch_ns = np.asarray(launch_times, dtype=np.float64)[order]
+    launch_thread = np.asarray(launch_thread_ids, dtype=np.int64)[order]
+    gpu_start_ns = kernels["start_ns"].to_numpy()
 
-    # Scope = the innermost CPU op that encloses the launch *on the launching thread* (a finished sibling that
-    # started later does not hide the enclosing op). Kernels without a known launch get no scope.
+    # Scope = the innermost CPU op that encloses the launch *on the launching
+    # thread* (a finished sibling that started later does not hide the
+    # enclosing op). Kernels without a known launch get no scope.
     if op_names:
-        threads = {t: build_thread_ranges(list(rows)) for t, rows in ops_by_thread.items()}
-        gstart = np.zeros(len(op_names), dtype=np.int64)
-        for rows in ops_by_thread.values():
-            for st, _, g in rows:
-                gstart[g] = st
-        gid = assign_ranges(threads, gstart, lt, ltid, gpu_t)
-        names = np.array([*op_names, ""], dtype=object)
-        scope = np.where(ltid >= 0, names[gid], "")
-        paths = np.where(ltid >= 0, range_paths(threads, gid, op_names), "")
-        kdf = kdf.with_columns(pl.Series("scope", scope, dtype=pl.String), pl.Series("scope_path", paths, dtype=pl.String))
+        ranges_by_thread = {
+            thread_id: intervals.build_thread_ranges(list(op_rows))
+            for thread_id, op_rows in ops_by_thread.items()
+        }
+        op_start_ns = np.zeros(len(op_names), dtype=np.int64)
+        for op_rows in ops_by_thread.values():
+            for range_start_ns, _, op_index in op_rows:
+                op_start_ns[op_index] = range_start_ns
+        op_ids = intervals.assign_ranges(
+            ranges_by_thread,
+            op_start_ns,
+            launch_ns,
+            launch_thread,
+            gpu_start_ns,
+        )
+        # Range id -1 (no enclosing op) indexes the trailing "".
+        names_with_blank = np.array([*op_names, ""], dtype=object)
+        has_launch = launch_thread >= 0
+        scopes = np.where(has_launch, names_with_blank[op_ids], "")
+        scope_paths = np.where(
+            has_launch,
+            intervals.range_paths(ranges_by_thread, op_ids, op_names),
+            "",
+        )
+        kernels = kernels.with_columns(
+            pl.Series("scope", scopes, dtype=pl.String),
+            pl.Series("scope_path", scope_paths, dtype=pl.String),
+        )
 
-    # Launches are asynchronous: a kernel belongs to the step whose CPU range issued it, not the one it runs in.
-    launch = np.where(np.isnan(lt), gpu_t, lt).astype(np.int64)
+    # Launches are asynchronous: a kernel belongs to the step whose CPU range
+    # issued it, not the one it runs in.
+    issue_ns = np.where(np.isnan(launch_ns), gpu_start_ns, launch_ns).astype(
+        np.int64
+    )
     if step_rows:
-        step_rows.sort(key=lambda x: x[1])
-        s_ids = np.array([x[0] for x in step_rows], dtype=np.int32)
-        s_beg = np.array([x[1] for x in step_rows], dtype=np.int64)
-        s_end = np.array([x[2] for x in step_rows], dtype=np.int64)
-        s_idx = np.searchsorted(s_beg, launch, side="right") - 1
-        valid = (s_idx >= 0) & (launch <= s_end[np.maximum(0, s_idx)])
-        step_col = np.where(valid, s_ids[np.maximum(0, s_idx)], -1).astype(np.int32)
-        steps = {"step": s_ids, "start_ns": s_beg, "end_ns": s_end, "duration_ns": s_end - s_beg}
+        step_rows.sort(key=lambda step_row: step_row[1])
+        step_ids = np.array([row[0] for row in step_rows], dtype=np.int32)
+        step_start_ns = np.array([row[1] for row in step_rows], dtype=np.int64)
+        step_end_ns = np.array([row[2] for row in step_rows], dtype=np.int64)
+        # Latest step starting at or before each issue time (-1 if none).
+        step_pos = np.searchsorted(step_start_ns, issue_ns, side="right") - 1
+        safe_pos = np.maximum(0, step_pos)
+        is_in_step = (step_pos >= 0) & (issue_ns <= step_end_ns[safe_pos])
+        kernel_steps = np.where(is_in_step, step_ids[safe_pos], -1).astype(
+            np.int32
+        )
+        step_columns = {
+            "step": step_ids,
+            "start_ns": step_start_ns,
+            "end_ns": step_end_ns,
+            "duration_ns": step_end_ns - step_start_ns,
+        }
     else:
-        step_col = np.zeros(kdf.height, dtype=np.int32)
-        s0, e0 = int(kdf["start_ns"].to_numpy().min()), int(kdf["end_ns"].to_numpy().max())
-        steps = {"step": [0], "start_ns": [s0], "end_ns": [e0], "duration_ns": [e0 - s0]}
-    steps_df = conform(pl.DataFrame(steps).with_columns(pl.lit(rank).alias("rank")), STEPS_SCHEMA)
-    return conform(kdf.with_columns(pl.Series("step", step_col, dtype=pl.Int32)), KERNELS_SCHEMA), steps_df
+        # No ProfilerStep markers: the whole trace is step 0.
+        kernel_steps = np.zeros(kernels.height, dtype=np.int32)
+        trace_start_ns = int(kernels["start_ns"].to_numpy().min())
+        trace_end_ns = int(kernels["end_ns"].to_numpy().max())
+        step_columns = {
+            "step": [0],
+            "start_ns": [trace_start_ns],
+            "end_ns": [trace_end_ns],
+            "duration_ns": [trace_end_ns - trace_start_ns],
+        }
+    steps = nsys_reader.conform(
+        pl.DataFrame(step_columns).with_columns(pl.lit(rank).alias("rank")),
+        nsys_reader.STEPS_SCHEMA,
+    )
+    kernels = nsys_reader.conform(
+        kernels.with_columns(pl.Series("step", kernel_steps, dtype=pl.Int32)),
+        nsys_reader.KERNELS_SCHEMA,
+    )
+    return kernels, steps
