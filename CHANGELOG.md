@@ -9,6 +9,12 @@
 - New: `cta.synth.kineto.write_kineto_trace_large` (realistic event mix, any size, about 400 MB/s) and `cta.synth.goal.write_goal_allreduce_bin` (writes the `.bin` schedule directly).
 - macOS is no longer supported; the package needs Linux with a C++20 compiler and the zlib, SQLite, Protobuf and simdjson development packages.
 
+### Native GOAL text reader
+- `cta.adapters.goal.reader.parse_goal_text` reads `.goal` text in C++ (`cta._native.read_goal_text`): the file is mapped, cut at rank headers into pieces of about 32 MiB, parsed in parallel and merged in file order. It follows the old Python parser rule for rule, including its quirks: comments come off in one pass per line, only the first `/* */` on a line is removed, `}` forgets labels but not ids, a rank header resets both, dependencies are case-sensitive and dropped when either label is not yet defined, options must come in the order tag, cpu, nic, and `tb` counts as bytes. Op names keep their labels, which a conversion to the binary form would lose.
+- On a 3.0M-node schedule (209 MB, 16 CPUs) the adapter takes 1.4 s instead of 20.8 s and 1.6 GB of RSS instead of 3.0 GB; a 10.9M-node schedule (792 MB) takes 3.8 s.
+- Text that is not UTF-8, or a number that does not fit its column (a tag over 2^32, a size over 2^64), now raises `ValueError` from the reader; the old parser raised from Polars or Python.
+- The `.bin` path and the `traffic` table are unchanged.
+
 ### Native DAG solver
 - `cta.core.dag.solve_distributed_dag` keeps its signature; the graph passes (CSR build with duplicate edges dropped, the forward Kahn pass, the backward slack pass and the critical chain) run in C++ (`cta._native.solve_dag`). Polars still builds the edge list, including the send-to-receive matching. Op classes are no longer turned into Python strings, and the `.unique()` over all edges is gone because the solver drops repeats itself.
 - **Behaviour change:** where predecessors tie on finish time and depth, the one with the lowest vertex id is the critical-path parent. Before, the first one seen won, and that depended on the order of the rows after `.unique()`, which Polars does not define. `cp_compute_ns`, `cp_exposed_comm_ns` and `cp_comm_bytes` can differ from earlier runs on graphs with such ties (1 of 12 random tie-heavy graphs in testing); every other field is unchanged, and the numbers no longer move between runs. The same graph now gives the same critical path whatever the order of its edge rows.

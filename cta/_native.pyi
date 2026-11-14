@@ -23,6 +23,12 @@ def read_chakra_et(
     """Reads Chakra .et files into dictionary-coded node and edge columns."""
     ...
 
+def read_goal_text(
+    path: str, threads: int = 0, chunk_bytes: int = 33554432
+) -> dict[str, Any]:
+    """Reads a GOAL text schedule into node and edge columns."""
+    ...
+
 def solve_dag(
     weights: np.ndarray,
     is_comm: np.ndarray,

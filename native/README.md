@@ -28,6 +28,7 @@ src/
   synth/                  synthetic trace generators (kineto, goal, nsys,
                           chakra, training, profilers = ncu/jtop/trtexec)
   readers/chakra/         the Chakra .et reader (see below)
+  readers/goal/           the GOAL text reader (see below)
   readers/kineto/         the Kineto trace reader (see below)
   core/                   dag (critical path and slack), intervals (nesting_parents)
 ```
@@ -49,6 +50,19 @@ the same name wins, a present `comm_size` hides `tensor_size`, an integer
 `comm_type` names its collective (`COLL_<n>` if unknown), and a send or receive
 defaults its own side to the file's rank. The rank of each file is worked out
 in Python from the file name and passed in.
+
+## readers/goal
+
+`goal_text.*` holds the rules for one line of GOAL text: where a line ends
+(`\n`, `\r\n` or a lone `\r`), how comments come off, and which lines are rank
+headers, dependencies or ops. The rank-boundary scan and the parser both call
+it, so they agree on every line. `goal_read.cpp` maps the file, walks it once
+to find rank headers (a header reached while a `/* */` comment is open is not
+one), cuts it into pieces of about 32 MiB at headers, and parses the pieces on
+an `OrderedPool`. A piece starts in the state a rank header leaves behind, which
+is why pieces do not depend on each other. Op names are returned as one buffer
+of bytes with end offsets, because labels are unique per op; Python builds the
+String column from that through Arrow.
 
 ## readers/kineto
 
