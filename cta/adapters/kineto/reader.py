@@ -7,7 +7,6 @@ that launched them, matched through the CUDA runtime call's correlation id.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import gzip
 import pathlib
 import re
@@ -146,20 +145,6 @@ class KinetoAdapter:
 _CATEGORY_NAMES = {0: "compute", 1: "comm", 2: "memcpy"}
 
 
-class _CodedNames:
-    """Names looked up through a code array, without building a list of them."""
-
-    def __init__(self, names: Sequence[str], codes: np.ndarray) -> None:
-        self._names = names
-        self._codes = codes
-
-    def __len__(self) -> int:
-        return len(self._codes)
-
-    def __getitem__(self, index: int) -> str:
-        return self._names[int(self._codes[index])]
-
-
 def _shard_rank(columns: dict[str, Any], path: pathlib.Path, index: int) -> int:
     """Returns the rank of a shard.
 
@@ -277,7 +262,7 @@ def _ingest_shard(
             intervals.range_paths(
                 ranges_by_thread,
                 op_ids,
-                _CodedNames(names, columns["op_name"]),
+                intervals.CodedNames(names, columns["op_name"]),
             ),
             "",
         )

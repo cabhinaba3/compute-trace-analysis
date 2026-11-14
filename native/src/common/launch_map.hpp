@@ -5,14 +5,15 @@
 #include <limits>
 #include <vector>
 
-namespace cta::kineto_reader {
+namespace cta {
 
 // ---------------------------------------------------------------------------
 // Open-addressing map from a correlation id to the CUDA runtime call that
-// carried it; a later call with the same id replaces the earlier one.
+// carried it. `put` lets a later call with the same id replace the earlier
+// one; `put_if_absent` keeps the first.
 class LaunchMap {
  public:
-  void put(std::int64_t key, std::int64_t start, std::int32_t thread) {
+  void put(std::int64_t key, std::int64_t start, std::int64_t thread) {
     if (key == kEmpty) return;
     if ((size_ + 1) * 2 > slots_.size()) grow();
     Slot& s = slots_[probe(key)];
@@ -25,8 +26,12 @@ class LaunchMap {
   }
   struct Hit {
     std::int64_t start;
-    std::int32_t thread;
+    std::int64_t thread;
   };
+  void put_if_absent(std::int64_t key, std::int64_t start, std::int64_t thread) {
+    Hit existing{};
+    if (!find(key, existing)) put(key, start, thread);
+  }
   bool find(std::int64_t key, Hit& hit) const {
     if (slots_.empty() || key == kEmpty) return false;
     const Slot& s = slots_[probe(key)];
@@ -40,7 +45,7 @@ class LaunchMap {
   struct Slot {
     std::int64_t key = kEmpty;
     std::int64_t start = 0;
-    std::int32_t thread = 0;
+    std::int64_t thread = 0;
   };
   static std::uint64_t mix(std::uint64_t x) {
     x ^= x >> 30;
@@ -70,4 +75,4 @@ class LaunchMap {
   std::size_t size_ = 0;
 };
 
-}  // namespace cta::kineto_reader
+}  // namespace cta

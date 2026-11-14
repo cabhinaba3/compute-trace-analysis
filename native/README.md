@@ -24,11 +24,14 @@ src/
     json_value.hpp          a small JSON value for the writers
     cpus.hpp                usable_cpus(): reads the affinity mask
     interner.hpp            distinct strings numbered by first appearance
+    launch_map.hpp          correlation id -> launching CUDA runtime call
+    sqlite.hpp              RAII wrappers for reading with SQLite
     ordered_pool.hpp        worker threads whose results are merged in task order
   synth/                  synthetic trace generators (kineto, goal, nsys,
                           chakra, training, profilers = ncu/jtop/trtexec)
   readers/chakra/         the Chakra .et reader (see below)
   readers/goal/           the GOAL text reader (see below)
+  readers/nsys/           the Nsight Systems SQLite reader (see below)
   readers/kineto/         the Kineto trace reader (see below)
   core/                   dag (critical path and slack), dag_edges (the graph's
                           edge list), intervals (nesting_parents)
@@ -64,6 +67,18 @@ an `OrderedPool`. A piece starts in the state a rank header leaves behind, which
 is why pieces do not depend on each other. Op names are returned as one buffer
 of bytes with end offsets, because labels are unique per op; Python builds the
 String column from that through Arrow.
+
+## readers/nsys
+
+`read_nsys_sqlite` opens the export once per part, on separate read-only
+connections, and reads the GPU activities (kernels, then memcpys, then
+memsets), the CUDA runtime launches, the NVTX ranges, the GPU metrics and the
+two API summaries at the same time. It builds the same SQL as the Python reader
+did, from the columns the export has, and resolves each activity's launch (the
+first runtime row of a correlation id) before returning. Names and NVTX texts
+come back dictionary-coded. The step and scope of each activity are worked out
+in Python from these columns (`cta.adapters.nsys.reader`), with NumPy and the
+interval helpers rather than a loop over events.
 
 ## readers/kineto
 
