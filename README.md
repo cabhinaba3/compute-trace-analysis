@@ -6,15 +6,20 @@ Supported inputs: Chakra `.et`, GOAL `.goal`/`.bin`, Nsight Systems (`.sqlite`, 
 
 ## Install
 
-Linux (x86_64) and Python 3.12 or newer. The install builds a C++ extension, so it needs a C++20 compiler and the zlib, SQLite, Protobuf and simdjson development packages.
+Linux (x86_64) and Python 3.12 or newer. The install compiles a C++ extension, so it needs a C++20 compiler and the zlib, SQLite, Protobuf (with `protoc`) and simdjson development libraries.
 
 ```bash
 git clone --recurse-submodules https://github.com/cabhinaba3/compute-trace-analysis.git
 cd compute-trace-analysis
-pip install -e ".[dev]"
+./configure.sh        # checks this machine and lists the easiest ways to get what is missing
+pip install -e .
 ```
 
-If you cloned without `--recurse-submodules`, run `git submodule update --init` first.
+`configure.sh` changes nothing by itself. Without root, `conda env create -f environment.yml` (or mamba, micromamba) provides the compiler and every library; then `conda activate cta` and `pip install --no-build-isolation -e .`. If you cloned without `--recurse-submodules`, run `git submodule update --init` first.
+
+The default install keeps to the packages the command line needs. Add what you use: `.[sql]` for SQL plots and `where` filters, `.[viz]` for interactive HTML plots, `.[chakra]` to write Chakra `.et` files from Python, `.[pandas]`, `.[all]` for these together, and `.[dev]` for contributing. A feature whose extra is missing says which one to install.
+
+The build reads optional environment variables: `CTA_BUILD_JOBS`, `CTA_PREFIX_PATH` (libraries in a non-standard place), `CTA_GENERATOR`, `CTA_BUILD_TYPE`, `CTA_BUILD_DIR`, `CTA_CMAKE_ARGS` and `CTA_FRESH`. They are listed at the top of `hatch_build.py`.
 
 ## Use
 
