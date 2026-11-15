@@ -51,6 +51,10 @@ struct ChunkOut {
   std::vector<std::int8_t> g_cat;
   std::vector<int64_t> g_start, g_end, g_bytes, g_stream, g_device, g_corr;
 
+  // Collective metadata of the GPU rows that have it: row index within this chunk's g_*.
+  std::vector<int64_t> c_row, c_in, c_out, c_size;
+  std::vector<int32_t> c_op, c_dtype, c_group;
+
   std::vector<int64_t> o_start, o_end;
   std::vector<int32_t> o_name, o_thread;
 

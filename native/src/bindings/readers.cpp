@@ -29,6 +29,13 @@ nb::dict kineto_columns_to_dict(cta::KinetoColumns&& c) {
   d["gpu_device"] = to_numpy(std::move(c.gpu_device));
   d["gpu_launch_ns"] = to_numpy(std::move(c.gpu_launch_ns));
   d["gpu_launch_thread"] = to_numpy(std::move(c.gpu_launch_thread));
+  d["comm_row"] = to_numpy(std::move(c.comm_row));
+  d["comm_op"] = to_numpy(std::move(c.comm_op));
+  d["comm_dtype"] = to_numpy(std::move(c.comm_dtype));
+  d["comm_group"] = to_numpy(std::move(c.comm_group));
+  d["comm_in"] = to_numpy(std::move(c.comm_in));
+  d["comm_out"] = to_numpy(std::move(c.comm_out));
+  d["comm_size"] = to_numpy(std::move(c.comm_size));
   d["op_start"] = to_numpy(std::move(c.op_start));
   d["op_end"] = to_numpy(std::move(c.op_end));
   d["op_name"] = to_numpy(std::move(c.op_name));
