@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 import dataclasses
 import difflib
+import importlib
 import pathlib
 from typing import Any, TYPE_CHECKING
 
@@ -188,7 +189,7 @@ def register_plot(
 
 def load_kinds() -> None:
     """Imports the built-in plot kinds, which registers them."""
-    import cta.viz.kinds  # noqa: F401  (registers the built-in kinds)
+    importlib.import_module("cta.viz.kinds")
 
 
 def get_kind(name: str) -> PlotKind:

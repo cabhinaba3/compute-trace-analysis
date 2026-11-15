@@ -9,6 +9,7 @@ point.
 from __future__ import annotations
 
 from collections.abc import Callable
+import importlib
 from importlib import metadata
 import pathlib
 from typing import Protocol, TYPE_CHECKING, TypeVar
@@ -176,8 +177,8 @@ def load_plugins() -> None:
     if _plugins_loaded:
         return
     _plugins_loaded = True
-    import cta.adapters
-    import cta.aspects  # noqa: F401
+    importlib.import_module("cta.adapters")
+    importlib.import_module("cta.aspects")
 
     for entry_point in metadata.entry_points(group="cta.plugins"):
         entry_point.load()

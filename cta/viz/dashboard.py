@@ -18,6 +18,7 @@ from collections.abc import Sequence
 import contextlib
 import dataclasses
 import html
+import importlib.util
 import json
 import pathlib
 from typing import Any
@@ -137,12 +138,10 @@ def default_specs(ctx: data.DataContext) -> list[viz_spec.PlotSpec]:
 
 def _require_plotly() -> None:
     """Raises ImportError with an install hint if Plotly is missing."""
-    try:
-        import plotly  # noqa: F401
-    except ImportError as exc:
+    if importlib.util.find_spec("plotly") is None:
         raise ImportError(
             "the interactive dashboard needs plotly: pip install 'cta[viz]'"
-        ) from exc
+        )
 
 
 def figure_json(

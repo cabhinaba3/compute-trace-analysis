@@ -7,9 +7,9 @@ alphabetical one.
 """
 
 # isort: off
-from cta.aspects.device import latency  # noqa: F401
-from cta.aspects.device import kernels  # noqa: F401
-from cta.aspects.device import timeline  # noqa: F401
-from cta.aspects.device import os_runtime  # noqa: F401
-from cta.aspects.device import roofline  # noqa: F401
+from cta.aspects.device import latency as latency
+from cta.aspects.device import kernels as kernels
+from cta.aspects.device import timeline as timeline
+from cta.aspects.device import os_runtime as os_runtime
+from cta.aspects.device import roofline as roofline
 # isort: on

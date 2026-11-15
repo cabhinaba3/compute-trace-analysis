@@ -1,3 +1,3 @@
 """Jetson jtop hardware telemetry adapter."""
 
-from cta.adapters.jtop import reader as _reader  # noqa: F401
+from cta.adapters.jtop import reader as reader
