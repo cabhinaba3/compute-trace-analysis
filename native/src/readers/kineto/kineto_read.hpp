@@ -27,6 +27,12 @@ struct KinetoColumns {
   std::vector<double> gpu_launch_ns;
   std::vector<std::int64_t> gpu_launch_thread;
 
+  // Collective metadata of the GPU rows that carry it (NCCL kernels of a PyTorch
+  // trace): the row, the collective's name, its element counts, group size,
+  // element type and process-group name.
+  std::vector<std::int64_t> comm_row, comm_in, comm_out, comm_size;
+  std::vector<std::int32_t> comm_op, comm_dtype, comm_group;
+
   // CPU operators; thread is a dense id of the (pid, tid) pair.
   std::vector<std::int64_t> op_start, op_end;
   std::vector<std::int32_t> op_name;

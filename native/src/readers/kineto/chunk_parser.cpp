@@ -175,6 +175,10 @@ struct Event {
   Tag pid, tid;
   bool has_corr = false, has_stream = false, has_bytes = false, has_device = false;
   int64_t corr = 0, stream = 0, bytes = 0, device = 0;
+  // Collective metadata PyTorch attaches to NCCL kernels and record_param_comms ops.
+  bool has_coll = false;
+  std::string coll, coll_dtype, coll_group;
+  int64_t coll_in = 0, coll_out = 0, coll_size = 0;
 
   void reset() {
     is_x = false;
@@ -184,6 +188,11 @@ struct Event {
     pid = tid = Tag{};
     has_corr = has_stream = has_bytes = has_device = false;
     corr = stream = bytes = device = 0;
+    has_coll = false;
+    coll.clear();
+    coll_dtype.clear();
+    coll_group.clear();
+    coll_in = coll_out = coll_size = 0;
   }
 };
 
@@ -208,6 +217,23 @@ void read_args(od::value val, Event& e) {
         e.has_device = true;
         e.device = d;
       }
+    } else if (key == "Collective name") {
+      if (field.value().value().type().value() == od::json_type::string) {
+        e.has_coll = true;
+        e.coll.assign(field.value().value().get_string().value());
+      }
+    } else if (key == "In msg nelems") {
+      e.coll_in = read_int(field.value().value());
+    } else if (key == "Out msg nelems") {
+      e.coll_out = read_int(field.value().value());
+    } else if (key == "Group size") {
+      e.coll_size = read_int(field.value().value());
+    } else if (key == "dtype") {
+      if (field.value().value().type().value() == od::json_type::string)
+        e.coll_dtype.assign(field.value().value().get_string().value());
+    } else if (key == "Process Group Name") {
+      if (field.value().value().type().value() == od::json_type::string)
+        e.coll_group.assign(field.value().value().get_string().value());
     }
   }
 }
@@ -311,6 +337,15 @@ void add_event(od::value ev, ChunkOut& out, Event& e) {
     out.g_stream.push_back(e.has_stream ? e.stream : tag_as_int(e.tid, out.tags));
     out.g_device.push_back(e.has_device ? e.device : tag_as_int(e.pid, out.tags));
     out.g_corr.push_back(e.has_corr ? e.corr : -1);
+    if (e.has_coll) {
+      out.c_row.push_back(static_cast<int64_t>(out.g_name.size()) - 1);
+      out.c_op.push_back(out.name_code(e.coll));
+      out.c_dtype.push_back(out.name_code(e.coll_dtype));
+      out.c_group.push_back(out.name_code(e.coll_group));
+      out.c_in.push_back(e.coll_in);
+      out.c_out.push_back(e.coll_out);
+      out.c_size.push_back(e.coll_size);
+    }
   }
 }
 

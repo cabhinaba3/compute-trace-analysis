@@ -10,6 +10,7 @@ adapters.
 from __future__ import annotations
 
 import ast
+import contextlib
 import os
 import pathlib
 import re
@@ -23,10 +24,12 @@ import numpy as np
 import polars as pl
 
 from cta import _native as native
+from cta.adapters.nsys import network_ops
 from cta.core import alignment
 from cta.core import bundle
 from cta.core import intervals
 from cta.core import models
+from cta.core import network
 from cta.core import registry
 
 KERNELS_SCHEMA = pl.Schema(
@@ -523,8 +526,8 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         rank: The rank written to the kernels, steps and gpu_metrics rows.
 
     Returns:
-        The ``kernels``, ``steps``, ``runtime``, ``osrt`` and
-        ``gpu_metrics`` frames, by table name.
+        The ``kernels``, ``steps``, ``runtime``, ``osrt``, ``gpu_metrics``
+        and ``network_ops`` frames, by table name.
     """
     columns = native.read_nsys_sqlite(str(db_path))
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -585,16 +588,28 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         ),
         STEPS_SCHEMA,
     )
+    with contextlib.closing(
+        sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    ) as host_conn:
+        host_ops = network_ops.host_network_ops(host_conn, tables, rank, steps)
     return {
         "kernels": kernels,
         "steps": steps,
         "runtime": runtime,
         "osrt": osrt,
         "gpu_metrics": gpu_metrics,
+        "network_ops": pl.concat(
+            [
+                network.ops_from_kernels(
+                    kernels, launch_ns=columns["gpu_launch_ns"][order]
+                ),
+                host_ops,
+            ]
+        ),
     }
 
 
-@registry.register_adapter("nsys", version="2.1")
+@registry.register_adapter("nsys", version="2.3")
 class NsysAdapter:
     """Reads Nsight Systems reports and SQLite exports, one per rank.
 
@@ -604,7 +619,7 @@ class NsysAdapter:
     """
 
     format_name = "nsys"
-    version = "2.1"
+    version = "2.3"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file is an Nsight Systems report or export.
@@ -642,8 +657,8 @@ class NsysAdapter:
             out_dir: The directory exports and Parquet tables are written to.
 
         Returns:
-            The paths of the ``kernels``, ``steps``, ``runtime``, ``osrt``
-            and ``gpu_metrics`` Parquet tables, by table name.
+            The paths of the ``kernels``, ``steps``, ``runtime``, ``osrt``,
+            ``gpu_metrics`` and ``network_ops`` Parquet tables, by table name.
 
         Raises:
             RuntimeError: A report has neither ``nsys`` nor an SQLite export.
@@ -676,6 +691,9 @@ class NsysAdapter:
             "kernels": concat_reports("kernels", KERNELS_SCHEMA).sort(
                 ["rank", "start_ns"]
             ),
+            "network_ops": concat_reports(
+                "network_ops", network.NETWORK_OPS_SCHEMA
+            ).sort(["rank", "start_ns"]),
             "steps": concat_reports("steps", STEPS_SCHEMA).sort(
                 ["rank", "start_ns"]
             ),

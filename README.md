@@ -12,8 +12,8 @@ Originally developed for GPU/Jetson inference characterization (ISPASS'25), CTA 
 | :--- | :--- | :--- |
 | **MLCommons Chakra-ET** | Binary `.et` (`et_def.proto`), `chakra_host_trace.json` | Operator DAG, rank compute/comm nodes, collective types & byte volumes |
 | **SPCL GOAL** | Text `.goal`, `txt2bin` binary `.bin` (`MAGIC_COOKIE = 4223` via `mmap`) | Per-rank `calc`/`send`/`recv` schedules, `requires`/`irequires` DAG edges |
-| **NVIDIA Nsight Systems** | `.sqlite` (offline native SQL) and `.nsys-rep` (auto-exported if `nsys` present) | CUDA kernels, memcpy/memset, NVTX ranges, `OSRT_API`, modern & legacy `GPU_METRICS` |
-| **PyTorch Kineto** | Chrome Trace `.json` and `.json.gz` | `ProfilerStep#*` slicing, CPU `aten::*` to GPU kernel correlation linking |
+| **NVIDIA Nsight Systems** | `.sqlite` (offline native SQL) and `.nsys-rep` (auto-exported if `nsys` present) | CUDA kernels, memcpy/memset, NVTX ranges, `OSRT_API`, modern & legacy `GPU_METRICS`, NCCL kernels, MPI and UCX calls, GPU peer copies |
+| **PyTorch Kineto** | Chrome Trace `.json` and `.json.gz` | `ProfilerStep#*` slicing, CPU `aten::*` to GPU kernel correlation linking, NCCL collective sizes, dtypes and process groups |
 | **NVIDIA Nsight Compute** | Raw/Details `.csv` and `.ncu-rep` (auto-imported if `ncu` present) | SM/Tensor/DRAM utilization, FLOP/Byte arithmetic intensity, warp stall shares |
 | **TensorRT (`trtexec`)** | `--exportTimes`, `--exportProfile`, `--exportLayerInfo` JSONs | $O(N \log N)$ H2D/Compute/D2H sweep-line decomposition, precision & layer fusion |
 | **Jetson `jtop`** | `jtop` telemetry JSON | Multi-core CPU, GPU/EMC utilization, temperatures, multi-rail trapezoidal energy (J) |
@@ -113,6 +113,28 @@ cta profile jtop    -- python infer.py                           # Jetson power 
 ```
 Each command writes `profiles/<name>/` (override with `-o`/`--name`), which `cta analyze profiles/<name>` reads. The tools do the profiling; CTA only runs them with the flags its adapters need (`nsys`/`ncu` must be on `PATH`, or set `NSYS_PATH`/`NCU_PATH`; `trtexec` via `TRTEXEC_PATH`; `jtop` needs `sudo pip install jetson-stats`). JAX `*.xplane.pb` files are converted with `xprof` (`pip install cta[jax]`); the Chrome-format `trace.json.gz` next to them needs nothing extra. `nsight-python` (the `[profile]` extra, Linux only) is for annotating kernels inside your own Python code; `cta profile ncu` reuses its `ncu` flag defaults (flush caches, do not lock clocks) but works on any command.
 
+### 6. Compare network APIs (NCCL, MPI, UCX, GPU peer copies)
+```bash
+cta compare runs/nccl runs/mpi --labels NCCL,MPI --aspects network_api
+```
+Nsight Systems and Kineto traces both get a `network_ops` table with one row per communication call: the API (`nccl`, `mpi`, `ucx`, `p2p`), the logical operation (`allreduce`, `allgather`, `broadcast`, `sendrecv`, ...), message size, process group, and when the call was launched, started and ended. Calls are matched across runs by operation and message-size bucket, so a run that used NCCL lines up with a run that used MPI. The `network_api` aspect reports, per API, operation and size bucket:
+
+| Metric | What it is |
+| :--- | :--- |
+| `algbw_GBps`, `busbw_GBps` | Algorithm and bus bandwidth with the [nccl-tests](https://github.com/NVIDIA/nccl-tests) definitions (`busbw = algbw * 2(n-1)/n` for allreduce, `(n-1)/n` for allgather, reduce-scatter and alltoall) |
+| `time_ms`, `comm_time_ms`, `comm_calls` | Time and call counts, per operation and per API |
+| `wait_skew_us` | How unevenly ranks spend time in the same collective: the spread of the durations of the k-th call across ranks. The rank that arrives last waits least. It needs no clock agreement between ranks |
+| `launch_gap_us` | Mean time from the host launching a kernel or copy to it starting on the GPU |
+
+`report.to_polars("network_api", table="by_api")` gives time by API; `table="by_operation"` pools the APIs into one bus-bandwidth column per run.
+
+What each source can tell you:
+- **Kineto** records the collective, element counts, dtype, group size and process group on every NCCL kernel, so it has message sizes and bandwidth for NCCL.
+- **Nsight Systems** exports no per-call sizes for NCCL: those calls have timing, algorithm (`RING`, `TREE`, ...), skew and launch gap, but no bandwidth. MPI calls have sizes (read from `MPI_COLLECTIVES_EVENTS` and `MPI_P2P_EVENTS`), so MPI bandwidth works from `nsys` alone. Capture with `nsys profile -t cuda,nvtx,osrt,mpi,ucx --mpi-impl=openmpi` (or `mpich`), one report per rank, for example `mpirun -np 2 nsys profile ... -o rank%q{OMPI_COMM_WORLD_RANK} ./app`.
+- **Posted calls** (`MPI_Isend`, every UCX submit) only start a transfer, so their duration says nothing about bandwidth. They are counted and left out of bandwidth and skew.
+- **MPI sizes** are recovered per operation from what nsys records, which was measured on Open MPI 5. An in-place allreduce, allgather or alltoall is indistinguishable from a plain one in the export and reads low by `(n-1)/n`.
+- **Not covered:** NVSHMEM, and NVLink/PCIe throughput from Nsight Compute.
+
 ---
 
 ## Python SDK
@@ -201,7 +223,7 @@ class CustomMetric:
 cta/
   core/          Canonical schemas, BLAKE2b Parquet cache, CSR DAG & sweep-line engines, stats, diagnosis
   adapters/      Format readers: chakra/, goal/, nsys/, kineto/, jax/, ncu/, tensorrt/, jtop/
-  aspects/       Comparison aspects: device/ (latency, kernels, timeline, os_runtime, roofline), distributed.py, edge.py, hta.py
+  aspects/       Comparison aspects: device/ (latency, kernels, timeline, os_runtime, roofline), distributed.py, edge.py, hta.py, network.py
   exporters/     Rich terminal, Markdown, LaTeX booktabs, CSV/JSON bundle exporters
   viz/           Plot kinds (registry + typed options), raw-table/SQL data layer, Matplotlib and Plotly renderers, dashboard
   synth/         Deterministic synthetic trace generators, one module per ecosystem (chakra, goal, nsys, kineto, ncu, tensorrt, jtop)
