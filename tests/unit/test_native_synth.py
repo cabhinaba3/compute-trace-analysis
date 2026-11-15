@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import pathlib
+from typing import Any, cast
 
 import pytest
 
@@ -28,15 +29,33 @@ def test_small_outputs_match_the_python_generators_they_replaced(
     tmp_path: pathlib.Path,
 ) -> None:
     golden = {
-        "kineto steps=3": "cad55229823c0662ec83942095f084bcfb4135064a4ee8f07b4f8ca67430b5ad",  # noqa: E501
-        "kineto fp8 steps=7": "f03fb628563c7b51860e26f98ee62a7512ef4bb08518d44c108f6ca9f0a5f708",  # noqa: E501
-        "goal ring 4x2": "27be72b89dfe7df57c71e3b3b5018485c98b31a6e26fc43f168b5f033b077270",  # noqa: E501
-        "goal direct 3x2": "dbebb0cb239727ff810190ecb244196253d985320ab12f74f32e81a8d4325def",  # noqa: E501
-        "chakra rank1": "02a0c31077f0cbf0b02e83682064648d5da3ca34c8eb9b4451b013c03ddef8ef",  # noqa: E501
-        "chakra host-et": "6e8a9d29894a4445a850d32584a52c95180c4a5b517836e8e5b339f2329986ab",  # noqa: E501
-        "ncu default": "6f4d750614dbe2ee8f7cc1701144e73db5b628125c3600771cc641d3b7205744",  # noqa: E501
-        "jtop default": "8d8fa1f5201fa5a8c9ded82ec6f4a6311e2ff74c2d54e5243ffb719615649867",  # noqa: E501
-        "trtexec timing": "1c7bac513d5ef30f9524d89a7d280e9d07165dd487d1aa28c0e899b57b4b5825",  # noqa: E501
+        "kineto steps=3": (
+            "cad55229823c0662ec83942095f084bcfb4135064a4ee8f07b4f8ca67430b5ad"
+        ),
+        "kineto fp8 steps=7": (
+            "f03fb628563c7b51860e26f98ee62a7512ef4bb08518d44c108f6ca9f0a5f708"
+        ),
+        "goal ring 4x2": (
+            "27be72b89dfe7df57c71e3b3b5018485c98b31a6e26fc43f168b5f033b077270"
+        ),
+        "goal direct 3x2": (
+            "dbebb0cb239727ff810190ecb244196253d985320ab12f74f32e81a8d4325def"
+        ),
+        "chakra rank1": (
+            "02a0c31077f0cbf0b02e83682064648d5da3ca34c8eb9b4451b013c03ddef8ef"
+        ),
+        "chakra host-et": (
+            "6e8a9d29894a4445a850d32584a52c95180c4a5b517836e8e5b339f2329986ab"
+        ),
+        "ncu default": (
+            "6f4d750614dbe2ee8f7cc1701144e73db5b628125c3600771cc641d3b7205744"
+        ),
+        "jtop default": (
+            "8d8fa1f5201fa5a8c9ded82ec6f4a6311e2ff74c2d54e5243ffb719615649867"
+        ),
+        "trtexec timing": (
+            "1c7bac513d5ef30f9524d89a7d280e9d07165dd487d1aa28c0e899b57b4b5825"
+        ),
     }
     actual = {
         "kineto steps=3": _sha256(
@@ -169,5 +188,5 @@ def test_generators_reject_arguments_of_the_wrong_type(
     with pytest.raises(TypeError):
         jtop.write_jtop_trace(
             tmp_path / "j.json",
-            duration_s=2.5,  # type: ignore[arg-type]
+            duration_s=cast(Any, 2.5),
         )
