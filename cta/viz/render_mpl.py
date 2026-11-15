@@ -407,13 +407,12 @@ def _draw_bars(
             ``barh`` traces (categories on y).
         overlay: If True, draw all traces at the same position.
     """
-    categories = list(
-        dict.fromkeys(
-            str(value)
-            for trace in bars
-            for value in (trace.x if vertical else trace.y) or []
-        )
-    )
+    cats: list[str] = []
+    for trace in bars:
+        raw_cat = trace.x if vertical else trace.y
+        if raw_cat is not None:
+            cats.extend(str(value) for value in raw_cat)
+    categories = list(dict.fromkeys(cats))
     position_by_category = {
         category: i for i, category in enumerate(categories)
     }
@@ -421,7 +420,8 @@ def _draw_bars(
     width = 0.6 if (stacked or overlay) else 0.8 / max(1, n)
     stack_base = np.zeros(len(categories))
     for k, trace in enumerate(bars):
-        trace_categories = (trace.x if vertical else trace.y) or []
+        raw_cat = trace.x if vertical else trace.y
+        trace_categories = raw_cat if raw_cat is not None else []
         positions = np.array(
             [position_by_category[str(value)] for value in trace_categories],
             dtype=float,
@@ -479,8 +479,9 @@ def _draw_segments(
     position_by_lane = {lane: i for i, lane in enumerate(lanes)}
     starts = np.asarray(trace.x, dtype=float)
     ends = np.asarray(trace.x1, dtype=float)
+    raw_y = trace.y if trace.y is not None else []
     y_positions = np.array(
-        [position_by_lane.get(value, value) for value in trace.y or []],
+        [position_by_lane.get(value, value) for value in raw_y],
         dtype=float,
     )
     ax.hlines(
