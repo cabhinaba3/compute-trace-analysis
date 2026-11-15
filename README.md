@@ -1,238 +1,64 @@
-# CTA v1.0 — Multi-Trace & Multi-Aspect Performance Comparison Framework
+# CTA: compute-trace-analysis
 
-**CTA (`compute-trace-analysis`)** is a Linux performance comparison framework for distributed AI/HPC execution graphs, GPU profilers, inference engines, and edge power telemetry.
+CTA analyses and compares performance traces from distributed AI/HPC runs, GPU profilers, inference engines and edge power telemetry. It reads the trace formats below, caches them as Parquet, and compares two or more runs (latency, kernels, compute/communication overlap, critical path, network APIs, energy).
 
-Originally developed for GPU/Jetson inference characterization (ISPASS'25), CTA v1.0 provides a unified **Content-Addressed Parquet Cache + Vectorized Polars/DuckDB/NumPy Engine** that compares **2-way (`Baseline` vs `Candidate`)** or **N-way** trace runs across latency, kernel shifts, compute/communication overlap, DAG critical paths, roofline efficiency, layer fusion, and system energy.
+Supported inputs: Chakra `.et`, GOAL `.goal`/`.bin`, Nsight Systems (`.sqlite`, `.nsys-rep`), PyTorch Kineto (`.json`, `.json.gz`), Nsight Compute (`.csv`, `.ncu-rep`), TensorRT `trtexec` JSON, Jetson `jtop` JSON, and JAX/XProf. Run `cta list` to see every registered format and comparison aspect.
 
----
+## Install
 
-## Supported Trace Ecosystems
-
-| Ecosystem | Supported Inputs | Key Extracted Signals |
-| :--- | :--- | :--- |
-| **MLCommons Chakra-ET** | Binary `.et` (`et_def.proto`), `chakra_host_trace.json` | Operator DAG, rank compute/comm nodes, collective types & byte volumes |
-| **SPCL GOAL** | Text `.goal`, `txt2bin` binary `.bin` (`MAGIC_COOKIE = 4223` via `mmap`) | Per-rank `calc`/`send`/`recv` schedules, `requires`/`irequires` DAG edges |
-| **NVIDIA Nsight Systems** | `.sqlite` (offline native SQL) and `.nsys-rep` (auto-exported if `nsys` present) | CUDA kernels, memcpy/memset, NVTX ranges, `OSRT_API`, modern & legacy `GPU_METRICS`, NCCL kernels, MPI and UCX calls, GPU peer copies |
-| **PyTorch Kineto** | Chrome Trace `.json` and `.json.gz` | `ProfilerStep#*` slicing, CPU `aten::*` to GPU kernel correlation linking, NCCL collective sizes, dtypes and process groups |
-| **NVIDIA Nsight Compute** | Raw/Details `.csv` and `.ncu-rep` (auto-imported if `ncu` present) | SM/Tensor/DRAM utilization, FLOP/Byte arithmetic intensity, warp stall shares |
-| **TensorRT (`trtexec`)** | `--exportTimes`, `--exportProfile`, `--exportLayerInfo` JSONs | $O(N \log N)$ H2D/Compute/D2H sweep-line decomposition, precision & layer fusion |
-| **Jetson `jtop`** | `jtop` telemetry JSON | Multi-core CPU, GPU/EMC utilization, temperatures, multi-rail trapezoidal energy (J) |
-
----
-
-## Installation
-
-Requires **Python >= 3.12** on **Linux** (x86_64). macOS is no longer supported. The package builds a C++ extension (`cta._native`: the synthetic trace generators and the Kineto reader) as part of `pip install`, so it needs a C++20 compiler plus the zlib, SQLite, Protobuf and simdjson development packages (Debian/Ubuntu: `apt install g++ zlib1g-dev libsqlite3-dev libprotobuf-dev protobuf-compiler libsimdjson-dev`). CMake, Ninja and nanobind are fetched by pip.
+Linux (x86_64) and Python 3.12 or newer. The install builds a C++ extension, so it needs a C++20 compiler and the zlib, SQLite, Protobuf and simdjson development packages.
 
 ```bash
 git clone --recurse-submodules https://github.com/cabhinaba3/compute-trace-analysis.git
 cd compute-trace-analysis
-pip install -e ".[dev]"   # builds the pinned MLCommons Chakra submodule in third_party/chakra
+pip install -e ".[dev]"
 ```
 
 If you cloned without `--recurse-submodules`, run `git submodule update --init` first.
 
----
+## Use
 
-## CLI Quickstart
+Command line:
 
-### 1. Generate synthetic traces & analyze a single trace / bundle
 ```bash
-cta synth demo_traces
-cta inspect demo_traces/gpu_bundle_fp16
-
-# Full single-trace analysis (critical path, overlap, hotspots, bottleneck regime, energy)
-cta analyze demo_traces/gpu_bundle_fp16 --warmup-steps 2 --out-dir reports/single_fp16 --export markdown,latex,csv,pdf
-
-# Group kernels by the outermost op/range (e.g. a record_function region) instead of the innermost op
-cta analyze trace.json.gz --scope-depth 1
-
-# Single-trace visualization (breakdown, topk hotspots, traffic, skew, roofline)
-cta plot demo_traces/gpu_bundle_fp16 --kind breakdown,topk --format pdf --out-dir figures/single/
+cta synth demo_traces                                  # write small synthetic traces to try things on
+cta inspect demo_traces/gpu_bundle_fp16                # show what CTA found in a trace or directory
+cta analyze demo_traces/gpu_bundle_fp16 --warmup-steps 2
+cta compare baseline.json.gz candidate.json.gz --labels Baseline,Candidate --warmup-steps 1
+cta compare a b --aspects network_api                  # pick aspects; `cta list` shows them
+cta compare a b --gate "mean_step_ms:+5%"              # exit code 2 if a metric regresses by more than 5%
+cta profile nsys --analyze -- python train.py          # run a vendor profiler with the flags CTA needs
 ```
 
-### 2. Compare two traces, `RunBundle` directories, or N-way sweeps
-```bash
-# Distributed Chakra-ET or GOAL schedule comparison
-cta compare demo_traces/chakra_ring demo_traces/chakra_skewed --labels Balanced,Skewed
+Add `--out-dir DIR --export markdown,latex,csv,json,pdf` to write reports, and `--format json` to print one. `cta --help` and `cta <command> --help` list everything else.
 
-# Multi-artifact RunBundle directory comparison (Nsys + TensorRT + Jtop) with CI gates
-cta compare demo_traces/gpu_bundle_fp16 demo_traces/gpu_bundle_int8 \
-  --warmup-steps 2 \
-  --gate "mean_step_ms:+5%,energy_per_query_mj:+5%" \
-  --out-dir reports/jetson_int8 \
-  --export markdown,latex,csv,json,pdf
-
-# Declarative YAML/TOML sweep manifest
-cta compare --manifest demo_traces/sweep.yaml
-```
-
-Gates fail the run (exit code 2) when a metric's `delta_pct` exceeds the threshold, and also when a gate names a metric the report does not contain (use `--allow-missing-gates` to ignore). Add `--format json` to `compare`/`analyze` to print the report as JSON on stdout (export status goes to stderr), e.g. `cta compare a b --format json | jq .violations`.
-
-### 3. Verify Chakra-ET $\leftrightarrow$ GOAL schedule equivalence
-```bash
-cta verify-equivalence demo_traces/chakra_ring demo_traces/goal/ring.bin --collective-algorithm ring --rel-tol 0.02
-```
-
-### 4. Plots: static figures, interactive HTML, one dashboard
-```bash
-cta plot --list-kinds                                   # every kind, what data it needs, its options
-cta plot a.json b.json --kind breakdown,topk -f pdf     # Type-42 PDF / SVG / PNG for papers
-cta plot a.json b.json --html report.html               # ONE interactive dashboard (needs `pip install cta[viz]`)
-cta plot run/ --kind step_trace,kernel_drift -O steps=1:20 -O rolling=7
-cta plot run/ --kind all -f png                         # every plot the data supports
-cta plot --kind history --history 'reports/*/report.json' --metric mean_step_ms   # a metric across saved runs
-```
-**Kinds, by use case.** Overview: `breakdown`, `family_share`. Timeline: `timeline` (GPU Gantt), `overlap_timeline`, `stream_util`, `pareto`. Steps and drift: `step_trace` (rolling median, Theil-Sen trend, outliers), `step_dist`, `kernel_drift`, `history` (control chart over saved `report.json` files). A/B: `topk` (alias `tornado`), `waterfall`, `kernel_scatter`, `step_compare`, `scorecard`, `gates`. Sweeps: `scaling`, `sweep`. Distributed: `rank_heatmap`, `straggler`, `skew`, `traffic_delta`. Kernels: `roofline`, `occupancy`, `ncu_util`, `stalls`. Edge/energy: `power_trace`, `gpu_metrics_trace`, `energy_pareto`. Custom: `custom`. A kind that does not apply to your data says why instead of drawing an empty chart.
-
-**Dashboard filters.** `cta plot TRACE --serve` opens the dashboard *live* on a loopback server (stdlib only; `--port`, `--no-open`): each change of group, rank, GPU device or step window re-runs the analysis for that slice and redraws every plot, so all aggregates are exact (a device filter halves a 2-GPU breakdown, a step window changes `total_steps`). A saved `--html` file is static and offline, so its filters only hide or restyle what is drawn: group (also bars/heatmap columns on a category axis), rank, and a step-range zoom; use `--serve` or `--devices/--ranks/--warmup-steps/--max-steps` when you need recomputed numbers. There is no cross-plot linking yet.
-
-The same slicing is available for any analysis: `cta analyze run/ --devices 0` and `--ranks 0,1` (manifest: `ranks:`/`devices:` under `config`, SDK: `devices=[0]`).
-
-**Your own plots.** Raw tables (`kernels`, `steps`, `gpu_metrics`, `runtime`, `ncu_kernels`, `ncu_findings`, `jtop`, `osrt`; `cta plot TRACE --list-sources` shows columns) are available besides the report tables. Times are in ms relative to each rank's first step, and `--warmup-steps/--max-steps` apply exactly as in the analysis. Draw them with a few fields or with DuckDB SQL:
-```bash
-cta plot run/ --sql "SELECT idx, rank, sum(duration_ms) AS ms FROM kernels WHERE category='comm' GROUP BY ALL" \
-  --mark line --x idx --y ms --color rank
-```
-or declaratively, in a file (`cta plot run/ --spec plots.yaml`) or a manifest `plots:` block:
-```yaml
-plots:
-  - {kind: step_trace, rolling: 7, steps: "2:50", theme: dark}
-  - {kind: custom, name: comm_by_step, source: kernels, where: "category = 'comm'", mark: bar, x: idx, y: duration_ms, agg: sum}
-```
-Every kind declares typed options (shown by `--list-kinds`); unknown options are an error with a suggestion. Common ones: `title`, `theme` (light/dark), `palette`, `width`/`height`, `labels`, `rank`, `device`, `steps`, `where`. In Python: `report.plot("step_trace", path="x.png", rolling=7)`, `report.dashboard("report.html")`, and `cta.viz.register_plot` adds a kind that both backends and the dashboard pick up.
-
-### 5. Collect profiles with the vendor tools (`cta profile`)
-```bash
-cta profile nsys    --analyze -- python train.py                 # Nsight Systems: .nsys-rep + .sqlite export
-cta profile ncu     --launch-count 50 -- python train.py         # Nsight Compute (needs counter access): .ncu-rep
-cta profile kineto  --analyze -- python train.py                 # torch.profiler Chrome trace; each optimizer.step() = a ProfilerStep
-cta profile jax     --analyze -- python train.py                 # jax.profiler (XProf) log dir; mark steps with StepTraceAnnotation
-cta profile trtexec -- --loadEngine=model.plan --iterations=200  # TensorRT: --exportTimes/Profile/LayerInfo are added
-cta profile jtop    -- python infer.py                           # Jetson power & utilisation sampled while it runs
-```
-Each command writes `profiles/<name>/` (override with `-o`/`--name`), which `cta analyze profiles/<name>` reads. The tools do the profiling; CTA only runs them with the flags its adapters need (`nsys`/`ncu` must be on `PATH`, or set `NSYS_PATH`/`NCU_PATH`; `trtexec` via `TRTEXEC_PATH`; `jtop` needs `sudo pip install jetson-stats`). JAX `*.xplane.pb` files are converted with `xprof` (`pip install cta[jax]`); the Chrome-format `trace.json.gz` next to them needs nothing extra. `nsight-python` (the `[profile]` extra, Linux only) is for annotating kernels inside your own Python code; `cta profile ncu` reuses its `ncu` flag defaults (flush caches, do not lock clocks) but works on any command.
-
-### 6. Compare network APIs (NCCL, MPI, UCX, GPU peer copies)
-```bash
-cta compare runs/nccl runs/mpi --labels NCCL,MPI --aspects network_api
-```
-Nsight Systems and Kineto traces both get a `network_ops` table with one row per communication call: the API (`nccl`, `mpi`, `ucx`, `p2p`), the logical operation (`allreduce`, `allgather`, `broadcast`, `sendrecv`, ...), message size, process group, and when the call was launched, started and ended. Calls are matched across runs by operation and message-size bucket, so a run that used NCCL lines up with a run that used MPI. The `network_api` aspect reports, per API, operation and size bucket:
-
-| Metric | What it is |
-| :--- | :--- |
-| `algbw_GBps`, `busbw_GBps` | Algorithm and bus bandwidth with the [nccl-tests](https://github.com/NVIDIA/nccl-tests) definitions (`busbw = algbw * 2(n-1)/n` for allreduce, `(n-1)/n` for allgather, reduce-scatter and alltoall) |
-| `time_ms`, `comm_time_ms`, `comm_calls` | Time and call counts, per operation and per API |
-| `wait_skew_us` | How unevenly ranks spend time in the same collective: the spread of the durations of the k-th call across ranks. The rank that arrives last waits least. It needs no clock agreement between ranks |
-| `launch_gap_us` | Mean time from the host launching a kernel or copy to it starting on the GPU |
-
-`report.to_polars("network_api", table="by_api")` gives time by API; `table="by_operation"` pools the APIs into one bus-bandwidth column per run.
-
-What each source can tell you:
-- **Kineto** records the collective, element counts, dtype, group size and process group on every NCCL kernel, so it has message sizes and bandwidth for NCCL.
-- **Nsight Systems** exports no per-call sizes for NCCL: those calls have timing, algorithm (`RING`, `TREE`, ...), skew and launch gap, but no bandwidth. MPI calls have sizes (read from `MPI_COLLECTIVES_EVENTS` and `MPI_P2P_EVENTS`), so MPI bandwidth works from `nsys` alone. Capture with `nsys profile -t cuda,nvtx,osrt,mpi,ucx --mpi-impl=openmpi` (or `mpich`), one report per rank, for example `mpirun -np 2 nsys profile ... -o rank%q{OMPI_COMM_WORLD_RANK} ./app`.
-- **Posted calls** (`MPI_Isend`, every UCX submit) only start a transfer, so their duration says nothing about bandwidth. They are counted and left out of bandwidth and skew.
-- **MPI sizes** are recovered per operation from what nsys records, which was measured on Open MPI 5. An in-place allreduce, allgather or alltoall is indistinguishable from a plain one in the export and reads low by `(n-1)/n`.
-- **Not covered:** NVSHMEM, and NVLink/PCIe throughput from Nsight Compute.
-
----
-
-## Python SDK
+Python:
 
 ```python
 import cta
 
-# 0. Analyze & plot a single trace or RunBundle directory
-single = cta.analyze("demo_traces/kineto/eager.json.gz", label="Eager_FP16", warmup_steps=1)
-single.plot(kind="topk", path="figures/eager_hotspots.pdf")
-
-# 1. Compare traces, globs, or multi-artifact RunBundle directories
-report = cta.compare(
-    "demo_traces/kineto/eager.json.gz",
-    "demo_traces/kineto/compiled_fp8.json.gz",
-    labels=["Eager_FP16", "Compiled_FP8"],
-    warmup_steps=1,
-    gates={"mean_step_ms": 5.0},
-)
-
-# 2. Access Polars / Pandas tables & automated bottleneck-shift diagnosis
-df_kernels = report.to_polars("kernel_diff", table="by_family")
-for shift in report.diagnoses:
-    print(shift.summary)
-
-# 3. Export LaTeX booktabs tables, Markdown, CSV/JSON, and vector plots
-report.to_latex("tables/kineto_diff.tex")
-report.plot(kind="tornado", path="figures/kernel_tornado.pdf")
-
-# 4. Validate Chakra-ET to GOAL lowering fidelity
-verdict = cta.verify_chakra_goal_equivalence(
-    "demo_traces/chakra_ring",
-    "demo_traces/goal/ring.goal",
-    collective_algorithm="ring",
-)
-assert verdict.equivalent
+report = cta.compare("baseline.json.gz", "candidate.json.gz",
+                     labels=["Baseline", "Candidate"], warmup_steps=1)
+df = report.to_polars("kernel_diff", table="by_family")
+report.plot(kind="tornado", path="kernel_tornado.pdf")
 ```
 
----
+`cta.analyze(path)` takes a single trace. Plugins add formats and aspects with the decorators in `cta/core/registry.py`, or through the `cta.plugins` entry-point group.
 
-## Extending CTA with Custom Plugins
+## Contributing
 
-Third-party formats and comparison aspects register via decorators in [`cta/core/registry.py`](cta/core/registry.py), either in your own module or through the `cta.plugins` entry-point group. Run `cta list` to see what is registered.
+Issues and pull requests are welcome at <https://github.com/cabhinaba3/compute-trace-analysis>.
 
-```python
-import pathlib
+Before opening a pull request, run the same checks as CI:
 
-import polars as pl
-
-import cta
-
-
-@cta.register_adapter("custom_log")
-class CustomAdapter:
-    def detect(self, path: pathlib.Path) -> bool:
-        return path.suffix == ".clog"
-
-    def ingest(
-        self, artifact: cta.TraceArtifact, out_dir: pathlib.Path
-    ) -> dict[str, pathlib.Path]:
-        # Write each normalized table as Parquet and return {table_name: path}.
-        steps_path = out_dir / "steps.parquet"
-        pl.read_csv(artifact.paths[0]).write_parquet(steps_path)
-        return {"steps": steps_path}
-
-
-@cta.register_aspect(
-    "custom_metric", title="Custom Metric", required_formats=("custom_log",)
-)
-class CustomMetric:
-    def run(
-        self,
-        groups: tuple[cta.TrialGroup, ...],
-        tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: cta.CompareConfig,
-    ) -> cta.AspectResult:
-        # tables[group_id][trial_index]["custom_log.steps"] -> Parquet path
-        ...
+```bash
+ruff check cta tests examples
+mypy cta tests examples
+pytest
 ```
 
----
-
-## Repository Layout
-
-```text
-cta/
-  core/          Canonical schemas, BLAKE2b Parquet cache, CSR DAG & sweep-line engines, stats, diagnosis
-  adapters/      Format readers: chakra/, goal/, nsys/, kineto/, jax/, ncu/, tensorrt/, jtop/
-  aspects/       Comparison aspects: device/ (latency, kernels, timeline, os_runtime, roofline), distributed.py, edge.py, hta.py, network.py
-  exporters/     Rich terminal, Markdown, LaTeX booktabs, CSV/JSON bundle exporters
-  viz/           Plot kinds (registry + typed options), raw-table/SQL data layer, Matplotlib and Plotly renderers, dashboard
-  synth/         Deterministic synthetic trace generators, one module per ecosystem (chakra, goal, nsys, kineto, ncu, tensorrt, jtop)
-  profile/       Thin runners for nsys, ncu, torch.profiler, jax.profiler, trtexec and jtop (`cta profile`)
-  cli/           Typer CLI: app.py wires the command modules (`compare`, `analyze`, `verify-equivalence`, `plot`, `synth`, `inspect`, `list`, `profile`, `cache`)
-examples/        Runnable SDK quickstarts and declarative sweep YAML manifest
-tests/           Unit and end-to-end integration test suites
-```
+Add a test for a change in behaviour and a line under "Unreleased" in `CHANGELOG.md`. Code under `native/` is built by `pip install`; rebuild with `pip install -e .` after changing it.
 
 ## License
 
-GNU General Public License v2.0 (GPL-2.0). See [LICENSE](LICENSE) and [CITATION.cff](CITATION.cff).
+GNU General Public License v2.0. See [LICENSE](LICENSE) and [CITATION.cff](CITATION.cff).

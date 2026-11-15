@@ -258,7 +258,12 @@ def _tables(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         written = reader.NsysAdapter().ingest(artifact, out_dir)
-    return {name: pl.read_parquet(p) for name, p in written.items()}
+    # network_ops is newer than the Python reader the digests come from.
+    return {
+        name: pl.read_parquet(p)
+        for name, p in written.items()
+        if name != "network_ops"
+    }
 
 
 def table_digest(tables: dict[str, pl.DataFrame]) -> str:
