@@ -11,7 +11,10 @@ from typing import Any, TYPE_CHECKING
 
 from cta.viz import data
 from cta.viz import spec as viz_spec
-from cta.viz import theme  # noqa: F401  (re-exported for backwards compatibility)
+from cta.viz import suitability
+
+# Re-exported for backwards compatibility.
+from cta.viz import theme as theme
 
 if TYPE_CHECKING:
     from matplotlib import figure
@@ -21,7 +24,11 @@ if TYPE_CHECKING:
 
 
 def build_chart(
-    ctx: data.DataContext, kind: str, options: Mapping[str, Any] | None = None
+    ctx: data.DataContext,
+    kind: str,
+    options: Mapping[str, Any] | None = None,
+    *,
+    warn: bool = True,
 ) -> tuple[ir.Chart, dict[str, Any]]:
     """Builds the backend-neutral chart of a plot kind.
 
@@ -29,6 +36,7 @@ def build_chart(
         ctx: Data the plot draws from.
         kind: Plot kind name or alias.
         options: The kind's options as given; defaults fill the rest.
+        warn: Whether to warn when the data does not suit the kind.
 
     Returns:
         The chart and the resolved options. A ``title`` option replaces the
@@ -46,6 +54,8 @@ def build_chart(
         chart.title = resolved["title"]
         if len(chart.panels) == 1:
             chart.panels[0].title = resolved["title"]
+    if warn:
+        suitability.validate_and_warn(ctx, kind, resolved, chart=chart)
     return chart, resolved
 
 

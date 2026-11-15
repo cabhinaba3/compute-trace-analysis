@@ -14,6 +14,7 @@
 ### Trace analysis plots
 - New plot kinds `metric_trace`, `metric_dist`, `category_compare`, `execution_heatmap` and `metric_correlation` for time series, distributions, category comparisons, rank-by-time heatmaps and metric correlations over the raw tables.
 - New `violin` mark and kinds `violin`, `boxplot` and `line_plot`; `metric_dist` has a `violin` mode.
+- Plots now warn when the data does not suit the kind (a violin of a few samples, a line through categories, a cross-rank plot of a one-rank trace). `cta plot` prints the warnings, and the dashboard shows them with buttons for the suggested kinds. Each dashboard card has a kind selector; switching works in the live dashboard (`--serve`) only. `cta.viz.dashboard.figure_json` returns the warnings as a fourth value.
 
 ### More plot kinds
 - New `runtime_calls` table from the `nsys` and `kineto` adapters (both now version 2.5): every CUDA runtime call with its name, thread, correlation id, step and time. It is also a plot source, usable in `custom` and `--sql`.

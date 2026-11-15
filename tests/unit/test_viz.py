@@ -1182,3 +1182,25 @@ def test_network_matrix_needs_a_known_peer(
 ) -> None:
     with pytest.raises(viz_spec.NotApplicableError, match="peer"):
         viz.build_chart(_network_context(pair), "network_matrix")
+
+
+def test_suggested_alternatives_are_registered_kinds() -> None:
+    import ast
+    import re
+
+    from cta.viz import suitability
+
+    tree = ast.parse(pathlib.Path(suitability.__file__).read_text())
+    suggested: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "Suggested alternatives:" in node.value
+        ):
+            tail = node.value.split("Suggested alternatives:")[1]
+            suggested.update(re.findall(r"'([a-z_]+)'", tail))
+    assert suggested
+    for name in suggested:
+        assert viz_spec.get_kind(name).name
+
