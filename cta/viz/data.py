@@ -310,12 +310,12 @@ class DataContext:
             The query result.
 
         Raises:
-            spec.NotApplicableError: If a raw table the query mentions is
-                missing or empty after filtering.
+            spec.NotApplicableError: If DuckDB is not installed, or a raw
+                table the query mentions is missing or empty after
+                filtering.
             ValueError: If DuckDB rejects the query.
         """
-        import duckdb
-
+        duckdb = _require_duckdb()
         connection = duckdb.connect()
         try:
             for name in SOURCES:
@@ -558,6 +558,23 @@ def _with_sample_times(
     )
 
 
+def _require_duckdb() -> Any:
+    """Imports DuckDB, or says which extra provides it.
+
+    Raises:
+        spec.NotApplicableError: DuckDB is not installed, so SQL, ``where``
+            filters and the ``custom`` kind cannot run.
+    """
+    try:
+        import duckdb
+    except ImportError as exc:
+        raise spec.NotApplicableError(
+            "SQL and 'where' filters need DuckDB: "
+            "pip install 'compute-trace-analysis[sql]'"
+        ) from exc
+    return duckdb
+
+
 def _sql_filter(df: pl.DataFrame, predicate: str) -> pl.DataFrame:
     """Keeps the rows of ``df`` that satisfy a SQL predicate (DuckDB).
 
@@ -569,10 +586,10 @@ def _sql_filter(df: pl.DataFrame, predicate: str) -> pl.DataFrame:
         The matching rows.
 
     Raises:
+        spec.NotApplicableError: If DuckDB is not installed.
         ValueError: If DuckDB rejects the predicate.
     """
-    import duckdb
-
+    duckdb = _require_duckdb()
     connection = duckdb.connect()
     try:
         connection.register("t", df.to_arrow())

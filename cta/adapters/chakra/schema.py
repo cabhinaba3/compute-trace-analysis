@@ -35,8 +35,18 @@ def et_def_pb2() -> Any:
 
     Returns:
         The ``chakra.schema.protobuf.et_def_pb2`` module.
+
+    Raises:
+        ImportError: The ``chakra`` extra (mlc-chakra and protobuf) is not
+            installed.
     """
-    from chakra.schema.protobuf import et_def_pb2 as generated_module
+    try:
+        from chakra.schema.protobuf import et_def_pb2 as generated_module
+    except ImportError as exc:
+        raise ImportError(
+            "writing .et files needs the Chakra schema: "
+            "pip install 'compute-trace-analysis[chakra]'"
+        ) from exc
 
     return generated_module
 
