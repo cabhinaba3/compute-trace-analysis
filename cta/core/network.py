@@ -70,17 +70,35 @@ _BUSBW_FACTOR = {
 }
 
 DTYPE_BYTES = {
-    "float": 4, "float32": 4, "double": 8, "float64": 8, "half": 2,
-    "float16": 2, "bfloat16": 2, "long": 8, "int64": 8, "int": 4,
-    "int32": 4, "short": 2, "char": 1, "byte": 1, "bool": 1,
-    "float8_e4m3fn": 1, "float8_e5m2": 1,
-}  # fmt: skip
+    "float": 4,
+    "float32": 4,
+    "double": 8,
+    "float64": 8,
+    "half": 2,
+    "float16": 2,
+    "bfloat16": 2,
+    "long": 8,
+    "int64": 8,
+    "int": 4,
+    "int32": 4,
+    "short": 2,
+    "char": 1,
+    "byte": 1,
+    "bool": 1,
+    "float8_e4m3fn": 1,
+    "float8_e5m2": 1,
+}
 
 # Upper edges of the message-size buckets, in bytes.
 SIZE_BUCKET_EDGES = (1 << 10, 64 << 10, 1 << 20, 16 << 20, 256 << 20)
 SIZE_BUCKET_LABELS = (
-    "<1KB", "1-64KB", "64KB-1MB", "1-16MB", "16-256MB", ">256MB",
-)  # fmt: skip
+    "<1KB",
+    "1-64KB",
+    "64KB-1MB",
+    "1-16MB",
+    "16-256MB",
+    ">256MB",
+)
 
 _KERNEL_RE = (
     r"nccl(?:Dev)?Kernel_(?<op>[A-Za-z]+)"

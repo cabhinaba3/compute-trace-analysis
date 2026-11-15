@@ -1,13 +1,16 @@
-"""Run a Python script or module under ``jax.profiler.trace`` and write an XProf log directory.
+r"""Runs a script or module under ``jax.profiler.trace`` and writes XProf logs.
 
-    python -m cta.profile.jax_runner --out logdir [--no-perfetto] -- script.py [args...]
-    python -m cta.profile.jax_runner --out logdir -- -m package.module [args...]
+    python -m cta.profile.jax_runner --out logdir [--no-perfetto] \
+        -- script.py [args...]
+    python -m cta.profile.jax_runner --out logdir \
+        -- -m package.module [args...]
 
-The log directory holds ``plugins/profile/<run>/<host>.xplane.pb`` plus, by default, a Chrome-format trace
-(``create_perfetto_trace=True``) that ``cta`` reads without extra dependencies. Mark steps in your code with
-``jax.profiler.StepTraceAnnotation("train", step_num=i)``; without markers CTA treats each jitted-module execution
-as a step.
-"""  # noqa: E501
+The log directory holds ``plugins/profile/<run>/<host>.xplane.pb`` plus, by
+default, a Chrome-format trace (``create_perfetto_trace=True``) that ``cta``
+reads without extra dependencies. Mark steps in your code with
+``jax.profiler.StepTraceAnnotation("train", step_num=i)``; without markers CTA
+treats each jitted-module execution as a step.
+"""
 
 from __future__ import annotations
 

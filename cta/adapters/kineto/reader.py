@@ -16,6 +16,7 @@ import polars as pl
 
 from cta import _native as native
 from cta.adapters.nsys import reader as nsys_reader
+from cta.adapters.nsys import runtime_calls
 from cta.core import alignment
 from cta.core import bundle
 from cta.core import intervals
@@ -26,7 +27,7 @@ from cta.core import registry
 _XPROF_HEAD_RE = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
 
 
-@registry.register_adapter("kineto", version="2.4")
+@registry.register_adapter("kineto", version="2.5")
 class KinetoAdapter:
     """Reads PyTorch Profiler (Kineto) Chrome traces, one file per rank.
 
@@ -36,7 +37,7 @@ class KinetoAdapter:
     """
 
     format_name = "kineto"
-    version = "2.4"
+    version = "2.5"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file looks like a Kineto Chrome trace.
@@ -78,15 +79,17 @@ class KinetoAdapter:
         kernel_frames: list[pl.DataFrame] = []
         step_frames: list[pl.DataFrame] = []
         op_frames: list[pl.DataFrame] = []
+        call_frames: list[pl.DataFrame] = []
         # Runtime API name -> [total duration in ns, number of calls].
         runtime_totals: dict[str, list[int]] = {}
 
         for shard_index, path in enumerate(sorted(artifact.paths)):
             columns = native.read_kineto_trace(str(path))
             rank = _shard_rank(columns, path, shard_index)
-            shard_kernels, shard_steps, shard_ops = _ingest_shard(
+            shard_kernels, shard_steps, shard_ops, shard_calls = _ingest_shard(
                 columns, rank, runtime_totals
             )
+            call_frames.append(shard_calls)
             if shard_kernels.height:
                 kernel_frames.append(shard_kernels)
             if shard_steps.height:
@@ -106,6 +109,11 @@ class KinetoAdapter:
             if op_frames
             else pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA)
         )
+        calls = (
+            pl.concat(call_frames).sort("rank", "start_ns")
+            if call_frames
+            else pl.DataFrame(schema=runtime_calls.RUNTIME_CALLS_SCHEMA)
+        )
         runtime_rows = [
             {"name": name, "duration_ns": duration_ns, "calls": calls}
             for name, (duration_ns, calls) in runtime_totals.items()
@@ -119,6 +127,7 @@ class KinetoAdapter:
                 "steps": steps,
                 "runtime": runtime,
                 "network_ops": network_ops,
+                "runtime_calls": calls,
             },
         )
 
@@ -136,8 +145,8 @@ def _shard_rank(columns: dict[str, Any], path: pathlib.Path, index: int) -> int:
 
 def _ingest_shard(
     columns: dict[str, Any], rank: int, runtime_totals: dict[str, list[int]]
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Builds the kernels, steps and network-ops tables of one rank's trace.
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Builds the kernels, steps, network-ops and runtime-call tables of a rank.
 
     All timestamps of a shard share one clock. CUDA runtime call durations
     and counts are added to ``runtime_totals`` as a side effect.
@@ -149,8 +158,8 @@ def _ingest_shard(
             updated in place.
 
     Returns:
-        The kernels and steps tables, conformed to the nsys schemas, and the
-        network-ops table.
+        The kernels and steps tables, conformed to the nsys schemas, the
+        network-ops table and the runtime-call table.
     """
     names: list[str] = columns["names"]
     for code, duration_ns, calls in zip(
@@ -168,6 +177,7 @@ def _ingest_shard(
             pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA),
             pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA),
             pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA),
+            pl.DataFrame(schema=runtime_calls.RUNTIME_CALLS_SCHEMA),
         )
 
     # Sort by GPU start time; the launch arrays are permuted alongside so
@@ -295,7 +305,17 @@ def _ingest_shard(
         kernels.with_columns(pl.Series("step", kernel_steps, dtype=pl.Int32)),
         nsys_reader.KERNELS_SCHEMA,
     )
-    return kernels, steps, _network_ops(columns, kernels, order)
+    calls = runtime_calls.runtime_calls_frame(
+        names,
+        columns["rcall_name"],
+        columns["rcall_start"],
+        columns["rcall_end"],
+        columns["rcall_thread"],
+        columns["rcall_correlation"],
+        rank,
+        steps,
+    )
+    return kernels, steps, _network_ops(columns, kernels, order), calls
 
 
 def _network_ops(

@@ -22,6 +22,7 @@ import pytest
 
 from cta import _native
 from cta.adapters.kineto import reader
+from cta.adapters.nsys import runtime_calls
 from cta.core import models
 from cta.synth import kineto as synth_kineto
 
@@ -557,3 +558,67 @@ def test_a_trace_without_events_gives_empty_tables(
     assert tables["kernels"].height == 0
     assert tables["steps"].height == 0
     assert tables["runtime"].height == 0
+
+
+def test_every_runtime_call_is_listed(tmp_path: pathlib.Path) -> None:
+    path = adversarial_trace(tmp_path / "a.json", base_us=1_000_000.0)
+    cols = _native.read_kineto_trace(str(path), 2, 300)
+    calls = len(cols["rcall_name"])
+    assert calls > 0
+    for key in (
+        "rcall_start",
+        "rcall_end",
+        "rcall_thread",
+        "rcall_correlation",
+    ):
+        assert len(cols[key]) == calls
+    names = [cols["names"][code] for code in cols["rcall_name"].tolist()]
+    duration = (cols["rcall_end"] - cols["rcall_start"]).tolist()
+    totals: dict[str, list[int]] = {}
+    for name, ns in zip(names, duration, strict=True):
+        entry = totals.setdefault(name, [0, 0])
+        entry[0] += ns
+        entry[1] += 1
+    summary = {
+        cols["names"][code]: [int(ns), int(count)]
+        for code, ns, count in zip(
+            cols["runtime_name"].tolist(),
+            cols["runtime_duration"].tolist(),
+            cols["runtime_calls"].tolist(),
+            strict=True,
+        )
+    }
+    assert totals == summary
+    # A call without a correlation id says so with -1.
+    assert -1 in cols["rcall_correlation"].tolist()
+
+
+def test_runtime_calls_do_not_depend_on_threads_or_chunks(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = adversarial_trace(tmp_path / "a.json", base_us=1_000_000.0)
+    one = _native.read_kineto_trace(str(path), 1, 1 << 30)
+    many = _native.read_kineto_trace(str(path), 3, 200, 64)
+    assert one["names"] == many["names"]
+    for key in (
+        "rcall_name",
+        "rcall_start",
+        "rcall_end",
+        "rcall_thread",
+        "rcall_correlation",
+    ):
+        assert one[key].tolist() == many[key].tolist(), key
+
+
+def test_runtime_calls_table_is_written(tmp_path: pathlib.Path) -> None:
+    path = adversarial_trace(tmp_path / "a.json", base_us=1_000_000.0)
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    artifact = models.TraceArtifact(
+        format="kineto", paths=(path,), world_size=1
+    )
+    written = reader.KinetoAdapter().ingest(artifact, out_dir)
+    table = pl.read_parquet(written["runtime_calls"])
+    assert table.schema == runtime_calls.RUNTIME_CALLS_SCHEMA
+    assert table.height > 0
+    assert table["start_ns"].is_sorted()

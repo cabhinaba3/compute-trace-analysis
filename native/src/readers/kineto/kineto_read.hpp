@@ -45,6 +45,11 @@ struct KinetoColumns {
   std::vector<std::int32_t> runtime_name;
   std::vector<std::int64_t> runtime_duration, runtime_calls;
 
+  // Every CUDA runtime call in file order: name, time, thread (dense id as
+  // for op_thread) and correlation id (-1 when the call has none).
+  std::vector<std::int32_t> rcall_name;
+  std::vector<std::int64_t> rcall_start, rcall_end, rcall_thread, rcall_correlation;
+
   // Where the time went, in seconds: reading (and gunzipping) the file,
   // splitting it into chunks, waiting for room to hand a chunk to a parser,
   // and waiting for the parsers and the merge to finish after the last chunk.

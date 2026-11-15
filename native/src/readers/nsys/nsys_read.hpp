@@ -14,6 +14,16 @@ struct NsysSummary {
   std::vector<std::int64_t> duration_ns, calls;
 };
 
+// One CUDA runtime call per row, in table order. `name` indexes `names`
+// (in order of first appearance); `thread` is the globalTid, -1 if unknown;
+// `correlation` is the id that ties the call to the GPU work it launched, or
+// -1.
+struct NsysCalls {
+  std::vector<std::string> names;
+  std::vector<std::int32_t> name;
+  std::vector<std::int64_t> start, end, thread, correlation;
+};
+
 // The GPU activities, launch times, NVTX ranges, GPU metric samples and API
 // summaries of one export. Strings are dictionary-coded: `*_name` and `nvtx_text` hold indices
 // into `names` and `nvtx_texts`, in order of first appearance.
@@ -47,6 +57,10 @@ struct NsysColumns {
   // SQLite groups them ("unknown" when the name id is not in StringIds). Empty
   // if the table or StringIds is missing.
   NsysSummary runtime, osrt;
+
+  // Every CUPTI_ACTIVITY_KIND_RUNTIME call with a positive duration; empty if
+  // the table is missing.
+  NsysCalls runtime_calls;
 };
 
 // Reads an export. The parts are read on separate connections at the same time.

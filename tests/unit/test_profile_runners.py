@@ -265,8 +265,7 @@ def test_jtop_sampler_writes_json_list(
             self.calls += 1
             return True
 
-    fake_jtop_module = types.ModuleType("jtop")
-    fake_jtop_module.jtop = FakeJtop  # type: ignore[attr-defined]
+    fake_jtop_module = types.SimpleNamespace(jtop=FakeJtop)
     monkeypatch.setitem(sys.modules, "jtop", fake_jtop_module)
     result = runners.run_jtop(
         [sys.executable, "-c", "import time; time.sleep(0.2)"],

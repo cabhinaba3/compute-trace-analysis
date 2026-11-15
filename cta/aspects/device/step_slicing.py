@@ -59,7 +59,8 @@ def slice_steps_and_kernels(
         steps: Step table with ``rank``, ``step``, ``start_ns`` and
             ``end_ns`` columns.
         kernels: Kernel table with ``rank``, ``device``, ``step``,
-            ``start_ns`` and ``end_ns`` columns; may be empty.
+            ``start_ns`` and ``end_ns`` columns; may be empty. A table with
+            no ``device`` column (host calls) is not filtered by device.
         config: Comparison settings that select ranks, devices and steps.
 
     Returns:
@@ -70,7 +71,11 @@ def slice_steps_and_kernels(
         steps = steps.filter(pl.col("rank").is_in(list(config.ranks)))
         if kernels.height:
             kernels = kernels.filter(pl.col("rank").is_in(list(config.ranks)))
-    if config.devices is not None and kernels.height:
+    if (
+        config.devices is not None
+        and kernels.height
+        and "device" in kernels.columns
+    ):
         kernels = kernels.filter(pl.col("device").is_in(list(config.devices)))
     if steps.is_empty():
         return steps, kernels

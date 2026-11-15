@@ -63,12 +63,24 @@ def render(
     n_panels = len(chart.panels)
     is_grid = n_panels > 1
     titles = [panel.title for panel in chart.panels] if is_grid else None
+    has_polar = any(panel.polar for panel in chart.panels)
+    grid_specs = None
+    if has_polar and is_grid:
+        cells: list[dict[str, str] | None] = [
+            {"type": "polar" if panel.polar else "xy"} for panel in chart.panels
+        ]
+        cells += [None] * (chart.rows * chart.cols - len(cells))
+        grid_specs = [
+            cells[row * chart.cols : (row + 1) * chart.cols]
+            for row in range(chart.rows)
+        ]
     fig = (
         subplots.make_subplots(
             rows=chart.rows,
             cols=chart.cols,
             subplot_titles=titles,
-            shared_yaxes=chart.sharey,
+            shared_yaxes=chart.sharey and not has_polar,
+            specs=grid_specs,
         )
         if is_grid
         else go.Figure()
@@ -92,6 +104,8 @@ def render(
             barmode = "stack"
         elif panel.overlay:
             barmode = "overlay"
+        if panel.polar:
+            continue
         fig.update_xaxes(
             title_text=panel.xlabel,
             type="log" if panel.xscale == "log" else None,
@@ -184,8 +198,8 @@ def _add_trace(
         base = list(trace.y1) if trace.y1 is not None else None
         fig.add_trace(
             go.Bar(
-                x=list(trace.x or []),
-                y=list(trace.y or []),
+                x=list(trace.x) if trace.x is not None else [],
+                y=list(trace.y) if trace.y is not None else [],
                 base=base,
                 marker_color=color,
                 **common,
@@ -195,8 +209,8 @@ def _add_trace(
     elif mark == "barh":
         fig.add_trace(
             go.Bar(
-                x=list(trace.x or []),
-                y=list(trace.y or []),
+                x=list(trace.x) if trace.x is not None else [],
+                y=list(trace.y) if trace.y is not None else [],
                 orientation="h",
                 marker_color=color,
                 **common,
@@ -212,8 +226,8 @@ def _add_trace(
         }
         fig.add_trace(
             go.Scatter(
-                x=list(trace.x or []),
-                y=list(trace.y or []),
+                x=list(trace.x) if trace.x is not None else [],
+                y=list(trace.y) if trace.y is not None else [],
                 mode="lines+markers" if style.get("marker") else "lines",
                 line=line,
                 opacity=style.get("alpha", 1.0),
@@ -224,11 +238,11 @@ def _add_trace(
     elif mark == "scatter":
         fig.add_trace(
             go.Scatter(
-                x=list(trace.x or []),
-                y=list(trace.y or []),
+                x=list(trace.x) if trace.x is not None else [],
+                y=list(trace.y) if trace.y is not None else [],
                 mode="markers",
                 marker=_scatter_marker(trace, panel, color),
-                text=list(trace.text) if trace.text else None,
+                text=list(trace.text) if trace.text is not None else None,
                 **common,
             ),
             **cell,
@@ -236,17 +250,48 @@ def _add_trace(
     elif mark == "box":
         fig.add_trace(
             go.Box(
-                y=list(trace.y or []),
+                y=list(trace.y) if trace.y is not None else [],
                 marker_color=color,
                 boxmean=True,
                 **common,
             ),
             **cell,
         )
+    elif mark == "violin":
+        fig.add_trace(
+            go.Violin(
+                y=list(trace.y) if trace.y is not None else [],
+                line_color=color,
+                fillcolor=color,
+                opacity=style.get("alpha", 0.75),
+                box_visible=style.get("box_visible", True),
+                meanline_visible=style.get("meanline_visible", True),
+                points=style.get("points", False),
+                **common,
+            ),
+            **cell,
+        )
+    elif mark == "radar":
+        names = [str(value) for value in (trace.x or [])]
+        values = list(trace.y or [])
+        fig.add_trace(
+            go.Scatterpolar(
+                r=[*values, *values[:1]],
+                theta=[*names, *names[:1]],
+                fill="toself",
+                opacity=0.7,
+                line_color=color,
+                **common,
+            ),
+            **cell,
+        )
+        fig.update_polars(
+            radialaxis={"range": [0, style.get("rmax", 1.0)]}, **cell
+        )
     elif mark == "hist":
         fig.add_trace(
             go.Histogram(
-                x=list(trace.y or []),
+                x=list(trace.y) if trace.y is not None else [],
                 nbinsx=style.get("bins", 30),
                 opacity=style.get("alpha", 0.55),
                 histnorm="probability density" if style.get("density") else "",
@@ -258,7 +303,7 @@ def _add_trace(
     elif mark == "heatmap":
         fig.add_trace(
             go.Heatmap(
-                z=[list(row) for row in trace.z or []],
+                z=[list(row) for row in trace.z] if trace.z is not None else [],
                 x=list(trace.x) if trace.x is not None else None,
                 y=list(trace.y) if trace.y is not None else None,
                 colorscale=_colorscale(style.get("cmap")) or "Viridis",
@@ -270,7 +315,8 @@ def _add_trace(
             **cell,
         )
     elif mark == "segment":
-        starts, ends = list(trace.x or []), list(trace.x1 or [])
+        starts = list(trace.x) if trace.x is not None else []
+        ends = list(trace.x1) if trace.x1 is not None else []
         lengths = [
             end - start for start, end in zip(starts, ends, strict=False)
         ]
@@ -278,22 +324,22 @@ def _add_trace(
             go.Bar(
                 x=lengths,
                 base=starts,
-                y=list(trace.y or []),
+                y=list(trace.y) if trace.y is not None else [],
                 orientation="h",
                 marker_color=color,
-                text=list(trace.text) if trace.text else None,
-                hoverinfo="text" if trace.text else "x+y",
+                text=list(trace.text) if trace.text is not None else None,
+                hoverinfo="text" if trace.text is not None else "x+y",
                 **common,
             ),
             **cell,
         )
     elif mark == "band":
         # An invisible upper edge, then the lower edge filled up to it.
-        x = list(trace.x or [])
+        x = list(trace.x) if trace.x is not None else []
         fig.add_trace(
             go.Scatter(
                 x=x,
-                y=list(trace.y1 or []),
+                y=list(trace.y1) if trace.y1 is not None else [],
                 mode="lines",
                 line={"width": 0},
                 showlegend=False,
@@ -305,7 +351,7 @@ def _add_trace(
         fig.add_trace(
             go.Scatter(
                 x=x,
-                y=list(trace.y or []),
+                y=list(trace.y) if trace.y is not None else [],
                 mode="lines",
                 line={"width": 0},
                 fill="tonexty",
@@ -316,10 +362,18 @@ def _add_trace(
         )
     elif mark in ("hline", "vline"):
         if mark == "hline":
-            coord = (trace.y or [0])[0]
+            coord = (
+                list(trace.y)[0]
+                if trace.y is not None and len(trace.y) > 0
+                else 0
+            )
             add_line = fig.add_hline
         else:
-            coord = (trace.x or [0])[0]
+            coord = (
+                list(trace.x)[0]
+                if trace.x is not None and len(trace.x) > 0
+                else 0
+            )
             add_line = fig.add_vline
         add_line(
             coord,
@@ -332,10 +386,10 @@ def _add_trace(
     elif mark == "text":
         fig.add_trace(
             go.Scatter(
-                x=list(trace.x or []),
-                y=list(trace.y or []),
+                x=list(trace.x) if trace.x is not None else [],
+                y=list(trace.y) if trace.y is not None else [],
                 mode="text",
-                text=list(trace.text or []),
+                text=list(trace.text) if trace.text is not None else [],
                 textposition="top right",
                 showlegend=False,
                 meta=trace.meta,

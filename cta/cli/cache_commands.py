@@ -19,11 +19,12 @@ cache_app = typer.Typer(
 
 
 @cache_app.command("status")
-def cache_status(  # noqa: D103
+def cache_status(
     cache_dir: Annotated[
         pathlib.Path, typer.Option("--cache-dir")
     ] = pathlib.Path(".cta_cache"),
 ) -> None:
+    """Shows how many trace entries the cache holds and how large it is."""
     from cta.core import cache
 
     status = cache.CacheStore(cache_dir).status()
@@ -34,11 +35,12 @@ def cache_status(  # noqa: D103
 
 
 @cache_app.command("clear")
-def cache_clear(  # noqa: D103
+def cache_clear(
     cache_dir: Annotated[
         pathlib.Path, typer.Option("--cache-dir")
     ] = pathlib.Path(".cta_cache"),
 ) -> None:
+    """Deletes every cached trace entry."""
     from cta.core import cache
 
     removed = cache.CacheStore(cache_dir).clear()

@@ -46,6 +46,11 @@ nb::dict kineto_columns_to_dict(cta::KinetoColumns&& c) {
   d["runtime_name"] = to_numpy(std::move(c.runtime_name));
   d["runtime_duration"] = to_numpy(std::move(c.runtime_duration));
   d["runtime_calls"] = to_numpy(std::move(c.runtime_calls));
+  d["rcall_name"] = to_numpy(std::move(c.rcall_name));
+  d["rcall_start"] = to_numpy(std::move(c.rcall_start));
+  d["rcall_end"] = to_numpy(std::move(c.rcall_end));
+  d["rcall_thread"] = to_numpy(std::move(c.rcall_thread));
+  d["rcall_correlation"] = to_numpy(std::move(c.rcall_correlation));
   nb::dict timing;
   timing["read"] = c.read_seconds;
   timing["split"] = c.split_seconds;
@@ -130,6 +135,14 @@ nb::dict nsys_columns_to_dict(cta::NsysColumns&& c) {
     part["calls"] = to_numpy(std::move(summary->calls));
     d[key] = part;
   }
+  nb::dict calls;
+  calls["names"] = nb::cast(c.runtime_calls.names);
+  calls["name"] = to_numpy(std::move(c.runtime_calls.name));
+  calls["start"] = to_numpy(std::move(c.runtime_calls.start));
+  calls["end"] = to_numpy(std::move(c.runtime_calls.end));
+  calls["thread"] = to_numpy(std::move(c.runtime_calls.thread));
+  calls["correlation"] = to_numpy(std::move(c.runtime_calls.correlation));
+  d["runtime_calls"] = calls;
   return d;
 }
 

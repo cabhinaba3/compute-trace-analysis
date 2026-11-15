@@ -13,6 +13,17 @@
 
 ### Trace analysis plots
 - New plot kinds `metric_trace`, `metric_dist`, `category_compare`, `execution_heatmap` and `metric_correlation` for time series, distributions, category comparisons, rank-by-time heatmaps and metric correlations over the raw tables.
+- New `violin` mark and kinds `violin`, `boxplot` and `line_plot`; `metric_dist` has a `violin` mode.
+- New `queue_depth` kind (aliases `concurrency`, `active_kernels`): how many kernels run at once on each GPU, with the peak of every time bin.
+- Plots now warn when the data does not suit the kind (a violin of a few samples, a line through categories, a cross-rank plot of a one-rank trace). `cta plot` prints the warnings, and the dashboard shows them with buttons for the suggested kinds. Each dashboard card has a kind selector; switching works in the live dashboard (`--serve`) only. `cta.viz.dashboard.figure_json` returns the warnings as a fourth value.
+
+### More plot kinds
+- New `runtime_calls` table from the `nsys` and `kineto` adapters (both now version 2.5): every CUDA runtime call with its name, thread, correlation id, step and time. It is also a plot source, usable in `custom` and `--sql`.
+- Statistics: `forest` (change of every metric with its combined 95% interval) and `volcano` (size of the change against -log10 p).
+- Memory: `memcpy_bandwidth`, `memcpy_sizes` and `memcpy_overlap` (copy time hidden behind compute, per device).
+- Hierarchy and idle time: `scope_icicle` (time by nested scope), `idle_gaps` (gaps from the union of each device's kernels) and `critical_path` (compute, exposed communication and slack from the `dag_critical_path` summary; the solver returns no path, so the path itself is not drawn).
+- Host API: `runtime_top` (CUDA runtime or OS calls by time), `runtime_timeline` (calls and GPU kernels on one timeline), `sync_waits` and `runtime_step_mix`.
+- General: `metric_radar`, `parallel_coords`, `ridgeline` and `facet` (any raw-table kind once per rank, device or group). Charts can now have polar panels and a `radar` mark, and `scatter` and `text` traces can sit on the lanes of a `segment` chart.
 
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported. CI, the classifiers, ruff and mypy moved to 3.12.

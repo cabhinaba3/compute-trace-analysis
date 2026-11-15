@@ -466,3 +466,92 @@ def test_single_trace_analyze_and_single_trace_plots(
     assert plot_result.exit_code == 0, plot_result.output
     assert (plot_dir / "breakdown.svg").exists()
     assert (plot_dir / "topk.svg").exists()
+
+
+def test_cli_plot_kinds_and_multibackend_rendering(
+    tmp_path: pathlib.Path,
+) -> None:
+    demo_dir = tmp_path / "demo"
+    cache_dir = tmp_path / "cli_cache"
+    plot_dir = tmp_path / "plots"
+
+    synth_result = cli_runner.invoke(cli_app.app, ["synth", str(demo_dir)])
+    assert synth_result.exit_code == 0, synth_result.output
+
+    # Test violin across all 4 formats: pdf, png, svg, html
+    for fmt in ("pdf", "png", "svg", "html"):
+        res = cli_runner.invoke(
+            cli_app.app,
+            [
+                "plot",
+                str(demo_dir / "gpu_bundle_fp16"),
+                str(demo_dir / "gpu_bundle_int8"),
+                "--kind",
+                "violin",
+                "--format",
+                fmt,
+                "--out-dir",
+                str(plot_dir),
+                "--cache-dir",
+                str(cache_dir),
+            ],
+        )
+        assert res.exit_code == 0, res.output
+        out_file = plot_dir / f"violin.{fmt}"
+        assert out_file.exists()
+        assert out_file.stat().st_size > 500
+
+    # Test boxplot, line_plot, and aliases (box, line, violinplot)
+    for kind in ("boxplot", "box", "line_plot", "line", "violinplot"):
+        res = cli_runner.invoke(
+            cli_app.app,
+            [
+                "plot",
+                str(demo_dir / "gpu_bundle_fp16"),
+                str(demo_dir / "gpu_bundle_int8"),
+                "--kind",
+                kind,
+                "--format",
+                "png",
+                "--out-dir",
+                str(plot_dir),
+                "--cache-dir",
+                str(cache_dir),
+            ],
+        )
+        assert res.exit_code == 0, res.output
+
+
+def test_cli_suitability_warnings(
+    tmp_path: pathlib.Path,
+) -> None:
+    demo_dir = tmp_path / "demo"
+    cache_dir = tmp_path / "cli_cache"
+    plot_dir = tmp_path / "plots"
+
+    synth_result = cli_runner.invoke(cli_app.app, ["synth", str(demo_dir)])
+    assert synth_result.exit_code == 0, synth_result.output
+
+    # Single-rank trace with multi-rank distribution (by=rank)
+    res = cli_runner.invoke(
+        cli_app.app,
+        [
+            "plot",
+            str(demo_dir / "gpu_bundle_fp16"),
+            "--kind",
+            "metric_dist",
+            "--opt",
+            "by=rank",
+            "--format",
+            "png",
+            "--out-dir",
+            str(plot_dir),
+            "--cache-dir",
+            str(cache_dir),
+        ],
+    )
+    # Must succeed (exit code 0) but surface warning on stderr / output
+    assert res.exit_code == 0, res.output
+    assert "warning:" in res.output
+    assert "Multi-rank distribution plot" in res.output
+    assert (plot_dir / "metric_dist.png").exists()

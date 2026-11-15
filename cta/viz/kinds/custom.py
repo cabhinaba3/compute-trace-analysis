@@ -34,6 +34,7 @@ _MARKS = (
     "barh",
     "scatter",
     "box",
+    "violin",
     "hist",
     "heatmap",
     "area",
@@ -70,8 +71,9 @@ def _aggregation_expr(column: str, aggregation: str) -> pl.Expr:
         "source": spec.Opt(
             "str",
             None,
-            "kernels, steps, gpu_metrics, runtime, network_ops, ncu_kernels,"
-            " ncu_findings, jtop, osrt, or report:<aspect>[.<table>].",
+            "kernels, steps, gpu_metrics, runtime, runtime_calls, network_ops,"
+            " ncu_kernels, ncu_findings, jtop, osrt, or"
+            " report:<aspect>[.<table>].",
         ),
         "sql": spec.Opt(
             "str",
@@ -205,10 +207,10 @@ def _check_mapping(
                 f"{role}='{column}' is not a column. "
                 f"Columns: {', '.join(table.columns)}"
             )
-    if mark not in ("hist", "box", "heatmap") and not (x and y):
+    if mark not in ("hist", "box", "violin", "heatmap") and not (x and y):
         raise ValueError(f"mark '{mark}' needs both x and y")
-    if mark == "hist" and not (y or x):
-        raise ValueError("hist needs y (or x) for the values")
+    if mark in ("hist", "box", "violin") and not (y or x):
+        raise ValueError(f"{mark} needs y (or x) for the values")
 
 
 def _aggregate(
@@ -257,7 +259,7 @@ def _traces(
                     mark, group_frame, x, y, options.get("size"), name, style
                 )
             )
-        elif mark in ("box", "hist"):
+        elif mark in ("box", "violin", "hist"):
             value_column = y or x
             if value_column is None:
                 raise ValueError(f"mark '{mark}' needs y (or x) for the values")
@@ -364,20 +366,20 @@ def _distribution_traces(
     style: dict[str, Any],
     first_color_index: int,
 ) -> list[ir.Trace]:
-    """Builds box or histogram traces of one column, a box per category.
+    """Builds distribution traces of one column, one mark per category.
 
     Args:
-        mark: `box` or `hist`.
+        mark: `box`, `violin` or `hist`.
         group_frame: Rows of one colour series.
-        category_column: Column whose values each get a box, if any.
+        category_column: Column whose values each get a box/violin, if any.
         value_column: Column holding the values.
         options: Resolved options of the kind (reads `bins`).
         name: Series name shown in the legend.
         style: Mark options shared by the series.
-        first_color_index: Colour index of the first box per category.
+        first_color_index: Colour index of the first trace per category.
 
     Returns:
-        One histogram, one box, or one box per category.
+        One histogram, one box/violin, or one box/violin per category.
     """
     if mark == "hist":
         return [
@@ -388,10 +390,11 @@ def _distribution_traces(
                 style={**style, "bins": options["bins"]},
             )
         ]
+    dist_mark = mark if mark in ("box", "violin") else "box"
     if category_column is None:
         return [
             ir.Trace(
-                "box",
+                dist_mark,
                 y=group_frame[value_column].to_list(),
                 name=name or value_column,
                 style=style,
@@ -405,7 +408,7 @@ def _distribution_traces(
         in_category = group_frame.filter(pl.col(category_column) == category)
         traces.append(
             ir.Trace(
-                "box",
+                dist_mark,
                 y=in_category[value_column].to_list(),
                 name=f"{category}" if name is None else f"{name}/{category}",
                 style={"ci": first_color_index + offset},

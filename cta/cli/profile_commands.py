@@ -145,7 +145,10 @@ def profile_nsys(
     ] = False,
     analyze: _AnalyzeOption = False,
 ) -> None:
-    """Nsight Systems: `cta profile nsys -- python train.py` (writes .nsys-rep and the .sqlite export)."""  # noqa: E501
+    """Nsight Systems: `cta profile nsys -- python train.py`.
+
+    Writes the `.nsys-rep` and the `.sqlite` export.
+    """
     from cta.profile import runners
 
     _run_profile(
@@ -196,7 +199,10 @@ def profile_ncu(
     ] = "none",
     analyze: _AnalyzeOption = False,
 ) -> None:
-    """Nsight Compute (hardware counters required): `cta profile ncu --launch-count 50 -- python train.py`."""  # noqa: E501
+    """Nsight Compute: `cta profile ncu --launch-count 50 -- python train.py`.
+
+    Needs access to the hardware counters.
+    """
     from cta.profile import runners
 
     metric_names = (
@@ -239,7 +245,11 @@ def profile_kineto(
     ] = "optimizer",
     analyze: _AnalyzeOption = False,
 ) -> None:
-    """PyTorch profiler (Kineto trace): `cta profile kineto -- python train.py` or `-- -m package.module`."""  # noqa: E501
+    """PyTorch profiler (Kineto trace).
+
+    Run `cta profile kineto -- python train.py` or
+    `cta profile kineto -- -m package.module`.
+    """
     from cta.profile import runners
 
     _run_profile(
@@ -266,7 +276,11 @@ def profile_jax(
     ] = True,
     analyze: _AnalyzeOption = False,
 ) -> None:
-    """JAX profiler (XProf): `cta profile jax -- python train.py` or `-- -m package.module`."""  # noqa: E501
+    """JAX profiler (XProf).
+
+    Run `cta profile jax -- python train.py` or
+    `cta profile jax -- -m package.module`.
+    """
     from cta.profile import runners
 
     _run_profile(
@@ -287,7 +301,10 @@ def profile_trtexec(
     name: _NameOption = None,
     analyze: _AnalyzeOption = False,
 ) -> None:
-    """TensorRT: `cta profile trtexec -- --loadEngine=model.plan --iterations=200` (export flags are added)."""  # noqa: E501
+    """TensorRT: `cta profile trtexec -- --loadEngine=model.plan`.
+
+    The export flags are added for you.
+    """
     from cta.profile import runners
 
     _run_profile(
@@ -311,7 +328,10 @@ def profile_jtop(
     ] = 0.5,
     analyze: _AnalyzeOption = False,
 ) -> None:
-    """Jetson power/utilisation telemetry while a command runs: `cta profile jtop -- python infer.py`."""  # noqa: E501
+    """Jetson power and utilisation while a command runs.
+
+    Run `cta profile jtop -- python infer.py`.
+    """
     from cta.profile import runners
 
     _run_profile(

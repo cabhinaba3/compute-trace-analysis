@@ -23,6 +23,7 @@ from cta.core import models
 from cta.viz import dashboard
 from cta.viz import data
 from cta.viz import spec
+from cta.viz import suitability
 
 # Recomputed reports kept per session, least recently used evicted first.
 _MAX_CACHED_REPORTS = 8
@@ -202,28 +203,57 @@ class LiveSession:
                 self._report_cache.popitem(last=False)
         return report
 
-    def plot(self, card: dashboard.Card, filters: Filters) -> dict[str, Any]:
-        """Builds one card's figure for a filter selection.
+    def plot(
+        self,
+        card: dashboard.Card,
+        filters: Filters,
+        kind: str | None = None,
+    ) -> dict[str, Any]:
+        """Builds one card's figure for a filter selection and optional kind.
 
         Args:
             card: The card to draw.
             filters: The filter selection.
+            kind: Target plot kind to switch to, or None to use card.spec.kind.
 
         Returns:
-            ``{"figure": <figure JSON>, "notes": <notes>}``, or
+            ``{"figure": <figure JSON>, "notes": <notes>, "title": <title>,
+            "stem": <stem>, "suitability": <warnings>, "alternatives": <the
+            registered kinds each warning suggests>}``, or
             ``{"error": <message>}`` if the slice cannot be analysed or the
             plot cannot be drawn from it.
         """
         try:
             report = self.report_for(filters)
-            fig_json, _, notes = dashboard.figure_json(
-                data.DataContext(report), card.spec, self.theme, self.palette
+            target_kind = kind if kind else card.spec.kind
+            target_kind_obj = spec.get_kind(target_kind)
+            target_declared = target_kind_obj.all_options()
+            filtered_options = {
+                k: v
+                for k, v in card.spec.options.items()
+                if k in target_declared
+            }
+            target_spec = spec.PlotSpec(
+                kind=target_kind, options=filtered_options
+            )
+            ctx = data.DataContext(report)
+            fig_json, title, notes, warnings = dashboard.figure_json(
+                ctx, target_spec, self.theme, self.palette
             )
         except Exception as exc:
             # Shown in the card: an empty slice or an inapplicable plot must
             # not kill the page.
             return {"error": f"{type(exc).__name__}: {exc}"}
-        return {"figure": fig_json, "notes": notes}
+        return {
+            "figure": fig_json,
+            "notes": notes,
+            "title": title,
+            "stem": target_spec.stem,
+            "suitability": warnings,
+            "alternatives": [
+                suitability.known_alternatives(w) for w in warnings
+            ],
+        }
 
     def html(self, title: str, js: str | None) -> str:
         """Returns the live dashboard page.
@@ -310,7 +340,10 @@ def make_server(
                 query = parse.parse_qs(url.query)
                 try:
                     card = session.cards[int(query["id"][0])]
-                    response = session.plot(card, Filters.from_query(query))
+                    kind = query.get("kind", [None])[0]
+                    response = session.plot(
+                        card, Filters.from_query(query), kind=kind
+                    )
                 except (KeyError, IndexError, ValueError) as exc:
                     response = {"error": f"bad request: {exc}"}
                 self._send(json.dumps(response).encode(), "application/json")

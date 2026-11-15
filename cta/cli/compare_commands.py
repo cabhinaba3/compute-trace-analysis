@@ -135,7 +135,7 @@ def compare_command(
         ),
     ] = None,
 ) -> None:
-    """Compare two (Baseline vs Candidate) or N traces/bundles across performance aspects."""  # noqa: E501
+    """Compares two traces or bundles (baseline and candidate), or N of them."""
     from cta.core import diagnosis
     from cta.core import engine
     from cta.core import manifest as core_manifest
@@ -228,7 +228,10 @@ def verify_equivalence_command(
         pathlib.Path, typer.Option("--cache-dir")
     ] = pathlib.Path(".cta_cache"),
 ) -> None:
-    """Verify compute duration and decomposed collective byte equivalence between Chakra-ET and GOAL."""  # noqa: E501
+    """Checks that a Chakra ET and a GOAL trace describe the same run.
+
+    Compares compute durations and the bytes of each decomposed collective.
+    """
     from cta.aspects import distributed
 
     verdict = distributed.verify_chakra_goal_equivalence(
@@ -346,7 +349,7 @@ def analyze_command(
         pathlib.Path, typer.Option("--cache-dir", help="Cache directory.")
     ] = pathlib.Path(".cta_cache"),
 ) -> None:
-    """Analyze and characterize a single trace, glob, or multi-artifact RunBundle directory."""  # noqa: E501
+    """Analyses one trace, a glob, or a directory holding a run bundle."""
     from cta.core import engine
 
     try:

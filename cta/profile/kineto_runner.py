@@ -1,12 +1,19 @@
-"""Run a Python script or module under ``torch.profiler`` and write a Chrome/Kineto trace (``.json`` / ``.json.gz``).
+r"""Runs a script or module under ``torch.profiler`` and writes a Kineto trace.
 
-    python -m cta.profile.kineto_runner --out trace.json.gz [--step-on optimizer|none] -- script.py [args...]
-    torchrun --nproc_per_node=2 -m cta.profile.kineto_runner --out dir/trace_rank{rank}.json.gz -- train.py   # 1 trace/rank
-    python -m cta.profile.kineto_runner --out trace.json.gz -- -m package.module [args...]
+The trace is a Chrome-format ``.json`` or ``.json.gz`` file.
 
-With ``--step-on optimizer`` every ``optimizer.step()`` advances the profiler, producing ``ProfilerStep#N`` ranges that
-CTA uses for warmup slicing and per-step statistics. Without step markers the whole run is one step.
-"""  # noqa: E501
+    python -m cta.profile.kineto_runner --out trace.json.gz \
+        [--step-on optimizer|none] -- script.py [args...]
+    torchrun --nproc_per_node=2 -m cta.profile.kineto_runner \
+        --out dir/trace_rank{rank}.json.gz -- train.py   # one trace per rank
+    python -m cta.profile.kineto_runner --out trace.json.gz \
+        -- -m package.module [args...]
+
+With ``--step-on optimizer`` every ``optimizer.step()`` advances the
+profiler, producing ``ProfilerStep#N`` ranges that CTA uses for warm-up
+slicing and per-step statistics. Without step markers the whole run is one
+step.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +22,7 @@ import inspect
 import os
 import pathlib
 import sys
+from typing import Any
 
 from cta.profile import runners
 
@@ -64,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # torch only emits ProfilerStep#N ranges when a schedule is given, so use
     # one that records every step forever.
-    kwargs: dict[str, object] = {}
+    kwargs: dict[str, Any] = {}
     if args.step_on == "optimizer":
         kwargs["schedule"] = lambda _step: profiler.ProfilerAction.RECORD
         # Keep events across steps (torch >= 2.2).
@@ -72,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             kwargs["acc_events"] = True
 
     handle = None
-    with profiler.profile(activities=activities, **kwargs) as prof:  # type: ignore[arg-type]
+    with profiler.profile(activities=activities, **kwargs) as prof:
         if args.step_on == "optimizer":
             handle = optimizer.register_optimizer_step_post_hook(
                 lambda *_a, **_k: prof.step()

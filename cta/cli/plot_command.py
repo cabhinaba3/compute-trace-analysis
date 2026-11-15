@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 from typing import Annotated, TYPE_CHECKING
+import warnings
 
 from rich import table
 import typer
@@ -35,6 +36,27 @@ def _parse_options(pairs: list[str] | None) -> dict[str, str]:
             )
         options[key.strip()] = value
     return options
+
+
+def _report_warnings(captured: list[warnings.WarningMessage]) -> None:
+    """Prints the plot-suitability warnings and passes the others on.
+
+    Args:
+        captured: Warnings recorded while one plot was drawn.
+    """
+    from cta.viz import suitability
+
+    printed: set[str] = set()
+    for item in captured:
+        if issubclass(item.category, suitability.SuitabilityWarning):
+            message = str(item.message)
+            if message not in printed:
+                printed.add(message)
+                output.err_console.print(f"[yellow]warning:[/yellow] {message}")
+        else:
+            warnings.warn_explicit(
+                item.message, item.category, item.filename, item.lineno
+            )
 
 
 def _print_kinds() -> None:
@@ -337,7 +359,11 @@ def plot_command(
         ),
     ] = False,
 ) -> None:
-    """Render plots: static PDF/SVG/PNG, per-plot interactive HTML, or one interactive dashboard (--html)."""  # noqa: E501
+    """Renders plots.
+
+    Output is static PDF, SVG or PNG, one interactive HTML file per plot, or
+    one interactive dashboard (`--html`).
+    """
     from cta.core import engine
     from cta.core import manifest as core_manifest
     from cta.viz import data
@@ -527,9 +553,12 @@ def plot_command(
         for plot_spec in specs_to_draw:
             figure_path = out_dir / f"{plot_spec.stem}.{extension}"
             try:
-                plots.render_spec(
-                    ctx, plot_spec, figure_path, style=style, dpi=dpi
-                )
+                with warnings.catch_warnings(record=True) as captured:
+                    warnings.simplefilter("always")
+                    plots.render_spec(
+                        ctx, plot_spec, figure_path, style=style, dpi=dpi
+                    )
+                _report_warnings(captured)
             except viz_spec.NotApplicableError as exc:
                 if is_explicit:
                     raise

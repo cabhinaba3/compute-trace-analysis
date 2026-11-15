@@ -850,7 +850,7 @@ def test_live_server_answers_filter_queries_over_http(
 
 
 def test_trace_analysis_catalog_registration() -> None:
-    """Verifies that all 5 trace analysis kinds are in the catalog."""
+    """All five trace analysis kinds are in the catalog."""
     viz_spec.load_kinds()
     catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
     expected_kinds = {
@@ -877,7 +877,7 @@ def test_trace_analysis_catalog_registration() -> None:
 def test_trace_analysis_dual_backend_svg_and_png(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
-    """Verifies Matplotlib SVG, PNG and Plotly HTML for all 5 kinds."""
+    """All five kinds render to PNG, SVG and Plotly HTML."""
     ctx = data.DataContext(pair)
     kinds = (
         "metric_trace",
@@ -910,10 +910,10 @@ def test_trace_analysis_dual_backend_svg_and_png(
 def test_trace_analysis_options_and_modes(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
-    """Tests varied options and presentation modes across the new plots."""
+    """Options and modes of the new plots change what is drawn."""
     ctx = data.DataContext(pair)
 
-    # 1. metric_dist across all 4 modes
+    # metric_dist across all 4 modes
     for mode in ("hist", "ecdf", "box", "percentile"):
         chart, _ = viz.build_chart(
             ctx,
@@ -929,7 +929,7 @@ def test_trace_analysis_options_and_modes(
         )
         assert (tmp_path / f"dist_{mode}.png").stat().st_size > 1000
 
-    # 2. category_compare horizontal, stacked, normalized, different aggs
+    # category_compare horizontal, stacked, normalized, different aggs
     chart, _ = viz.build_chart(
         ctx,
         "category_compare",
@@ -946,7 +946,7 @@ def test_trace_analysis_options_and_modes(
     assert chart.panels[0].traces[0].mark == "barh"
     assert chart.panels[0].stacked
 
-    # 3. execution_heatmap with time bins and log scale
+    # execution_heatmap with time bins and log scale
     chart, _ = viz.build_chart(
         ctx,
         "execution_heatmap",
@@ -955,7 +955,7 @@ def test_trace_analysis_options_and_modes(
     assert chart.panels
     assert chart.panels[0].traces[0].mark == "heatmap"
 
-    # 4. metric_trace with rolling median and downsampling
+    # metric_trace with rolling median and downsampling
     chart, _ = viz.build_chart(
         ctx,
         "metric_trace",
@@ -964,7 +964,7 @@ def test_trace_analysis_options_and_modes(
     assert chart.panels[0].traces
     assert any("median" in (t.name or "") for t in chart.panels[0].traces)
 
-    # 5. metric_correlation with trend line and annotations
+    # metric_correlation with trend line and annotations
     chart, _ = viz.build_chart(
         ctx,
         "metric_correlation",
@@ -984,7 +984,7 @@ def test_trace_analysis_options_and_modes(
     reason="real DDP fixtures not generated",
 )
 def test_trace_analysis_real_ddp_data(tmp_path: pathlib.Path) -> None:
-    """Verifies all 5 plot kinds against real DDP trace data."""
+    """The five kinds draw from real DDP trace data."""
     report = cta.analyze(
         REAL_DATA_DIR / "e", label="ddp", cache_dir=tmp_path / "c"
     )
@@ -1005,7 +1005,7 @@ def test_trace_analysis_real_ddp_data(tmp_path: pathlib.Path) -> None:
 
 
 def test_trace_analysis_two_gpu_trace(tmp_path: pathlib.Path) -> None:
-    """Verifies multi-device execution heatmap on synthetic two-GPU trace."""
+    """The execution heatmap covers both devices of a two-GPU trace."""
     trace_path = _two_gpu_trace(tmp_path / "two_gpu.json")
     report = cta.analyze(trace_path, label="two_gpu", cache_dir=tmp_path / "c")
     ctx = data.DataContext(report)
@@ -1023,22 +1023,22 @@ def test_trace_analysis_two_gpu_trace(tmp_path: pathlib.Path) -> None:
 def test_trace_analysis_input_validation_and_errors(
     pair: models.ComparisonReport,
 ) -> None:
-    """Verifies rejection of invalid options and NotApplicableError handling."""
+    """Bad options and missing columns raise clear errors."""
     ctx = data.DataContext(pair)
 
-    # 1. Invalid option choice
+    # Invalid option choice
     with pytest.raises(ValueError, match="is not one of"):
         viz.build_chart(ctx, "metric_dist", {"mode": "invalid_mode"})
 
-    # 2. Unknown option with fuzzy suggestion
+    # Unknown option with fuzzy suggestion
     with pytest.raises(ValueError, match="did you mean 'rolling'"):
         viz.build_chart(ctx, "metric_trace", {"roolling": 5})
 
-    # 3. Missing column raises NotApplicableError
+    # Missing column raises NotApplicableError
     with pytest.raises(viz_spec.NotApplicableError, match="not found in"):
         viz.build_chart(ctx, "metric_correlation", {"x": "nonexistent_metric"})
 
-    # 4. Inapplicable table source raises NotApplicableError
+    # Inapplicable table source raises NotApplicableError
     with pytest.raises(viz_spec.NotApplicableError):
         viz.build_chart(ctx, "metric_trace", {"source": "jtop"})
 
@@ -1182,3 +1182,267 @@ def test_network_matrix_needs_a_known_peer(
 ) -> None:
     with pytest.raises(viz_spec.NotApplicableError, match="peer"):
         viz.build_chart(_network_context(pair), "network_matrix")
+
+
+def test_queue_depth_catalog_registration() -> None:
+    """queue_depth is registered with its aliases and options."""
+    viz_spec.load_kinds()
+    catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
+    assert "queue_depth" in catalog
+    kind = catalog["queue_depth"]
+    assert kind.group == "timeline"
+    assert set(kind.aliases) == {
+        "concurrency",
+        "stream_concurrency",
+        "active_kernels",
+    }
+    assert "by" in kind.options
+    assert "bins" in kind.options
+    assert "devices" in kind.options
+    assert "max_events" in kind.options
+    for alias in kind.aliases:
+        assert viz_spec.get_kind(alias).name == "queue_depth"
+
+
+def test_queue_depth_dual_backend_rendering(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path
+) -> None:
+    """queue_depth renders on both backends."""
+    ctx = data.DataContext(pair)
+    chart, opts = viz.build_chart(ctx, "queue_depth", {"by": "category"})
+    assert chart.panels
+    assert all(t.mark == "step" for p in chart.panels for t in p.traces)
+
+    png_path = tmp_path / "qd.png"
+    svg_path = tmp_path / "qd.svg"
+    pdf_path = tmp_path / "qd.pdf"
+    html_path = tmp_path / "qd.html"
+
+    viz.render_chart(chart, opts, png_path)
+    assert png_path.stat().st_size > 1000
+
+    viz.render_chart(chart, opts, svg_path)
+    assert svg_path.stat().st_size > 500
+    assert "<svg" in svg_path.read_text()
+
+    viz.render_chart(chart, opts, pdf_path)
+    assert pdf_path.stat().st_size > 1000
+
+    pytest.importorskip("plotly")
+    viz.render_chart(chart, opts, html_path)
+    assert html_path.stat().st_size > 1000
+    assert "plotly" in html_path.read_text()[:200000].lower()
+
+    # Test options: stream, total, and bins=0
+    for by_mode in ("stream", "total"):
+        c_by, _ = viz.build_chart(ctx, "queue_depth", {"by": by_mode})
+        assert c_by.panels[0].traces
+
+    c_bins0, _ = viz.build_chart(ctx, "queue_depth", {"bins": 0})
+    assert c_bins0.panels[0].traces
+
+
+def test_dashboard_html_controls_and_suitability_badges(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path
+) -> None:
+    """The dashboard HTML has kind selectors and suitability boxes."""
+    pytest.importorskip("plotly")
+    dashboard_path = pair.dashboard(tmp_path / "dash_controls.html", cdn=True)
+    html_content = dashboard_path.read_text()
+
+    assert 'class="card-header"' in html_content
+    assert 'class="kind-switcher"' in html_content
+    assert 'class="suitability-callouts"' in html_content
+    assert 'class="badge' in html_content
+    assert 'data-default="' in html_content
+    assert "Switch to:" in html_content or "Data suits" in html_content
+
+
+def test_live_server_kind_switching_api(
+    pair: models.ComparisonReport,
+) -> None:
+    """/api/plot switches kinds and returns the suitability warnings."""
+    pytest.importorskip("plotly")
+    from cta.viz import server
+
+    session = server.LiveSession(pair, [viz_spec.PlotSpec("step_trace")])
+    card = session.cards[0]
+
+    # Switch to boxplot
+    res_box = session.plot(card, server.Filters(), kind="boxplot")
+    assert "figure" in res_box
+    assert res_box.get("stem") == "boxplot"
+    assert "suitability" in res_box
+    assert isinstance(res_box["suitability"], list)
+    assert len(res_box["alternatives"]) == len(res_box["suitability"])
+
+    # Switch to queue_depth
+    res_qd = session.plot(card, server.Filters(), kind="queue_depth")
+    assert "figure" in res_qd
+    assert res_qd.get("stem") == "queue_depth"
+    assert "suitability" in res_qd
+    assert isinstance(res_qd["suitability"], list)
+
+
+def _kernel_context(rows: list[dict[str, Any]]) -> data.DataContext:
+    """Returns a context whose kernels table is ``rows``."""
+    ctx = data.DataContext(None)
+    ctx._raw_tables = {"kernels": pl.DataFrame(rows)}
+    ctx._is_built = True
+    return ctx
+
+
+def _kernel(
+    label: str,
+    start: float,
+    duration: float,
+    *,
+    rank: int = 0,
+    stream: int = 7,
+) -> dict[str, Any]:
+    return {
+        "label": label,
+        "trial": 0,
+        "rank": rank,
+        "device": rank,
+        "stream": stream,
+        "category": "compute",
+        "t_ms": start,
+        "end_ms": start + duration,
+        "duration_ms": duration,
+    }
+
+
+def _deepest(chart: Any) -> float:
+    return max(max(t.y) for p in chart.panels for t in p.traces)
+
+
+def test_queue_depth_cap_applies_to_each_group() -> None:
+    rows = [_kernel("base", i * 0.01, 0.005) for i in range(50)]
+    rows += [_kernel("cand", i * 0.01, 0.005) for i in range(5)]
+    chart, _ = viz.build_chart(
+        _kernel_context(rows), "queue_depth", {"max_events": 10}
+    )
+    assert [panel.title for panel in chart.panels] == ["base", "cand"]
+    assert "base" in chart.notes
+    assert "cand" not in chart.notes
+
+
+def test_queue_depth_sees_an_overlap_between_bins() -> None:
+    # A 1 us kernel on a second stream, far from any bin edge.
+    rows = [_kernel("g", 0.0, 1000.0, stream=1)]
+    rows += [_kernel("g", 502.5, 0.001, stream=2)]
+    chart, _ = viz.build_chart(
+        _kernel_context(rows), "queue_depth", {"by": "total"}
+    )
+    assert _deepest(chart) == 2
+
+
+def test_queue_depth_back_to_back_kernels_do_not_overlap() -> None:
+    rows = [_kernel("g", float(i), 1.0) for i in range(20)]
+    chart, _ = viz.build_chart(
+        _kernel_context(rows), "queue_depth", {"by": "total", "bins": 0}
+    )
+    assert _deepest(chart) == 1
+
+
+def test_queue_depth_counts_each_gpu_on_its_own() -> None:
+    rows = [
+        _kernel("g", float(i), 0.9, rank=r) for r in range(4) for i in range(20)
+    ]
+    ctx = _kernel_context(rows)
+    busiest, _ = viz.build_chart(ctx, "queue_depth", {"by": "total"})
+    assert _deepest(busiest) == 1
+    assert len(busiest.panels[0].traces) == 1
+    split, _ = viz.build_chart(
+        ctx, "queue_depth", {"by": "total", "devices": "split"}
+    )
+    assert len(split.panels[0].traces) == 4
+
+
+def test_suggested_alternatives_are_registered_kinds() -> None:
+    import ast
+    import re
+
+    from cta.viz import suitability
+
+    tree = ast.parse(pathlib.Path(suitability.__file__).read_text())
+    suggested: set[str] = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "Suggested alternatives:" in node.value
+        ):
+            tail = node.value.split("Suggested alternatives:")[1]
+            suggested.update(re.findall(r"'([a-z_]+)'", tail))
+    assert suggested
+    for name in suggested:
+        assert viz_spec.get_kind(name).name
+
+
+def test_dashboard_suggests_only_registered_kinds() -> None:
+    from cta.viz import dashboard
+
+    warning = "Too few. Suggested alternatives: 'bar', 'metric_dist'."
+    markup = dashboard._badges_html([warning], 3, "violin")
+    assert 'data-kind="metric_dist"' in markup
+    assert 'data-kind="bar"' not in markup
+
+
+_EXTENDED_KINDS = (
+    "forest",
+    "volcano",
+    "memcpy_bandwidth",
+    "memcpy_sizes",
+    "memcpy_overlap",
+    "scope_icicle",
+    "idle_gaps",
+    "critical_path",
+    "runtime_top",
+    "runtime_timeline",
+    "sync_waits",
+    "runtime_step_mix",
+    "metric_radar",
+    "ridgeline",
+    "parallel_coords",
+    "facet",
+)
+
+
+@pytest.mark.parametrize("kind", _EXTENDED_KINDS)
+def test_extended_kinds_on_a_real_report_draw_or_decline(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path, kind: str
+) -> None:
+    """On cached tables each kind either draws or says why it cannot."""
+    ctx = data.DataContext(pair)
+    try:
+        chart, options = viz.build_chart(ctx, kind)
+    except viz_spec.NotApplicableError:
+        return
+    assert chart.panels
+    viz.render_chart(chart, options, tmp_path / f"{kind}.png")
+    assert (tmp_path / f"{kind}.png").stat().st_size > 1000
+
+
+def test_runtime_calls_reach_the_plots_through_the_cache(
+    pair: models.ComparisonReport,
+) -> None:
+    ctx = data.DataContext(pair)
+    assert "runtime_calls" in ctx.available()
+    calls = ctx.frame("runtime_calls")
+    assert {"label", "t_ms", "end_ms", "idx", "name", "thread"} <= set(
+        calls.columns
+    )
+    assert set(calls["name"].to_list()) == {"cudaLaunchKernel"}
+    assert set(calls["label"].to_list()) == {"base", "cand"}
+    chart, _ = viz.build_chart(ctx, "runtime_top")
+    assert chart.panels[0].traces[0].y == ["cudaLaunchKernel"]
+    timeline, _ = viz.build_chart(ctx, "runtime_timeline")
+    assert [panel.title for panel in timeline.panels] == [
+        "base (rank 0)",
+        "cand (rank 0)",
+    ]
+    for kind in ("memcpy_bandwidth", "sync_waits"):
+        with pytest.raises(viz_spec.NotApplicableError):
+            viz.build_chart(ctx, kind)

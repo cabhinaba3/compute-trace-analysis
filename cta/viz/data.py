@@ -27,6 +27,7 @@ SOURCES = (
     "steps",
     "gpu_metrics",
     "runtime",
+    "runtime_calls",
     "network_ops",
     "ncu_kernels",
     "ncu_findings",
@@ -418,8 +419,8 @@ def _trace_format_tables(
 
     Yields:
         (source name, frame) for steps, kernels, runtime, network_ops,
-        gpu_metrics and osrt, in that order, for the tables the trial has.
-        Frames may be empty.
+        runtime_calls, gpu_metrics and osrt, in that order, for the tables
+        the trial has. Frames may be empty.
     """
     from cta.aspects.device import step_slicing
 
@@ -445,16 +446,16 @@ def _trace_format_tables(
     runtime_key = f"{trace_format}.runtime"
     if runtime_key in table_paths:
         yield "runtime", pl.read_parquet(table_paths[runtime_key])
-    network_key = f"{trace_format}.network_ops"
-    if network_key in table_paths:
-        _, network_ops = step_slicing.slice_steps_and_kernels(
-            steps_raw, pl.read_parquet(table_paths[network_key]), config
+    for source in ("network_ops", "runtime_calls"):
+        key = f"{trace_format}.{source}"
+        if key not in table_paths:
+            continue
+        _, calls = step_slicing.slice_steps_and_kernels(
+            steps_raw, pl.read_parquet(table_paths[key]), config
         )
-        if network_ops.height:
-            network_ops = network_ops.join(
-                step_index, on=["rank", "step"], how="left"
-            )
-            yield "network_ops", _with_times(network_ops, origins)
+        if calls.height:
+            calls = calls.join(step_index, on=["rank", "step"], how="left")
+            yield source, _with_times(calls, origins)
     gpu_metrics_key = f"{trace_format}.gpu_metrics"
     if gpu_metrics_key in table_paths:
         gpu_metrics = step_slicing.gpu_metrics_in_steps(

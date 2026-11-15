@@ -53,8 +53,12 @@ def test_kernel_name_gives_operation_algorithm_and_protocol() -> None:
     )
     assert ops["launch_ns"].to_list() == [-1] * 5
     assert ops["op"].to_list() == [
-        "allreduce", "broadcast", "other", "allreduce", "sendrecv",
-    ]  # fmt: skip
+        "allreduce",
+        "broadcast",
+        "other",
+        "allreduce",
+        "sendrecv",
+    ]
     assert ops["algo"].to_list() == ["RING", "TREE", "", "RING", ""]
     assert ops["proto"].to_list() == ["LL", "SIMPLE", "", "", ""]
     assert ops["bytes"].to_list() == [0, 0, 0, 0, 0]
@@ -128,8 +132,10 @@ def test_bandwidth_and_wait_skew() -> None:
     ops = _ops({0: [1000, 1000], 1: [400, 1000]}, size=2_000_000)
     per_key = network_aspect.per_operation(ops).row(0, named=True)
     assert (per_key["api"], per_key["op"], per_key["bucket"]) == (
-        "nccl", "allreduce", "1-16MB",
-    )  # fmt: skip
+        "nccl",
+        "allreduce",
+        "1-16MB",
+    )
     assert per_key["calls"] == 4
     # 8 MB in 3.4 us of summed call time; two ranks make the factor 1.
     assert per_key["timed_bytes"] / per_key["timed_ns"] == pytest.approx(
