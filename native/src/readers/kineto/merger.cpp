@@ -59,6 +59,12 @@ void Merger::add(ChunkOut& c) {
     out_.runtime_calls[slot] += c.r_calls[j];
   }
 
+  append_vector(out_.rcall_start, c.rc_start);
+  append_vector(out_.rcall_end, c.rc_end);
+  append_vector(out_.rcall_correlation, c.rc_corr);
+  for (int32_t n : c.rc_name) out_.rcall_name.push_back(name_map[static_cast<std::size_t>(n)]);
+  for (int32_t t : c.rc_thread) out_.rcall_thread.push_back(thread_map[static_cast<std::size_t>(t)]);
+
   for (std::size_t j = 0; j < c.l_corr.size(); ++j)
     launches_.put(c.l_corr[j], c.l_start[j], thread_map[static_cast<std::size_t>(c.l_thread[j])]);
 }

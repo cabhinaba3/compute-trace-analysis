@@ -312,6 +312,11 @@ void add_event(od::value ev, ChunkOut& out, Event& e) {
     }
     out.r_dur[static_cast<std::size_t>(slot)] += duration;
     out.r_calls[static_cast<std::size_t>(slot)] += 1;
+    out.rc_name.push_back(code);
+    out.rc_start.push_back(start);
+    out.rc_end.push_back(end);
+    out.rc_thread.push_back(out.thread_code(e.pid, e.tid));
+    out.rc_corr.push_back(e.has_corr ? e.corr : -1);
     if (e.has_corr) {
       out.l_corr.push_back(e.corr);
       out.l_start.push_back(start);

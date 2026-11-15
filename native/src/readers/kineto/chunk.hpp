@@ -67,6 +67,10 @@ struct ChunkOut {
   std::vector<int64_t> l_corr, l_start;
   std::vector<int32_t> l_thread;
 
+  // Every runtime call: name code, time, thread code and correlation id (-1 if none).
+  std::vector<int32_t> rc_name, rc_thread;
+  std::vector<int64_t> rc_start, rc_end, rc_corr;
+
   int32_t name_code(std::string_view s);
   int32_t thread_code(const Tag& pid, const Tag& tid);
 };
