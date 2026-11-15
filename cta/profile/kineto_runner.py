@@ -1,12 +1,19 @@
-"""Run a Python script or module under ``torch.profiler`` and write a Chrome/Kineto trace (``.json`` / ``.json.gz``).
+r"""Runs a script or module under ``torch.profiler`` and writes a Kineto trace.
 
-    python -m cta.profile.kineto_runner --out trace.json.gz [--step-on optimizer|none] -- script.py [args...]
-    torchrun --nproc_per_node=2 -m cta.profile.kineto_runner --out dir/trace_rank{rank}.json.gz -- train.py   # 1 trace/rank
-    python -m cta.profile.kineto_runner --out trace.json.gz -- -m package.module [args...]
+The trace is a Chrome-format ``.json`` or ``.json.gz`` file.
 
-With ``--step-on optimizer`` every ``optimizer.step()`` advances the profiler, producing ``ProfilerStep#N`` ranges that
-CTA uses for warmup slicing and per-step statistics. Without step markers the whole run is one step.
-"""  # noqa: E501
+    python -m cta.profile.kineto_runner --out trace.json.gz \
+        [--step-on optimizer|none] -- script.py [args...]
+    torchrun --nproc_per_node=2 -m cta.profile.kineto_runner \
+        --out dir/trace_rank{rank}.json.gz -- train.py   # one trace per rank
+    python -m cta.profile.kineto_runner --out trace.json.gz \
+        -- -m package.module [args...]
+
+With ``--step-on optimizer`` every ``optimizer.step()`` advances the
+profiler, producing ``ProfilerStep#N`` ranges that CTA uses for warm-up
+slicing and per-step statistics. Without step markers the whole run is one
+step.
+"""
 
 from __future__ import annotations
 

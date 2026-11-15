@@ -37,7 +37,10 @@ def synth_command(
         ),
     ] = pathlib.Path("demo_traces"),
 ) -> None:
-    """Generate miniature valid traces across all 7 ecosystems for demos and offline testing."""  # noqa: E501
+    """Generates small valid traces of all 7 ecosystems.
+
+    For demos and offline testing.
+    """
     from cta.synth import chakra
     from cta.synth import goal
     from cta.synth import jtop
@@ -139,7 +142,7 @@ def inspect_command(
         pathlib.Path, typer.Option("--cache-dir")
     ] = pathlib.Path(".cta_cache"),
 ) -> None:
-    """Inspect detected trace formats, world size, and normalized Parquet table schemas."""  # noqa: E501
+    """Shows the detected formats, the world size and the table schemas."""
     from cta.core import engine
 
     info = engine.inspect_trace(source, cache_dir=cache_dir)
@@ -147,7 +150,10 @@ def inspect_command(
 
 
 def list_command() -> None:
-    """List registered trace formats (adapters) and comparison aspects, including plugins."""  # noqa: E501
+    """Lists the registered trace formats and comparison aspects.
+
+    Plugins are included.
+    """
     from cta.core import registry
 
     registry.load_plugins()

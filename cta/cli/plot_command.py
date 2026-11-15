@@ -337,7 +337,11 @@ def plot_command(
         ),
     ] = False,
 ) -> None:
-    """Render plots: static PDF/SVG/PNG, per-plot interactive HTML, or one interactive dashboard (--html)."""  # noqa: E501
+    """Renders plots.
+
+    Output is static PDF, SVG or PNG, one interactive HTML file per plot, or
+    one interactive dashboard (`--html`).
+    """
     from cta.core import engine
     from cta.core import manifest as core_manifest
     from cta.viz import data
