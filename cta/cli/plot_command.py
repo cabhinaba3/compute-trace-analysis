@@ -52,7 +52,7 @@ def _report_warnings(captured: list[warnings.WarningMessage]) -> None:
             message = str(item.message)
             if message not in printed:
                 printed.add(message)
-                output.err_console.print(f"[yellow]warning:[/yellow] {message}")
+                output.print_warning(message)
         else:
             warnings.warn_explicit(
                 item.message, item.category, item.filename, item.lineno
@@ -573,5 +573,5 @@ def plot_command(
         if not drawn_count:
             raise ValueError("no plot could be drawn for these traces")
     except (ValueError, ImportError, FileNotFoundError) as exc:
-        output.err_console.print(f"[bold red]error:[/bold red] {exc}")
+        output.print_error(exc)
         raise typer.Exit(code=2) from exc

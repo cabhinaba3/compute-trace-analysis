@@ -6,6 +6,7 @@ import pathlib
 from typing import TYPE_CHECKING
 
 from rich import console as rich_console
+from rich import markup as rich_markup
 import typer
 
 if TYPE_CHECKING:
@@ -16,6 +17,31 @@ console = rich_console.Console()
 
 
 err_console = rich_console.Console(stderr=True)
+
+
+def print_error(message: object) -> None:
+    """Prints an error on stderr.
+
+    The text is printed as given: Rich would otherwise read a bracket such as
+    the ``[sql]`` in an install hint as a style tag and drop it.
+
+    Args:
+        message: The error text or exception.
+    """
+    err_console.print(
+        f"[bold red]error:[/bold red] {rich_markup.escape(str(message))}"
+    )
+
+
+def print_warning(message: object) -> None:
+    """Prints a warning on stderr, as ``print_error`` prints an error.
+
+    Args:
+        message: The warning text.
+    """
+    err_console.print(
+        f"[yellow]warning:[/yellow] {rich_markup.escape(str(message))}"
+    )
 
 
 FORMAT_HELP = (

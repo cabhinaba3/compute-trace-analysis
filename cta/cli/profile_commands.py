@@ -72,9 +72,8 @@ def _finish_profile(result: runners.ProfileResult, analyze: bool) -> None:
     for artifact_path in result.artifacts:
         output.console.print(f"[green]✓ {result.tool}:[/green] {artifact_path}")
     if not result.artifacts:
-        output.err_console.print(
-            f"[bold red]error:[/bold red] {result.tool} produced no artifacts "
-            f"in {result.bundle_dir}"
+        output.print_error(
+            f"{result.tool} produced no artifacts in {result.bundle_dir}"
         )
         raise typer.Exit(code=result.returncode or 1)
     if result.returncode != 0:
@@ -124,7 +123,7 @@ def _run_profile(
     try:
         result = run_profiler(command, name or runners.default_name(command))
     except runners.ProfilerError as exc:
-        output.err_console.print(f"[bold red]error:[/bold red] {exc}")
+        output.print_error(exc)
         raise typer.Exit(code=2) from exc
     _finish_profile(result, analyze)
 

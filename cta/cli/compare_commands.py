@@ -199,7 +199,7 @@ def compare_command(
     except (ValueError, FileNotFoundError) as exc:
         # For example an unknown gate metric, no common formats or
         # inapplicable aspects.
-        output.err_console.print(f"[bold red]error:[/bold red] {exc}")
+        output.print_error(exc)
         raise typer.Exit(code=2) from exc
 
     output.emit_report(report, output_format, out_dir, export)
@@ -367,6 +367,6 @@ def analyze_command(
             label=label,
         )
     except (ValueError, FileNotFoundError) as exc:
-        output.err_console.print(f"[bold red]error:[/bold red] {exc}")
+        output.print_error(exc)
         raise typer.Exit(code=2) from exc
     output.emit_report(report, output_format, out_dir, export)
