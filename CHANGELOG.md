@@ -19,6 +19,7 @@
 
 ### More plot kinds
 - New `runtime_calls` table from the `nsys` and `kineto` adapters (both now version 2.5): every CUDA runtime call with its name, thread, correlation id, step and time. It is also a plot source, usable in `custom` and `--sql`.
+- Statistics: `forest` (change of every metric with its combined 95% interval) and `volcano` (size of the change against -log10 p).
 
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported. CI, the classifiers, ruff and mypy moved to 3.12.
