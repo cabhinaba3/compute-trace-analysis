@@ -3,6 +3,7 @@
 from cta.viz.kinds import custom as custom
 from cta.viz.kinds import drift as drift
 from cta.viz.kinds import edge as edge
+from cta.viz.kinds import hierarchy as hierarchy
 from cta.viz.kinds import kernels as kernels
 from cta.viz.kinds import memory as memory
 from cta.viz.kinds import network as network
