@@ -21,7 +21,7 @@ _LOW_PRECISIONS = ["INT8", "FP8", "FP16", "BF16"]
     required_formats=("trtexec_profile", "trtexec_engine"),
     any_of_formats=True,
 )
-class LayerFusionAspect:
+class LayerFusionAspect(registry.ComparisonAspect):
     """Compares TensorRT layer time, layer fusion and precision mix.
 
     Attributes:
@@ -30,11 +30,6 @@ class LayerFusionAspect:
         required_formats: trtexec layer profile and engine layer info.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "layer_fusion"
-    title = "TensorRT Layer Timing, Fusion & Precision Mix"
-    required_formats = ("trtexec_profile", "trtexec_engine")
-    any_of_formats = True
 
     def run(
         self,
@@ -92,38 +87,30 @@ class LayerFusionAspect:
                         float(profile_layers["avg_ms"].to_numpy().sum())
                     )
                     trial_layers.append(profile_layers.select("name", "avg_ms"))
-                if engine_layers.height:
-                    n_layers = engine_layers.height
-                    n_fused = int(
-                        engine_layers.filter(pl.col("is_fused")).height
+                base_layers = (
+                    engine_layers if engine_layers.height else profile_layers
+                )
+                if base_layers.height:
+                    n_layers = base_layers.height
+                    n_fused = int(base_layers.filter(pl.col("is_fused")).height)
+                    metric_values["layer_count"].append(float(n_layers))
+                    metric_values["fused_layer_count"].append(float(n_fused))
+                    metric_values["fusion_ratio_pct"].append(
+                        n_fused / n_layers * 100.0
                     )
+                if engine_layers.height:
                     n_low_precision = int(
                         engine_layers.filter(
                             pl.col("precision").is_in(_LOW_PRECISIONS)
                         ).height
                     )
-                    metric_values["layer_count"].append(float(n_layers))
-                    metric_values["fused_layer_count"].append(float(n_fused))
-                    metric_values["fusion_ratio_pct"].append(
-                        n_fused / n_layers * 100.0
-                    )
                     metric_values["low_precision_layer_pct"].append(
-                        n_low_precision / n_layers * 100.0
+                        n_low_precision / engine_layers.height * 100.0
                     )
                     trial_precisions.append(
                         engine_layers.group_by("precision").agg(
                             pl.len().cast(pl.Float64).alias("layers")
                         )
-                    )
-                elif profile_layers.height:
-                    n_layers = profile_layers.height
-                    n_fused = int(
-                        profile_layers.filter(pl.col("is_fused")).height
-                    )
-                    metric_values["layer_count"].append(float(n_layers))
-                    metric_values["fused_layer_count"].append(float(n_fused))
-                    metric_values["fusion_ratio_pct"].append(
-                        n_fused / n_layers * 100.0
                     )
 
             trials.append(metric_values)
@@ -213,7 +200,7 @@ def _count_bundle_queries(
     title="System Utilization, Thermals & Energy Efficiency",
     required_formats=("jtop",),
 )
-class SystemEnergyAspect:
+class SystemEnergyAspect(registry.ComparisonAspect):
     """Compares Jetson power, energy per query, utilisation and thermals.
 
     Attributes:
@@ -222,11 +209,6 @@ class SystemEnergyAspect:
         required_formats: jtop telemetry.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "system_energy"
-    title = "System Utilization, Thermals & Energy Efficiency"
-    required_formats = ("jtop",)
-    any_of_formats = False
 
     def run(
         self,

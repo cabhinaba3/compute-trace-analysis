@@ -9,7 +9,8 @@
 #include <variant>
 #include <vector>
 
-#include "common.hpp"
+#include "common/format.hpp"
+#include "common/sink.hpp"
 
 namespace cta {
 
@@ -30,10 +31,6 @@ struct Json {
 };
 
 inline void dump_json(std::string& out, const Json& j, int indent, int level = 0) {
-  auto newline = [&](int lvl) {
-    out.push_back('\n');
-    out.append(static_cast<std::size_t>(indent * lvl), ' ');
-  };
   struct Visitor {
     std::string& out;
     int indent, level;
@@ -70,7 +67,6 @@ inline void dump_json(std::string& out, const Json& j, int indent, int level = 0
       out.append(static_cast<std::size_t>(indent * lvl), ' ');
     }
   };
-  (void)newline;
   std::visit(Visitor{out, indent, level}, j.v);
 }
 

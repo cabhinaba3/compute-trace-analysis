@@ -102,6 +102,7 @@ def test_nsys_sqlite_warmup_slicing_and_legacy_schema(
         "kernel_diff",
         "timeline_overlap",
         "os_runtime",
+        "network_api",
     }
 
     latency = _summary_by_metric(report, "latency_throughput")

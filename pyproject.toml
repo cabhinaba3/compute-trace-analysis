@@ -122,6 +122,7 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
 ignore_missing_imports = true
+exclude = ["third_party", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

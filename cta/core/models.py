@@ -70,10 +70,7 @@ class TrialGroup:
         """The trace formats that every trial in the group provides."""
         if not self.trials:
             return set()
-        common = set(self.trials[0].formats)
-        for trial in self.trials[1:]:
-            common &= trial.formats
-        return common
+        return set.intersection(*(t.formats for t in self.trials))
 
 
 @dataclasses.dataclass(slots=True)

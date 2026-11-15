@@ -59,7 +59,7 @@ def missing_gate_metrics(
         str(metric)
         for result in aspects.values()
         if "metric" in result.summary.columns
-        for metric in result.summary["metric"].to_list()
+        for metric in result.summary["metric"]
     }
     return sorted(set(gates) - known)
 

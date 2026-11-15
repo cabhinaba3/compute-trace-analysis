@@ -1,4 +1,4 @@
-#include "chakra.hpp"
+#include "synth/chakra.hpp"
 
 #include <google/protobuf/util/delimited_message_util.h>
 
@@ -7,9 +7,8 @@
 #include <fstream>
 #include <stdexcept>
 
-#include "common.hpp"
+#include "common/json_value.hpp"
 #include "et_def.pb.h"
-#include "json_value.hpp"
 
 namespace cta {
 namespace {
@@ -43,8 +42,10 @@ std::vector<std::string> write_chakra_et_run(const std::string& out_dir, int wor
     std::uint64_t node_id = 0;
     bool have_previous = false;
     std::uint64_t previous = 0;
+    ChakraProtoMsg::Node compute;
+    ChakraProtoMsg::Node allreduce;
     for (int step = 0; step < steps; ++step) {
-      ChakraProtoMsg::Node compute;
+      compute.Clear();
       compute.set_id(node_id);
       compute.set_name("aten::mm_step" + std::to_string(step));
       compute.set_type(ChakraProtoMsg::COMP_NODE);
@@ -55,7 +56,7 @@ std::vector<std::string> write_chakra_et_run(const std::string& out_dir, int wor
       google::protobuf::util::SerializeDelimitedToOstream(compute, &out);
       const std::uint64_t compute_id = node_id++;
 
-      ChakraProtoMsg::Node allreduce;
+      allreduce.Clear();
       allreduce.set_id(node_id);
       allreduce.set_name("nccl:all_reduce_step" + std::to_string(step));
       allreduce.set_type(ChakraProtoMsg::COMM_COLL_NODE);

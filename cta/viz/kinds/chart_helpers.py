@@ -55,18 +55,6 @@ def grid(
     )
 
 
-def label_index(labels: list[str]) -> dict[str, int]:
-    """Maps each label to its position in `labels`.
-
-    Args:
-        labels: Group labels.
-
-    Returns:
-        The index of every label; a repeated label keeps its last position.
-    """
-    return {label: i for i, label in enumerate(labels)}
-
-
 def rolling_median(values: np.ndarray, window: int) -> np.ndarray:
     """Computes a centred rolling median, shrinking the window at both ends.
 

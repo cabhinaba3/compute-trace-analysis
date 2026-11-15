@@ -1,4 +1,4 @@
-#include "nsys.hpp"
+#include "synth/nsys.hpp"
 
 #include <sqlite3.h>
 
@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "common.hpp"
+#include "common/format.hpp"
 
 namespace cta {
 namespace {

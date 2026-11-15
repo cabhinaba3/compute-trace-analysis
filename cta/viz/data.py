@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import polars as pl
 
+from cta.aspects.device import step_slicing
 from cta.core import models
 from cta.viz import spec
 
@@ -33,7 +34,7 @@ SOURCES = (
 )
 # Trace formats with step tables, in precedence order: a trial that has
 # several of them is read from the first.
-_TRACE_FORMAT_PRECEDENCE = ("nsys", "kineto", "jax", "trtexec_timing")
+_TRACE_FORMAT_PRECEDENCE = step_slicing.TIMELINE_FORMATS
 # Raw tables read as cached, without slicing: (source name, cache table key).
 _UNSLICED_TABLES = (
     ("ncu_kernels", "ncu.ncu_kernels"),

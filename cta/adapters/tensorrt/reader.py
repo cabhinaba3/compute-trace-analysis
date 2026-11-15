@@ -15,6 +15,7 @@ import polars as pl
 
 from cta.adapters.nsys import reader as nsys_reader
 from cta.core import alignment
+from cta.core import bundle
 from cta.core import models
 from cta.core import registry
 
@@ -38,15 +39,6 @@ TRT_ENGINE_SCHEMA = pl.Schema(
         "is_fused": pl.Boolean(),
     }
 )
-
-
-def _peek_json_head(path: pathlib.Path, max_bytes: int = 8192) -> str:
-    """Returns the first bytes of a file as text, or "" if it cannot be read."""
-    try:
-        with path.open("rb") as fh:
-            return fh.read(max_bytes).decode("utf-8", errors="ignore")
-    except OSError:
-        return ""
 
 
 def _is_fused_layer_name(name: str) -> bool:
@@ -122,7 +114,7 @@ class TrtTimingAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        head = _peek_json_head(path)
+        head = bundle.peek_text(path)
         return "startComputeMs" in head and "endComputeMs" in head
 
     def ingest(
@@ -237,11 +229,9 @@ class TrtTimingAdapter:
         else:
             kernels = pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA)
 
-        steps_path = out_dir / "steps.parquet"
-        kernels_path = out_dir / "kernels.parquet"
-        steps.write_parquet(steps_path, compression="zstd")
-        kernels.write_parquet(kernels_path, compression="zstd")
-        return {"steps": steps_path, "kernels": kernels_path}
+        return bundle.write_tables(
+            out_dir, {"steps": steps, "kernels": kernels}
+        )
 
 
 @registry.register_adapter("trtexec_profile", version="1.1")
@@ -268,7 +258,7 @@ class TrtLayerProfileAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        head = _peek_json_head(path)
+        head = bundle.peek_text(path)
         return (
             "averageMs" in head or "timeMs" in head
         ) and "percentage" in head
@@ -329,9 +319,7 @@ class TrtLayerProfileAdapter:
         else:
             layers = pl.DataFrame(schema=TRT_PROFILE_SCHEMA)
 
-        profile_path = out_dir / "trt_profile.parquet"
-        layers.write_parquet(profile_path, compression="zstd")
-        return {"trt_profile": profile_path}
+        return bundle.write_tables(out_dir, {"trt_profile": layers})
 
 
 def _extract_trt_precision(layer: dict[str, Any]) -> str:
@@ -393,7 +381,7 @@ class TrtEngineInfoAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        head = _peek_json_head(path)
+        head = bundle.peek_text(path)
         return '"Layers"' in head and (
             '"LayerType"' in head
             or '"TacticValue"' in head
@@ -454,10 +442,5 @@ class TrtEngineInfoAdapter:
                         }
                     )
 
-        if layer_rows:
-            layers = pl.DataFrame(layer_rows, schema=TRT_ENGINE_SCHEMA)
-        else:
-            layers = pl.DataFrame(schema=TRT_ENGINE_SCHEMA)
-        engine_path = out_dir / "trt_engine.parquet"
-        layers.write_parquet(engine_path, compression="zstd")
-        return {"trt_engine": engine_path}
+        layers = pl.DataFrame(layer_rows, schema=TRT_ENGINE_SCHEMA)
+        return bundle.write_tables(out_dir, {"trt_engine": layers})

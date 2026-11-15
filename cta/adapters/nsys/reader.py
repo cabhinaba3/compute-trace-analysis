@@ -10,21 +10,26 @@ adapters.
 from __future__ import annotations
 
 import ast
+import contextlib
 import os
 import pathlib
 import re
 import shutil
 import sqlite3
 import subprocess
+from typing import Any
 import warnings
 
 import numpy as np
 import polars as pl
 
+from cta import _native as native
+from cta.adapters.nsys import network_ops
 from cta.core import alignment
 from cta.core import bundle
 from cta.core import intervals
 from cta.core import models
+from cta.core import network
 from cta.core import registry
 
 KERNELS_SCHEMA = pl.Schema(
@@ -107,22 +112,8 @@ GPU_METRICS_SCHEMA = pl.Schema(
     }
 )
 
-# GPU activities of one report, before labelling.
-_GPU_EVENTS_SCHEMA = {
-    "name": pl.String,
-    "category": pl.String,
-    "start_ns": pl.Int64,
-    "end_ns": pl.Int64,
-    "bytes": pl.Int64,
-    "stream": pl.Int32,
-    "device": pl.Int32,
-    "correlation_id": pl.Int64,
-}
-_LAUNCHES_SCHEMA = {
-    "correlation_id": pl.Int64,
-    "launch_thread_id": pl.Int64,
-    "launch_ns": pl.Int64,
-}
+# The category codes the native readers give GPU activities.
+GPU_CATEGORY_NAMES = {0: "compute", 1: "comm", 2: "memcpy"}
 # Step ranges of one report, before duration and rank are added.
 _STEP_RANGES_SCHEMA = {
     "step": pl.Int32,
@@ -134,16 +125,6 @@ _STEP_RE = re.compile(
     r"(?:profilerstep|step|iter|iteration|inference)[#_\s:-]*(\d+)",
     re.IGNORECASE,
 )
-# CUPTI memcpy kinds: 1 HtoD, 2 DtoH, 8 DtoD, 9 HtoH, 10 PtoP (others are rare
-# array/unified-memory copies).
-_MEMCPY_NAME_BY_KIND = {
-    1: "Memcpy_H2D",
-    2: "Memcpy_D2H",
-    8: "Memcpy_D2D",
-    9: "Memcpy_H2H",
-    10: "Memcpy_P2P",
-}
-_NVTX_RANGE_EVENT_TYPES = (59, 60)  # NvtxPushPopRange, NvtxStartEndRange
 # Tables of which any one marks an SQLite file as an Nsight Systems export.
 _NSYS_MARKER_TABLES = frozenset(
     {
@@ -232,260 +213,58 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {str(row[1]) for row in rows}
 
 
-def _column_or_default(columns: set[str], name: str, default: str) -> str:
-    """Returns the SQL column ``t.<name>`` if it exists, else ``default``."""
-    return f"t.{name}" if name in columns else default
+_STEP_PATTERN = (
+    r"(?i)(?:profilerstep|step|iter|iteration|inference)[#_\s:-]*(\d+)"
+)
 
 
-def _nvtx_ranges(
-    conn: sqlite3.Connection, tables: set[str]
-) -> list[tuple[str, int, int, int]]:
-    """Returns (text, start ns, end ns, globalTid) of every closed NVTX range.
+def _step_pattern_of_texts(
+    texts: list[str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Returns, per distinct NVTX text, whether it names a step and its number.
 
-    Only push/pop and start/end ranges are read when the event type is known.
-    The text comes from the range itself or from ``StringIds``; globalTid is
-    0 when unknown.
+    The pattern is matched with Polars, so the cost does not grow with a
+    Python call per text.
 
     Args:
-        conn: The open export.
-        tables: The names of the export's tables.
+        texts: The distinct texts.
 
     Returns:
-        The ranges in database order; empty without NVTX text.
+        A boolean array (the text matches ``_STEP_RE``) and an int64 array of
+        the matched step number (-1 where there is no match).
     """
-    if "NVTX_EVENTS" not in tables:
-        return []
-    nvtx_columns = _table_columns(conn, "NVTX_EVENTS")
-    thread_expr = "n.globalTid" if "globalTid" in nvtx_columns else "0"
-    if "eventType" in nvtx_columns:
-        event_type_filter = f" AND n.eventType IN {_NVTX_RANGE_EVENT_TYPES}"
-    else:
-        event_type_filter = ""
-    where_clause = (
-        f"WHERE n.end IS NOT NULL AND n.end > n.start{event_type_filter}"
-    )
-    if "textId" in nvtx_columns and "StringIds" in tables:
-        if "text" in nvtx_columns:
-            text_expr = "COALESCE(n.text, s.value, '')"
-        else:
-            text_expr = "COALESCE(s.value, '')"
-        sql = (
-            f"SELECT {text_expr}, n.start, n.end, {thread_expr} "
-            "FROM NVTX_EVENTS n LEFT JOIN StringIds s ON n.textId = s.id "
-            f"{where_clause}"
-        )
-    elif "text" in nvtx_columns:
-        sql = (
-            f"SELECT COALESCE(n.text, ''), n.start, n.end, {thread_expr} "
-            f"FROM NVTX_EVENTS n {where_clause}"
-        )
-    else:
-        return []
-    return [
-        (str(row[0]), int(row[1]), int(row[2]), int(row[3] or 0))
-        for row in conn.execute(sql).fetchall()
-    ]
+    digits = pl.Series(texts, dtype=pl.String).str.extract(_STEP_PATTERN, 1)
+    is_step = digits.is_not_null().to_numpy()
+    number = digits.cast(pl.Int64, strict=False).fill_null(-1).to_numpy().copy()
+    # Digits the cast rejects (non-ASCII ones) are read by Python.
+    for code in np.flatnonzero(is_step & (number < 0)).tolist():
+        match = _STEP_RE.search(texts[code])
+        number[code] = int(match.group(1)) if match else -1
+    return is_step, number
 
 
-def _gpu_event_row(
-    name: str,
-    category: str,
-    start_ns: int,
-    end_ns: int,
-    nbytes: int,
-    stream: int,
-    device: int,
-    correlation_id: int,
-) -> dict[str, object]:
-    """Builds one row of the GPU activities frame."""
+def _ranges_by_thread(
+    starts: np.ndarray, ends: np.ndarray, threads: np.ndarray
+) -> dict[int, intervals.ThreadRanges]:
+    """Builds the nested ranges of every thread; a range's id is its index."""
+    if len(starts) == 0:
+        return {}
+    by_thread = np.argsort(threads, kind="stable")
+    thread_ids, first = np.unique(threads[by_thread], return_index=True)
     return {
-        "name": name,
-        "category": category,
-        "start_ns": start_ns,
-        "end_ns": end_ns,
-        "bytes": nbytes,
-        "stream": stream,
-        "device": device,
-        "correlation_id": correlation_id,
+        int(thread_id): intervals.build_thread_ranges_arrays(
+            starts[members], ends[members], members
+        )
+        for thread_id, members in zip(
+            thread_ids.tolist(), np.split(by_thread, first[1:]), strict=True
+        )
     }
 
 
-def _gpu_events(conn: sqlite3.Connection, tables: set[str]) -> pl.DataFrame:
-    """Returns the kernels, memcpys and memsets of an export.
-
-    Each activity carries its device, stream and the correlation id of its
-    launching API call. Activities that do not end after they start are
-    skipped; kernels with "nccl" in their name are ``comm``, other kernels
-    ``compute`` and copies and sets ``memcpy``.
-
-    Args:
-        conn: The open export.
-        tables: The names of the export's tables.
-
-    Returns:
-        One row per activity: kernels, then memcpys, then memsets.
-    """
-    has_string_ids = "StringIds" in tables
-    rows: list[dict[str, object]] = []
-
-    if "CUPTI_ACTIVITY_KIND_KERNEL" in tables:
-        kernel_columns = _table_columns(conn, "CUPTI_ACTIVITY_KIND_KERNEL")
-        name_column = (
-            "demangledName"
-            if "demangledName" in kernel_columns
-            else "shortName"
-        )
-        if has_string_ids:
-            name_expr = f"COALESCE(s.value, CAST(t.{name_column} AS TEXT))"
-            join_clause = f"LEFT JOIN StringIds s ON t.{name_column} = s.id"
-        else:
-            name_expr = f"CAST(t.{name_column} AS TEXT)"
-            join_clause = ""
-        device_expr = _column_or_default(kernel_columns, "deviceId", "0")
-        stream_expr = _column_or_default(kernel_columns, "streamId", "0")
-        correlation_expr = _column_or_default(
-            kernel_columns, "correlationId", "-1"
-        )
-        sql = (
-            f"SELECT {name_expr}, t.start, t.end, {device_expr}, "
-            f"{stream_expr}, {correlation_expr} "
-            f"FROM CUPTI_ACTIVITY_KIND_KERNEL t {join_clause} "
-            "WHERE t.end > t.start"
-        )
-        for row in conn.execute(sql):
-            name, start_ns, end_ns, device, stream, correlation_id = row
-            category = "comm" if "nccl" in str(name).lower() else "compute"
-            rows.append(
-                _gpu_event_row(
-                    name=str(name),
-                    category=category,
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    nbytes=0,
-                    stream=stream,
-                    device=device,
-                    correlation_id=correlation_id,
-                )
-            )
-
-    if "CUPTI_ACTIVITY_KIND_MEMCPY" in tables:
-        memcpy_columns = _table_columns(conn, "CUPTI_ACTIVITY_KIND_MEMCPY")
-        copy_kind_expr = _column_or_default(memcpy_columns, "copyKind", "0")
-        bytes_expr = _column_or_default(memcpy_columns, "bytes", "0")
-        device_expr = _column_or_default(memcpy_columns, "deviceId", "0")
-        stream_expr = _column_or_default(memcpy_columns, "streamId", "0")
-        correlation_expr = _column_or_default(
-            memcpy_columns, "correlationId", "-1"
-        )
-        sql = (
-            f"SELECT {copy_kind_expr}, t.start, t.end, {bytes_expr}, "
-            f"{device_expr}, {stream_expr}, {correlation_expr} "
-            "FROM CUPTI_ACTIVITY_KIND_MEMCPY t WHERE t.end > t.start"
-        )
-        for row in conn.execute(sql):
-            (
-                copy_kind,
-                start_ns,
-                end_ns,
-                nbytes,
-                device,
-                stream,
-                correlation_id,
-            ) = row
-            rows.append(
-                _gpu_event_row(
-                    name=_MEMCPY_NAME_BY_KIND.get(
-                        int(copy_kind or 0), "Memcpy_Other"
-                    ),
-                    category="memcpy",
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    nbytes=nbytes,
-                    stream=stream,
-                    device=device,
-                    correlation_id=correlation_id,
-                )
-            )
-
-    if "CUPTI_ACTIVITY_KIND_MEMSET" in tables:
-        memset_columns = _table_columns(conn, "CUPTI_ACTIVITY_KIND_MEMSET")
-        bytes_expr = _column_or_default(memset_columns, "bytes", "0")
-        device_expr = _column_or_default(memset_columns, "deviceId", "0")
-        stream_expr = _column_or_default(memset_columns, "streamId", "0")
-        correlation_expr = _column_or_default(
-            memset_columns, "correlationId", "-1"
-        )
-        sql = (
-            f"SELECT t.start, t.end, {bytes_expr}, {device_expr}, "
-            f"{stream_expr}, {correlation_expr} "
-            "FROM CUPTI_ACTIVITY_KIND_MEMSET t WHERE t.end > t.start"
-        )
-        for row in conn.execute(sql):
-            start_ns, end_ns, nbytes, device, stream, correlation_id = row
-            rows.append(
-                _gpu_event_row(
-                    name="Memset",
-                    category="memcpy",
-                    start_ns=start_ns,
-                    end_ns=end_ns,
-                    nbytes=nbytes,
-                    stream=stream,
-                    device=device,
-                    correlation_id=correlation_id,
-                )
-            )
-
-    return pl.DataFrame(rows, schema=_GPU_EVENTS_SCHEMA)
-
-
-def _launch_info(conn: sqlite3.Connection, tables: set[str]) -> pl.DataFrame:
-    """Returns the launching thread and time of each correlation id.
-
-    The data comes from the CUDA runtime table; the first row of a repeated
-    correlation id wins.
-
-    Args:
-        conn: The open export.
-        tables: The names of the export's tables.
-
-    Returns:
-        ``correlation_id``, ``launch_thread_id`` and ``launch_ns`` columns;
-        empty if the runtime table or its needed columns are missing.
-    """
-    empty = pl.DataFrame(schema=_LAUNCHES_SCHEMA)
-    if "CUPTI_ACTIVITY_KIND_RUNTIME" not in tables:
-        return empty
-    runtime_columns = _table_columns(conn, "CUPTI_ACTIVITY_KIND_RUNTIME")
-    if (
-        "correlationId" not in runtime_columns
-        or "globalTid" not in runtime_columns
-    ):
-        return empty
-    rows = conn.execute(
-        "SELECT correlationId, globalTid, start "
-        "FROM CUPTI_ACTIVITY_KIND_RUNTIME"
-    ).fetchall()
-    launches = pl.DataFrame(rows, schema=empty.schema, orient="row")
-    return launches.unique(subset="correlation_id", keep="first")
-
-
-def _range_starts(
-    ranges_by_thread: dict[int, list[tuple[int, int, int]]], count: int
-) -> np.ndarray:
-    """Returns the start ns of every range, indexed by its global range id."""
-    starts = np.zeros(count, dtype=np.int64)
-    for ranges in ranges_by_thread.values():
-        for start_ns, _, range_id in ranges:
-            starts[range_id] = start_ns
-    return starts
-
-
 def _label_events(
-    events: pl.DataFrame,
-    launches: pl.DataFrame,
-    nvtx: list[tuple[str, int, int, int]],
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Attaches ``step``/``scope`` to every GPU activity of one report.
+    columns: dict[str, Any], order: np.ndarray
+) -> tuple[np.ndarray, pl.Series | None, np.ndarray | None, pl.DataFrame]:
+    """Finds the step and NVTX scope of every GPU activity of one report.
 
     Named NVTX ranges matching a step pattern (``ProfilerStep#N``, ``step``,
     ``iter``, ...) are steps, and all other named ranges are scopes. Without
@@ -494,132 +273,123 @@ def _label_events(
     launching thread at launch time (see intervals.assign_ranges).
 
     Args:
-        events: The report's GPU activities (see _gpu_events).
-        launches: The launch thread and time per correlation id.
-        nvtx: (text, start ns, end ns, globalTid) of the NVTX ranges.
+        columns: The report as read by ``native.read_nsys_sqlite``.
+        order: The order of the activities, as indices into the columns.
 
     Returns:
-        The activities with ``step`` (-1 if none), ``scope`` and
-        ``scope_path`` columns, and the step ranges of the report sorted by
-        start. With no activities or no NVTX ranges, ``step`` is -1 and
-        ``scope`` "" everywhere (no ``scope_path``) and there are no step
-        ranges.
+        The step of each activity (-1 if none), its scope as a String series
+        and its scope path (both None when the report has no NVTX ranges at
+        all), and the step ranges of the report sorted by start. With no
+        activities or no NVTX ranges there are no step ranges.
     """
     empty_steps = pl.DataFrame(schema=_STEP_RANGES_SCHEMA)
-    if events.height == 0 or not nvtx:
-        unlabelled = events.with_columns(
-            pl.lit(-1, dtype=pl.Int32).alias("step"), pl.lit("").alias("scope")
-        )
-        return unlabelled, empty_steps
+    count = len(order)
+    if count == 0 or len(columns["nvtx_start"]) == 0:
+        return np.full(count, -1, dtype=np.int32), None, None, empty_steps
 
-    named_ranges = [nvtx_range for nvtx_range in nvtx if nvtx_range[0]]
-    is_step_range = [bool(_STEP_RE.search(text)) for text, *_ in named_ranges]
+    texts: list[str] = columns["nvtx_texts"]
+    code = columns["nvtx_text"]
+    named = np.array([bool(text) for text in texts], dtype=bool)[code]
+    code = code[named]
+    start = columns["nvtx_start"][named]
+    end = columns["nvtx_end"][named]
+    thread = columns["nvtx_thread"][named]
+
+    text_is_step, text_number = _step_pattern_of_texts(texts)
+    is_step = text_is_step[code]
+    number = text_number[code]
     # Without explicit step markers, repeated ExecutionContext/enqueue ranges
     # (TensorRT) delimit the steps.
-    if not any(is_step_range):
-        is_step_range = [
-            ("executioncontext" in text.lower() or "enqueue" in text.lower())
-            for text, *_ in named_ranges
-        ]
+    if not is_step.any():
+        text_is_step = np.array(
+            [
+                (
+                    "executioncontext" in text.lower()
+                    or "enqueue" in text.lower()
+                )
+                for text in texts
+            ],
+            dtype=bool,
+        )
+        is_step = text_is_step[code]
 
-    # (step id, start ns, end ns) of every step range.
-    step_rows: list[tuple[int, int, int]] = []
-    # Thread -> (start ns, end ns, index into step_ids / scope_names).
-    step_ranges_by_thread: dict[int, list[tuple[int, int, int]]] = {}
-    scope_ranges_by_thread: dict[int, list[tuple[int, int, int]]] = {}
-    step_ids: list[int] = []
-    scope_names: list[str] = []
-    for (text, start_ns, end_ns, thread_id), is_step in zip(
-        named_ranges, is_step_range, strict=True
-    ):
-        if is_step:
-            step_match = _STEP_RE.search(text)
-            step_id = int(step_match.group(1)) if step_match else len(step_ids)
-            step_ranges_by_thread.setdefault(thread_id, []).append(
-                (start_ns, end_ns, len(step_ids))
-            )
-            step_ids.append(step_id)
-            step_rows.append((step_id, start_ns, end_ns))
-        else:
-            scope_ranges_by_thread.setdefault(thread_id, []).append(
-                (start_ns, end_ns, len(scope_names))
-            )
-            scope_names.append(text)
+    step_start, step_end, step_thread = (
+        start[is_step],
+        end[is_step],
+        thread[is_step],
+    )
+    step_count = len(step_start)
+    # A step without a number in its text takes its place among the steps.
+    step_ids = np.where(
+        number[is_step] >= 0, number[is_step], np.arange(step_count)
+    )
+    scope_start, scope_end, scope_thread = (
+        start[~is_step],
+        end[~is_step],
+        thread[~is_step],
+    )
+    scope_code = code[~is_step]
 
-    events_with_launch = events.join(launches, on="correlation_id", how="left")
-    launch_ns = (
-        events_with_launch["launch_ns"]
-        .cast(pl.Float64)
-        .fill_null(float("nan"))
-        .to_numpy()
-    )
-    launch_thread_ids = (
-        events_with_launch["launch_thread_id"].fill_null(-1).to_numpy()
-    )
-    gpu_start_ns = events_with_launch["start_ns"].to_numpy()
+    launch_ns = columns["gpu_launch_ns"][order]
+    launch_thread_ids = columns["gpu_launch_thread"][order]
+    gpu_start_ns = columns["gpu_start"][order]
     # Launch time, or the GPU start time where the launch is unknown.
     issue_ns = np.where(np.isnan(launch_ns), gpu_start_ns, launch_ns).astype(
         np.int64
     )
 
-    step_ranges = {
-        thread_id: intervals.build_thread_ranges(list(ranges))
-        for thread_id, ranges in step_ranges_by_thread.items()
-    }
-    scope_ranges = {
-        thread_id: intervals.build_thread_ranges(list(ranges))
-        for thread_id, ranges in scope_ranges_by_thread.items()
-    }
+    step_ranges = _ranges_by_thread(step_start, step_end, step_thread)
+    scope_ranges = _ranges_by_thread(scope_start, scope_end, scope_thread)
     step_range_ids = intervals.assign_ranges(
         step_ranges,
-        _range_starts(step_ranges_by_thread, len(step_ids)),
+        step_start,
         issue_ns.astype(np.float64),
         launch_thread_ids,
         gpu_start_ns,
     )
     scope_range_ids = intervals.assign_ranges(
         scope_ranges,
-        _range_starts(scope_ranges_by_thread, len(scope_names)),
+        scope_start,
         issue_ns.astype(np.float64),
         launch_thread_ids,
         gpu_start_ns,
     )
 
     # Range id -1 (no enclosing range) indexes the trailing -1 / "".
-    event_steps = np.array(step_ids + [-1], dtype=np.int32)[step_range_ids]
-    event_scopes = np.array(scope_names + [""], dtype=object)[scope_range_ids]
-    event_scope_paths = intervals.range_paths(
-        scope_ranges, scope_range_ids, scope_names
+    event_steps = np.append(step_ids, -1).astype(np.int32)[step_range_ids]
+    scope_texts = pl.Series([*texts, ""], dtype=pl.String)
+    event_scopes = scope_texts.gather(
+        np.append(scope_code, len(texts))[scope_range_ids]
     )
-    labelled = events_with_launch.drop(
-        "launch_thread_id", "launch_ns"
-    ).with_columns(
-        pl.Series("step", event_steps, dtype=pl.Int32),
-        pl.Series("scope", event_scopes, dtype=pl.String),
-        pl.Series("scope_path", event_scope_paths, dtype=pl.String),
+    event_scope_paths = intervals.range_paths(
+        scope_ranges,
+        scope_range_ids,
+        intervals.CodedNames(texts, scope_code),
     )
     steps = (
         pl.DataFrame(
             {
-                "step": [row[0] for row in step_rows],
-                "start_ns": [row[1] for row in step_rows],
-                "end_ns": [row[2] for row in step_rows],
+                "step": step_ids.astype(np.int32),
+                "start_ns": step_start,
+                "end_ns": step_end,
             },
             schema=empty_steps.schema,
         )
         # One row per range; ids may repeat across devices/loops.
-        .unique(subset=["step", "start_ns", "end_ns"])
-        .sort("start_ns")
+        .unique(subset=["step", "start_ns", "end_ns"], maintain_order=True)
+        .sort("start_ns", maintain_order=True)
     )
-    return labelled, steps
+    return event_steps, event_scopes, event_scope_paths, steps
 
 
-def _gpu_metrics(conn: sqlite3.Connection, tables: set[str]) -> pl.DataFrame:
-    """Returns the GPU metric samples of an export; zero values are kept.
+def _text_gpu_metrics(
+    conn: sqlite3.Connection, tables: set[str]
+) -> pl.DataFrame:
+    """Returns the GPU metric samples an export keeps as dict-strings.
 
-    Reads the modern ``GPU_METRICS`` table joined with
-    ``TARGET_INFO_GPU_METRICS``, the legacy ``GPU_METRICS`` table of
-    dict-strings, or ``GENERIC_EVENTS``/``GENERIC_EVENT`` dict-strings.
+    Reads the legacy ``GPU_METRICS`` table of dict-strings, or
+    ``GENERIC_EVENTS``/``GENERIC_EVENT`` dict-strings. The modern table form
+    is read by the native reader.
     Dict-strings that do not parse are skipped; a legacy sample without a
     timestamp gets its row index.
 
@@ -651,25 +421,7 @@ def _gpu_metrics(conn: sqlite3.Connection, tables: set[str]) -> pl.DataFrame:
 
     if "GPU_METRICS" in tables:
         metric_columns = _table_columns(conn, "GPU_METRICS")
-        if "metricId" in metric_columns and "TARGET_INFO_GPU_METRICS" in tables:
-            timestamp_column = (
-                "timestamp" if "timestamp" in metric_columns else "rawTimestamp"
-            )
-            rows = conn.execute(
-                f"SELECT t.metricName, g.{timestamp_column}, g.value "
-                "FROM GPU_METRICS g JOIN TARGET_INFO_GPU_METRICS t "
-                "ON g.metricId = t.metricId"
-            ).fetchall()
-            for metric_name, timestamp, value in rows:
-                samples.append(
-                    {
-                        "metric_name": str(metric_name),
-                        "timestamp_ns": int(timestamp or 0),
-                        "value": float(value),
-                        "rank": 0,
-                    }
-                )
-        elif "value" in metric_columns or "data" in metric_columns:
+        if "value" in metric_columns or "data" in metric_columns:
             value_column = "value" if "value" in metric_columns else "data"
             timestamp_expr = (
                 "rawTimestamp" if "rawTimestamp" in metric_columns else "0"
@@ -696,39 +448,70 @@ def _gpu_metrics(conn: sqlite3.Connection, tables: set[str]) -> pl.DataFrame:
     return pl.DataFrame(schema=GPU_METRICS_SCHEMA)
 
 
-def _summary_by_name(
-    conn: sqlite3.Connection, tables: set[str], table: str, schema: pl.Schema
-) -> pl.DataFrame:
-    """Returns the total duration and call count per name of an API table.
-
-    Args:
-        conn: The open export.
-        tables: The names of the export's tables.
-        table: The API table to summarise, with ``nameId``, ``start`` and
-            ``end`` columns.
-        schema: The schema of the result.
-
-    Returns:
-        One row per API name (``"unknown"`` if not in ``StringIds``); empty
-        if the table or ``StringIds`` is missing.
-    """
-    if table not in tables or "StringIds" not in tables:
-        return pl.DataFrame(schema=schema)
-    rows = conn.execute(
-        "SELECT COALESCE(s.value, 'unknown'), SUM(r.end - r.start), COUNT(*) "
-        f"FROM {table} r LEFT JOIN StringIds s ON r.nameId = s.id "
-        "WHERE r.end > r.start GROUP BY 1"
-    ).fetchall()
+def _summary_frame(summary: dict[str, Any], schema: pl.Schema) -> pl.DataFrame:
+    """Builds a total-duration and call-count table per API name."""
     return pl.DataFrame(
-        [
-            {
-                "name": str(row[0]),
-                "duration_ns": int(row[1]),
-                "calls": int(row[2]),
-            }
-            for row in rows
-        ],
+        {
+            "name": pl.Series(summary["names"], dtype=pl.String),
+            "duration_ns": summary["duration_ns"],
+            "calls": summary["calls"],
+        },
         schema=schema,
+    )
+
+
+def _gpu_events_frame(
+    columns: dict[str, Any], order: np.ndarray
+) -> pl.DataFrame:
+    """Builds the GPU activities, in the given order, with demangled names."""
+    codes = columns["gpu_name"][order]
+    # Demangling and classifying are per name, so they run on the distinct
+    # names and are spread over the activities afterwards.
+    used_codes, name_rows = np.unique(codes, return_inverse=True)
+    names: list[str] = columns["names"]
+    distinct = alignment.enrich_ops_df(
+        pl.DataFrame(
+            {
+                "name": pl.Series(
+                    [names[code] for code in used_codes.tolist()],
+                    dtype=pl.String,
+                )
+            }
+        ),
+        "name",
+    )
+    return pl.DataFrame(
+        {
+            "name": distinct["name"].gather(name_rows),
+            "category": pl.Series(
+                columns["gpu_category"][order]
+            ).replace_strict(GPU_CATEGORY_NAMES, return_dtype=pl.String),
+            "start_ns": columns["gpu_start"][order],
+            "end_ns": columns["gpu_end"][order],
+            "bytes": columns["gpu_bytes"][order],
+            "stream": columns["gpu_stream"][order],
+            "device": columns["gpu_device"][order],
+        }
+    ).with_columns(
+        distinct["demangled_name"].gather(name_rows),
+        distinct["canonical_name"].gather(name_rows),
+        distinct["op_family"].gather(name_rows),
+    )
+
+
+def _table_gpu_metrics(columns: dict[str, Any]) -> pl.DataFrame:
+    """Builds the GPU metric samples the native reader found in the table."""
+    names: list[str] = columns["metric_names"]
+    return pl.DataFrame(
+        {
+            "metric_name": pl.Series(names, dtype=pl.String).gather(
+                columns["metric_name"]
+            ),
+            "timestamp_ns": columns["metric_timestamp"],
+            "value": columns["metric_value"],
+            "rank": np.zeros(len(columns["metric_name"]), dtype=np.int32),
+        },
+        schema=GPU_METRICS_SCHEMA,
     )
 
 
@@ -743,36 +526,42 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         rank: The rank written to the kernels, steps and gpu_metrics rows.
 
     Returns:
-        The ``kernels``, ``steps``, ``runtime``, ``osrt`` and
-        ``gpu_metrics`` frames, by table name.
+        The ``kernels``, ``steps``, ``runtime``, ``osrt``, ``gpu_metrics``
+        and ``network_ops`` frames, by table name.
     """
+    columns = native.read_nsys_sqlite(str(db_path))
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         tables = _list_tables(conn)
-        events = _gpu_events(conn, tables)
-        if events.height:
-            events = alignment.enrich_ops_df(events.sort("start_ns"), "name")
-        launches = _launch_info(conn, tables)
-        nvtx = _nvtx_ranges(conn, tables)
-        labelled, steps = _label_events(events, launches, nvtx)
-        runtime = _summary_by_name(
-            conn, tables, "CUPTI_ACTIVITY_KIND_RUNTIME", RUNTIME_SCHEMA
-        )
-        osrt = _summary_by_name(conn, tables, "OSRT_API", OSRT_SCHEMA)
-        gpu_metrics = _gpu_metrics(conn, tables).with_columns(
-            pl.lit(rank, dtype=pl.Int32).alias("rank")
-        )
+        runtime = _summary_frame(columns["runtime"], RUNTIME_SCHEMA)
+        osrt = _summary_frame(columns["osrt"], OSRT_SCHEMA)
+        gpu_metrics = (
+            _table_gpu_metrics(columns)
+            if columns["has_metrics"]
+            else _text_gpu_metrics(conn, tables)
+        ).with_columns(pl.lit(rank, dtype=pl.Int32).alias("rank"))
     finally:
         conn.close()
 
-    if labelled.height:
-        kernels = conform(
-            labelled.with_columns(
-                (pl.col("end_ns") - pl.col("start_ns")).alias("duration_ns"),
-                pl.lit(rank).alias("rank"),
-            ),
-            KERNELS_SCHEMA,
+    # Activities in start order (ties keep their table order).
+    order = np.argsort(columns["gpu_start"], kind="stable")
+    event_steps, event_scopes, event_scope_paths, steps = _label_events(
+        columns, order
+    )
+    if len(order):
+        events = _gpu_events_frame(columns, order).with_columns(
+            pl.Series("step", event_steps, dtype=pl.Int32),
+            (pl.col("end_ns") - pl.col("start_ns")).alias("duration_ns"),
+            pl.lit(rank).alias("rank"),
         )
+        if event_scopes is None:
+            events = events.with_columns(pl.lit("").alias("scope"))
+        else:
+            events = events.with_columns(
+                event_scopes.alias("scope"),
+                pl.Series("scope_path", event_scope_paths, dtype=pl.String),
+            )
+        kernels = conform(events, KERNELS_SCHEMA)
     else:
         kernels = pl.DataFrame(schema=KERNELS_SCHEMA)
 
@@ -799,16 +588,28 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         ),
         STEPS_SCHEMA,
     )
+    with contextlib.closing(
+        sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    ) as host_conn:
+        host_ops = network_ops.host_network_ops(host_conn, tables, rank, steps)
     return {
         "kernels": kernels,
         "steps": steps,
         "runtime": runtime,
         "osrt": osrt,
         "gpu_metrics": gpu_metrics,
+        "network_ops": pl.concat(
+            [
+                network.ops_from_kernels(
+                    kernels, launch_ns=columns["gpu_launch_ns"][order]
+                ),
+                host_ops,
+            ]
+        ),
     }
 
 
-@registry.register_adapter("nsys", version="2.1")
+@registry.register_adapter("nsys", version="2.3")
 class NsysAdapter:
     """Reads Nsight Systems reports and SQLite exports, one per rank.
 
@@ -818,7 +619,7 @@ class NsysAdapter:
     """
 
     format_name = "nsys"
-    version = "2.1"
+    version = "2.3"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file is an Nsight Systems report or export.
@@ -856,8 +657,8 @@ class NsysAdapter:
             out_dir: The directory exports and Parquet tables are written to.
 
         Returns:
-            The paths of the ``kernels``, ``steps``, ``runtime``, ``osrt``
-            and ``gpu_metrics`` Parquet tables, by table name.
+            The paths of the ``kernels``, ``steps``, ``runtime``, ``osrt``,
+            ``gpu_metrics`` and ``network_ops`` Parquet tables, by table name.
 
         Raises:
             RuntimeError: A report has neither ``nsys`` nor an SQLite export.
@@ -890,6 +691,9 @@ class NsysAdapter:
             "kernels": concat_reports("kernels", KERNELS_SCHEMA).sort(
                 ["rank", "start_ns"]
             ),
+            "network_ops": concat_reports(
+                "network_ops", network.NETWORK_OPS_SCHEMA
+            ).sort(["rank", "start_ns"]),
             "steps": concat_reports("steps", STEPS_SCHEMA).sort(
                 ["rank", "start_ns"]
             ),
@@ -897,9 +701,4 @@ class NsysAdapter:
             "osrt": merge_summaries("osrt", OSRT_SCHEMA),
             "gpu_metrics": concat_reports("gpu_metrics", GPU_METRICS_SCHEMA),
         }
-        table_paths: dict[str, pathlib.Path] = {}
-        for table_name, table in merged_tables.items():
-            table_path = out_dir / f"{table_name}.parquet"
-            table.write_parquet(table_path, compression="zstd")
-            table_paths[table_name] = table_path
-        return table_paths
+        return bundle.write_tables(out_dir, merged_tables)

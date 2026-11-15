@@ -20,7 +20,7 @@ _POLL_CALL_PATTERN = "sleep|poll|epoll|select|wait"
     title="OS Runtime Lock & Thread Contention",
     required_formats=("nsys",),
 )
-class OsRuntimeAspect:
+class OsRuntimeAspect(registry.ComparisonAspect):
     """Compares host OS-runtime call time, lock waits and sleeps/polls.
 
     Attributes:
@@ -29,11 +29,6 @@ class OsRuntimeAspect:
         required_formats: Nsight Systems, which records OS-runtime calls.
         any_of_formats: Whether one of ``required_formats`` is enough.
     """
-
-    name = "os_runtime"
-    title = "OS Runtime Lock & Thread Contention"
-    required_formats = ("nsys",)
-    any_of_formats = False
 
     def run(
         self,

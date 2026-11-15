@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import mmap
 import pathlib
-import re
 import struct
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 
+from cta import _native as native
 from cta.adapters.chakra import reader
+from cta.core import bundle
 from cta.core import models
 from cta.core import registry
 
@@ -41,39 +43,6 @@ GOAL_BIN_NODE_DTYPE = np.dtype(
         ("startdeps_apdx", "<u4"),
     ],
     align=False,
-)
-
-_BYTES_PER_UNIT = {"b": 1, "kb": 1024, "mb": 1024**2, "gb": 1024**3}
-_RANK_HEADER_RE = re.compile(r"^rank\s+(\d+)\s*\{?")
-_DEPENDENCY_RE = re.compile(r"^(\S+)\s+(i?requires)\s+(\S+)$")
-
-# Building blocks of the send/recv/calc line patterns.
-_LABEL_PREFIX = r"^(?:(?P<label>[^:\s]+):\s*)?"
-_SIZE = r"(?P<size>\d+)(?P<unit>[kmgt]?b)?"
-_TAG_OPTION = r"(?:\s+tag\s+(?P<tag>\d+))?"
-_CPU_NIC_OPTIONS = r"(?:\s+cpu\s+(?P<cpu>\d+))?(?:\s+nic\s+(?P<nic>\d+))?$"
-
-_SEND_RE = re.compile(
-    _LABEL_PREFIX
-    + r"send\s+"
-    + _SIZE
-    + r"\s+to\s+(?P<peer>\d+)"
-    + _TAG_OPTION
-    + _CPU_NIC_OPTIONS,
-    re.IGNORECASE,
-)
-_RECV_RE = re.compile(
-    _LABEL_PREFIX
-    + r"recv\s+"
-    + _SIZE
-    + r"\s+from\s+(?P<peer>\d+)"
-    + _TAG_OPTION
-    + _CPU_NIC_OPTIONS,
-    re.IGNORECASE,
-)
-_CALC_RE = re.compile(
-    _LABEL_PREFIX + r"calc\s+(?P<duration>\d+)" + _CPU_NIC_OPTIONS,
-    re.IGNORECASE,
 )
 
 
@@ -272,186 +241,76 @@ def _parse_goal_bin(path: pathlib.Path) -> tuple[pl.DataFrame, pl.DataFrame]:
     return nodes, edges
 
 
-def _strip_comments(line: str, in_block_comment: bool) -> tuple[str, bool]:
-    """Removes ``/* */``, ``//`` and ``#`` comments from a stripped line.
-
-    Args:
-        line: The line, without surrounding whitespace.
-        in_block_comment: Whether a ``/*`` comment is open before the line.
-
-    Returns:
-        The remaining code (empty if none) and whether a ``/*`` comment is
-        still open after the line.
-    """
-    if in_block_comment:
-        if "*/" not in line:
-            return "", True
-        line = line.split("*/", 1)[1].strip()
-        in_block_comment = False
-    if "/*" in line:
-        before, after = line.split("/*", 1)
-        if "*/" in after:
-            line = (before + " " + after.split("*/", 1)[1]).strip()
-        else:
-            line = before.strip()
-            in_block_comment = True
-    for comment_token in ("//", "#"):
-        if comment_token in line:
-            line = line.split(comment_token, 1)[0].strip()
-    return line, in_block_comment
+# Codes the native text reader gives to op classes and dependency kinds.
+_OP_CLASSES = {0: "compute", 1: "comm_send", 2: "comm_recv"}
+_COMM_TYPES = {0: "", 1: "SEND", 2: "RECV"}
+_DEPENDENCY_KINDS = {0: "requires", 1: "irequires"}
 
 
-def _comm_op_row(
-    match: re.Match[str], rank: int, node_id: int, op_class: str
-) -> dict[str, object]:
-    """Builds the ``nodes`` row of a matched send or recv line.
-
-    Args:
-        match: The ``_SEND_RE`` or ``_RECV_RE`` match.
-        rank: The rank whose block holds the line.
-        node_id: The node's index within the rank.
-        op_class: ``"comm_send"`` or ``"comm_recv"``.
-
-    Returns:
-        The node row.
-    """
-    is_send = op_class == "comm_send"
-    unit = (match.group("unit") or "b").lower()
-    size_bytes = int(match.group("size")) * _BYTES_PER_UNIT.get(unit, 1)
-    peer = int(match.group("peer"))
-    return {
-        "rank": rank,
-        "node_id": node_id,
-        "name": match.group("label") or op_class,
-        "op_class": op_class,
-        "comm_type": "SEND" if is_send else "RECV",
-        "duration_ns": 0,
-        "size_bytes": size_bytes,
-        "src_rank": rank if is_send else peer,
-        "dst_rank": peer if is_send else rank,
-        "message_tag": int(match.group("tag") or 0),
-        "num_ops": 0,
-    }
-
-
-def _calc_op_row(
-    match: re.Match[str], rank: int, node_id: int
-) -> dict[str, object]:
-    """Builds the ``nodes`` row of a matched calc line."""
-    return {
-        "rank": rank,
-        "node_id": node_id,
-        "name": match.group("label") or "compute",
-        "op_class": "compute",
-        "comm_type": "",
-        "duration_ns": int(match.group("duration")),
-        "size_bytes": 0,
-        "src_rank": -1,
-        "dst_rank": -1,
-        "message_tag": 0,
-        "num_ops": 0,
-    }
-
-
-def _parse_op_line(
-    line: str, rank: int, node_id: int
-) -> tuple[str | None, dict[str, object]] | None:
-    """Parses a send, recv or calc line.
-
-    Args:
-        line: The line, without comments.
-        rank: The rank whose block holds the line.
-        node_id: The id to give the node.
-
-    Returns:
-        The op's label (None if unlabelled) and its ``nodes`` row, or None if
-        the line is not an op.
-    """
-    if send_match := _SEND_RE.match(line):
-        row = _comm_op_row(send_match, rank, node_id, "comm_send")
-        return send_match.group("label"), row
-    if recv_match := _RECV_RE.match(line):
-        row = _comm_op_row(recv_match, rank, node_id, "comm_recv")
-        return recv_match.group("label"), row
-    if calc_match := _CALC_RE.match(line):
-        return calc_match.group("label"), _calc_op_row(
-            calc_match, rank, node_id
-        )
-    return None
+def _names(name_end: np.ndarray, name_bytes: np.ndarray) -> pl.Series:
+    """Returns the op names held as end offsets into one buffer of bytes."""
+    if len(name_end) == 0:
+        return pl.Series([], dtype=pl.String)
+    offsets = np.concatenate(
+        (np.zeros(1, dtype=np.int64), name_end.astype(np.int64))
+    )
+    array = pa.Array.from_buffers(
+        pa.large_string(),
+        len(name_end),
+        [None, pa.py_buffer(offsets), pa.py_buffer(name_bytes)],
+    )
+    return pl.Series(pl.from_arrow(array))
 
 
 def parse_goal_text(path: pathlib.Path) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Parses a GOAL text schedule into ``nodes`` and ``edges`` frames.
 
     Nodes are numbered per rank in file order. Labels are scoped to their rank
-    block, and dependencies naming an unknown label are dropped.
+    block, and dependencies naming an unknown label are dropped. The file is
+    cut at rank headers and the pieces are parsed in parallel.
 
     Args:
         path: The .goal file to read.
 
     Returns:
         The ``nodes`` and ``edges`` frames.
+
+    Raises:
+        ValueError: If the text is not UTF-8, or holds a number too large for
+            its column.
     """
-    node_rows: list[dict[str, object]] = []
-    edge_rows: list[dict[str, object]] = []
-    rank = 0
-    next_node_id = 0
-    node_ids_by_label: dict[str, int] = {}
-    in_block_comment = False
-
-    with path.open("r", encoding="utf-8", buffering=8 * 1024 * 1024) as fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line:
-                continue
-            line, in_block_comment = _strip_comments(line, in_block_comment)
-            if not line or line in ("{", "}") or line.startswith("num_ranks"):
-                if line == "}":
-                    node_ids_by_label.clear()
-                continue
-
-            rank_match = _RANK_HEADER_RE.match(line)
-            if rank_match:
-                rank = int(rank_match.group(1))
-                next_node_id = 0
-                node_ids_by_label.clear()
-                continue
-
-            dependency_match = _DEPENDENCY_RE.match(line)
-            if dependency_match:
-                dst_label, dep_kind, src_label = dependency_match.groups()
-                if (
-                    src_label in node_ids_by_label
-                    and dst_label in node_ids_by_label
-                ):
-                    edge_rows.append(
-                        {
-                            "rank": rank,
-                            "src_id": node_ids_by_label[src_label],
-                            "dst_id": node_ids_by_label[dst_label],
-                            "dep_kind": dep_kind,
-                        }
-                    )
-                continue
-
-            parsed_op = _parse_op_line(line, rank, next_node_id)
-            if parsed_op is None:
-                continue
-            label, row = parsed_op
-            if label:
-                node_ids_by_label[label] = next_node_id
-            node_rows.append(row)
-            next_node_id += 1
-
-    nodes = (
-        pl.DataFrame(node_rows, schema=reader.NODES_SCHEMA)
-        if node_rows
-        else pl.DataFrame(schema=reader.NODES_SCHEMA)
+    columns = native.read_goal_text(str(path))
+    op_class = pl.Series(columns["op_class"])
+    nodes = pl.DataFrame(
+        {
+            "rank": columns["rank"],
+            "node_id": columns["node_id"],
+            "name": _names(columns["name_end"], columns["name_bytes"]),
+            "op_class": op_class.replace_strict(
+                _OP_CLASSES, return_dtype=pl.String
+            ),
+            "comm_type": op_class.replace_strict(
+                _COMM_TYPES, return_dtype=pl.String
+            ),
+            "duration_ns": columns["duration_ns"],
+            "size_bytes": columns["size_bytes"],
+            "src_rank": columns["src_rank"],
+            "dst_rank": columns["dst_rank"],
+            "message_tag": columns["message_tag"],
+            "num_ops": np.zeros(len(op_class), dtype=np.uint64),
+        },
+        schema=reader.NODES_SCHEMA,
     )
-    edges = (
-        pl.DataFrame(edge_rows, schema=reader.EDGES_SCHEMA)
-        if edge_rows
-        else pl.DataFrame(schema=reader.EDGES_SCHEMA)
+    edges = pl.DataFrame(
+        {
+            "rank": columns["edge_rank"],
+            "src_id": columns["edge_src"],
+            "dst_id": columns["edge_dst"],
+            "dep_kind": pl.Series(columns["edge_kind"]).replace_strict(
+                _DEPENDENCY_KINDS, return_dtype=pl.String
+            ),
+        },
+        schema=reader.EDGES_SCHEMA,
     )
     return nodes, edges
 
@@ -544,14 +403,11 @@ class GoalAdapter:
         )
         traffic = _p2p_traffic(all_nodes)
 
-        nodes_path = out_dir / "nodes.parquet"
-        edges_path = out_dir / "edges.parquet"
-        traffic_path = out_dir / "traffic.parquet"
-        all_nodes.write_parquet(nodes_path, compression="zstd")
-        all_edges.write_parquet(edges_path, compression="zstd")
-        traffic.write_parquet(traffic_path, compression="zstd")
-        return {
-            "nodes": nodes_path,
-            "edges": edges_path,
-            "traffic": traffic_path,
-        }
+        return bundle.write_tables(
+            out_dir,
+            {
+                "nodes": all_nodes,
+                "edges": all_edges,
+                "traffic": traffic,
+            },
+        )
