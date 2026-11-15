@@ -58,14 +58,25 @@ def render(
         fig = plt.figure(
             figsize=(fig_width, fig_height), constrained_layout=True
         )
-        axes_grid = (
-            fig.subplots(
-                chart.rows, chart.cols, squeeze=False, sharey=chart.sharey
+        if any(panel.polar for panel in chart.panels):
+            flat_axes = [
+                fig.add_subplot(
+                    chart.rows,
+                    chart.cols,
+                    position + 1,
+                    projection="polar" if panel.polar else None,
+                )
+                for position, panel in enumerate(chart.panels)
+            ]
+        else:
+            axes_grid = (
+                fig.subplots(
+                    chart.rows, chart.cols, squeeze=False, sharey=chart.sharey
+                )
+                if len(chart.panels) > 1
+                else [[fig.add_subplot(111)]]
             )
-            if len(chart.panels) > 1
-            else [[fig.add_subplot(111)]]
-        )
-        flat_axes = [ax for row in axes_grid for ax in row]
+            flat_axes = [ax for row in axes_grid for ax in row]
         for ax, panel in zip(flat_axes, chart.panels, strict=False):
             _draw_panel(ax, panel, palette_colors, fig)
         for ax in flat_axes[len(chart.panels) :]:
@@ -99,10 +110,13 @@ def _draw_panel(
     """Draws one panel's traces, axis settings and legend on ``ax``."""
     is_labelled = False
     box_traces = [trace for trace in panel.traces if trace.mark == "box"]
+    violin_traces = [trace for trace in panel.traces if trace.mark == "violin"]
     bar_traces = [trace for trace in panel.traces if trace.mark == "bar"]
     barh_traces = [trace for trace in panel.traces if trace.mark == "barh"]
     if box_traces:
         _draw_boxes(ax, box_traces, palette_colors)
+    if violin_traces:
+        _draw_violins(ax, violin_traces, palette_colors)
     if bar_traces:
         _draw_bars(
             ax,
@@ -126,7 +140,7 @@ def _draw_panel(
     # Traces without their own colour or palette index take the next colour.
     color_index = 0
     for trace in panel.traces:
-        if trace.mark in ("box", "bar", "barh"):
+        if trace.mark in ("box", "violin", "bar", "barh"):
             continue
         color = _color(trace, color_index, palette_colors)
         if trace.color is None and "ci" not in trace.style:
@@ -213,7 +227,13 @@ def _draw_trace(
             alpha=style.get("alpha", 1.0),
         )
     elif trace.mark == "scatter":
+        lanes = style.get("lanes")
+        if lanes and y is not None:
+            row_of = {lane: i for i, lane in enumerate(lanes)}
+            y = np.array([row_of[value] for value in y], dtype=float)
         _draw_scatter(ax, trace, x, y, color, label, panel, fig)
+    elif trace.mark == "radar":
+        _draw_radar(ax, trace, color, label)
     elif trace.mark == "hist":
         ax.hist(
             np.asarray(trace.y, dtype=float),
@@ -254,9 +274,14 @@ def _draw_trace(
             label=label,
         )
     elif trace.mark == "text":
-        for x_value, y_value, text in zip(
-            trace.x or [], trace.y or [], trace.text or [], strict=False
-        ):
+        xs = trace.x if trace.x is not None else []
+        ys = trace.y if trace.y is not None else []
+        lanes = style.get("lanes")
+        if lanes:
+            row_of = {lane: i for i, lane in enumerate(lanes)}
+            ys = [row_of[value] for value in ys]
+        texts = trace.text if trace.text is not None else []
+        for x_value, y_value, text in zip(xs, ys, texts, strict=False):
             ax.annotate(
                 text,
                 (x_value, y_value),
@@ -312,6 +337,29 @@ def _draw_scatter(
         fig.colorbar(points, ax=ax, label=panel.colorbar)
 
 
+def _draw_radar(
+    ax: matplotlib_axes.Axes, trace: ir.Trace, color: Any, label: str | None
+) -> None:
+    """Draws a radar trace as a filled polygon on polar axes.
+
+    The axis names are ``trace.x`` and the values ``trace.y``; the radius
+    runs from 0 to ``style["rmax"]`` (default 1).
+    """
+    names = [str(value) for value in (trace.x or [])]
+    values = [float(value) for value in (trace.y or [])]
+    if not names:
+        return
+    angles = np.linspace(0, 2 * np.pi, len(names), endpoint=False)
+    closed_angles = np.append(angles, angles[0])
+    closed_values = np.append(values, values[0])
+    ax.plot(closed_angles, closed_values, color=color, lw=1.4, label=label)
+    ax.fill(closed_angles, closed_values, color=color, alpha=0.18)
+    ax.set_xticks(angles)
+    ax.set_xticklabels(names, fontsize=6)
+    ax.set_ylim(0, float(trace.style.get("rmax", 1.0)))
+    ax.tick_params(axis="y", labelsize=5)
+
+
 def _draw_heatmap(
     ax: matplotlib_axes.Axes,
     trace: ir.Trace,
@@ -360,6 +408,49 @@ def _draw_boxes(
     for k, patch in enumerate(box_artists["boxes"]):
         patch.set_facecolor(_color(box_traces[k], k, palette_colors))
         patch.set_alpha(0.75)
+
+
+def _draw_violins(
+    ax: matplotlib_axes.Axes,
+    violin_traces: list[ir.Trace],
+    palette_colors: tuple[str, ...],
+) -> None:
+    """Draws all violin traces of a panel as one violin plot."""
+    violin_values = [
+        np.asarray(
+            [
+                v
+                for v in (trace.y if trace.y is not None else [])
+                if v is not None and np.isfinite(v)
+            ],
+            dtype=float,
+        )
+        for trace in violin_traces
+    ]
+    positions = list(range(1, len(violin_traces) + 1))
+    parts = ax.violinplot(
+        violin_values,
+        positions=positions,
+        showmeans=False,
+        showmedians=True,
+        showextrema=True,
+    )
+    bodies = cast(list[Any], parts["bodies"])
+    for k, body in enumerate(bodies):
+        color = _color(violin_traces[k], k, palette_colors)
+        body.set_facecolor(color)
+        body.set_edgecolor(color)
+        body.set_alpha(0.75)
+    spine_color = (
+        ax.spines["left"].get_edgecolor() if "left" in ax.spines else "#555555"
+    )
+    for key in ("cbars", "cmins", "cmaxes", "cmedians"):
+        if key in parts:
+            line_collection = cast(Any, parts[key])
+            line_collection.set_edgecolor(spine_color)
+            line_collection.set_linewidth(1.0)
+    ax.set_xticks(positions)
+    ax.set_xticklabels([trace.name or "" for trace in violin_traces])
 
 
 def _finish_axes(

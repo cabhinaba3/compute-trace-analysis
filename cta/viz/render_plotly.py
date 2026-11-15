@@ -63,12 +63,24 @@ def render(
     n_panels = len(chart.panels)
     is_grid = n_panels > 1
     titles = [panel.title for panel in chart.panels] if is_grid else None
+    has_polar = any(panel.polar for panel in chart.panels)
+    grid_specs = None
+    if has_polar and is_grid:
+        cells: list[dict[str, str] | None] = [
+            {"type": "polar" if panel.polar else "xy"} for panel in chart.panels
+        ]
+        cells += [None] * (chart.rows * chart.cols - len(cells))
+        grid_specs = [
+            cells[row * chart.cols : (row + 1) * chart.cols]
+            for row in range(chart.rows)
+        ]
     fig = (
         subplots.make_subplots(
             rows=chart.rows,
             cols=chart.cols,
             subplot_titles=titles,
-            shared_yaxes=chart.sharey,
+            shared_yaxes=chart.sharey and not has_polar,
+            specs=grid_specs,
         )
         if is_grid
         else go.Figure()
@@ -92,6 +104,8 @@ def render(
             barmode = "stack"
         elif panel.overlay:
             barmode = "overlay"
+        if panel.polar:
+            continue
         fig.update_xaxes(
             title_text=panel.xlabel,
             type="log" if panel.xscale == "log" else None,
@@ -242,6 +256,37 @@ def _add_trace(
                 **common,
             ),
             **cell,
+        )
+    elif mark == "violin":
+        fig.add_trace(
+            go.Violin(
+                y=list(trace.y) if trace.y is not None else [],
+                line_color=color,
+                fillcolor=color,
+                opacity=style.get("alpha", 0.75),
+                box_visible=style.get("box_visible", True),
+                meanline_visible=style.get("meanline_visible", True),
+                points=style.get("points", False),
+                **common,
+            ),
+            **cell,
+        )
+    elif mark == "radar":
+        names = [str(value) for value in (trace.x or [])]
+        values = list(trace.y or [])
+        fig.add_trace(
+            go.Scatterpolar(
+                r=[*values, *values[:1]],
+                theta=[*names, *names[:1]],
+                fill="toself",
+                opacity=0.7,
+                line_color=color,
+                **common,
+            ),
+            **cell,
+        )
+        fig.update_polars(
+            radialaxis={"range": [0, style.get("rmax", 1.0)]}, **cell
         )
     elif mark == "hist":
         fig.add_trace(

@@ -2,8 +2,8 @@
 
 Plot kinds build a :class:`Chart` from data; ``render_mpl`` and
 ``render_plotly`` draw it. Keeping the marks to a handful (bar, barh, line,
-step, scatter, box, hist, heatmap, segment, band, hline, vline, text) is what
-lets every kind, including user SQL plots, come out of both backends.
+step, scatter, box, violin, hist, heatmap, segment, band, hline, vline, text)
+is what lets every kind, including user SQL plots, come out of both backends.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ MARKS = (
     "step",
     "scatter",
     "box",
+    "violin",
+    "radar",
     "hist",
     "heatmap",
     "segment",
@@ -36,7 +38,10 @@ class Trace:
     ``x``/``y`` carry the data; some marks read them differently: ``segment``
     uses x=start, x1=end, y=lane; ``band`` uses y=lower, y1=upper;
     ``heatmap`` uses ``z`` plus x/y tick labels; ``box`` and ``hist`` hold
-    the raw values in ``y``.
+    the raw values in ``y``; ``radar`` draws one closed polygon with the
+    axis names in ``x`` and the values in ``y``, on a polar panel. A
+    ``scatter`` or ``segment`` trace whose ``style["lanes"]`` lists labels
+    takes those labels as ``y`` values and draws them on the lane rows.
 
     Attributes:
         mark: The mark type, one of ``MARKS``.
@@ -95,6 +100,7 @@ class Panel:
         colorbar: Label of the heatmap/scatter colour bar.
         xkind: ``"step"`` marks a step axis that the dashboard's step-range
             filter may drive.
+        polar: If True, the panel has polar axes (for ``radar`` traces).
         stacked: If True, bar traces stack instead of grouping.
         overlay: If True, bar traces share one position (waterfalls: floating
             bars with ``Trace.y1`` as the base).
@@ -111,6 +117,7 @@ class Panel:
     xrange: tuple[float, float] | None = None
     colorbar: str = ""
     xkind: str = ""
+    polar: bool = False
     stacked: bool = False
     overlay: bool = False
 
