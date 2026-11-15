@@ -609,7 +609,7 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
     }
 
 
-@registry.register_adapter("nsys", version="2.3")
+@registry.register_adapter("nsys", version="2.4")
 class NsysAdapter:
     """Reads Nsight Systems reports and SQLite exports, one per rank.
 
@@ -619,7 +619,7 @@ class NsysAdapter:
     """
 
     format_name = "nsys"
-    version = "2.3"
+    version = "2.4"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file is an Nsight Systems report or export.

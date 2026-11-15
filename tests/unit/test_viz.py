@@ -218,6 +218,11 @@ def test_sql_over_named_tables(pair: models.ComparisonReport) -> None:
         "kernel_drift",
         "breakdown",
         "topk",
+        "metric_trace",
+        "metric_dist",
+        "category_compare",
+        "execution_heatmap",
+        "metric_correlation",
     ],
 )
 def test_kinds_build_and_render_both_backends(
@@ -842,3 +847,338 @@ def test_live_server_answers_filter_queries_over_http(
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_trace_analysis_catalog_registration() -> None:
+    """Verifies that all 5 trace analysis kinds are in the catalog."""
+    viz_spec.load_kinds()
+    catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
+    expected_kinds = {
+        "metric_trace": ("timeline", ("metric_timeseries", "time_series")),
+        "metric_dist": ("overview", ("dist", "distribution", "distributions")),
+        "category_compare": ("compare", ("cat_compare", "categorical_bars")),
+        "execution_heatmap": (
+            "distributed",
+            ("exec_heatmap", "rank_time_heatmap"),
+        ),
+        "metric_correlation": (
+            "compare",
+            ("correlation", "metric_corr", "corr"),
+        ),
+    }
+    for name, (group, aliases) in expected_kinds.items():
+        assert name in catalog, f"{name} not in catalog"
+        kind = catalog[name]
+        assert kind.group == group
+        assert set(kind.aliases) == set(aliases)
+        assert len(kind.options) >= 5
+
+
+def test_trace_analysis_dual_backend_svg_and_png(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path
+) -> None:
+    """Verifies Matplotlib SVG, PNG and Plotly HTML for all 5 kinds."""
+    ctx = data.DataContext(pair)
+    kinds = (
+        "metric_trace",
+        "metric_dist",
+        "category_compare",
+        "execution_heatmap",
+        "metric_correlation",
+    )
+    for kind in kinds:
+        chart, opts = viz.build_chart(ctx, kind)
+        assert chart.panels
+        png_path = tmp_path / f"{kind}.png"
+        svg_path = tmp_path / f"{kind}.svg"
+        html_path = tmp_path / f"{kind}.html"
+
+        viz.render_chart(chart, opts, png_path)
+        assert png_path.stat().st_size > 1000
+
+        viz.render_chart(chart, opts, svg_path)
+        assert svg_path.stat().st_size > 500
+        svg_content = svg_path.read_text()
+        assert "<svg" in svg_content
+
+        pytest.importorskip("plotly")
+        viz.render_chart(chart, opts, html_path)
+        assert html_path.stat().st_size > 1000
+        assert "plotly" in html_path.read_text()[:200000].lower()
+
+
+def test_trace_analysis_options_and_modes(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path
+) -> None:
+    """Tests varied options and presentation modes across the new plots."""
+    ctx = data.DataContext(pair)
+
+    # 1. metric_dist across all 4 modes
+    for mode in ("hist", "ecdf", "box", "percentile"):
+        chart, _ = viz.build_chart(
+            ctx,
+            "metric_dist",
+            {"mode": mode, "bins": 20, "density": True},
+        )
+        assert chart.panels
+        assert chart.panels[0].traces
+        pair.plot(
+            kind="metric_dist",
+            mode=mode,
+            path=tmp_path / f"dist_{mode}.png",
+        )
+        assert (tmp_path / f"dist_{mode}.png").stat().st_size > 1000
+
+    # 2. category_compare horizontal, stacked, normalized, different aggs
+    chart, _ = viz.build_chart(
+        ctx,
+        "category_compare",
+        {
+            "orientation": "h",
+            "stack": True,
+            "normalize": True,
+            "agg": "mean",
+            "top_k": 5,
+            "sort": "asc",
+        },
+    )
+    assert chart.panels[0].traces
+    assert chart.panels[0].traces[0].mark == "barh"
+    assert chart.panels[0].stacked
+
+    # 3. execution_heatmap with time bins and log scale
+    chart, _ = viz.build_chart(
+        ctx,
+        "execution_heatmap",
+        {"x": "time", "y": "stream", "bins": 30, "zscale": "log"},
+    )
+    assert chart.panels
+    assert chart.panels[0].traces[0].mark == "heatmap"
+
+    # 4. metric_trace with rolling median and downsampling
+    chart, _ = viz.build_chart(
+        ctx,
+        "metric_trace",
+        {"rolling": 3, "downsample": 100, "by": "category", "unit": "s"},
+    )
+    assert chart.panels[0].traces
+    assert any("median" in (t.name or "") for t in chart.panels[0].traces)
+
+    # 5. metric_correlation with trend line and annotations
+    chart, _ = viz.build_chart(
+        ctx,
+        "metric_correlation",
+        {"trend": True, "annotate_top": 2, "logx": False, "logy": False},
+    )
+    assert chart.panels[0].traces
+    has_trend = any(
+        "trend" in (t.name or "").lower() for t in chart.panels[0].traces
+    )
+    assert has_trend
+    assert chart.notes
+    assert "Pearson" in chart.notes
+
+
+@pytest.mark.skipif(
+    not (REAL_DATA_DIR / "e").exists(),
+    reason="real DDP fixtures not generated",
+)
+def test_trace_analysis_real_ddp_data(tmp_path: pathlib.Path) -> None:
+    """Verifies all 5 plot kinds against real DDP trace data."""
+    report = cta.analyze(
+        REAL_DATA_DIR / "e", label="ddp", cache_dir=tmp_path / "c"
+    )
+    ctx = data.DataContext(report)
+    kinds = (
+        "metric_trace",
+        "metric_dist",
+        "category_compare",
+        "execution_heatmap",
+        "metric_correlation",
+    )
+    for kind in kinds:
+        chart, opts = viz.build_chart(ctx, kind)
+        assert chart.panels
+        png_path = tmp_path / f"real_{kind}.png"
+        viz.render_chart(chart, opts, png_path)
+        assert png_path.stat().st_size > 1000
+
+
+def test_trace_analysis_two_gpu_trace(tmp_path: pathlib.Path) -> None:
+    """Verifies multi-device execution heatmap on synthetic two-GPU trace."""
+    trace_path = _two_gpu_trace(tmp_path / "two_gpu.json")
+    report = cta.analyze(trace_path, label="two_gpu", cache_dir=tmp_path / "c")
+    ctx = data.DataContext(report)
+
+    chart, opts = viz.build_chart(
+        ctx, "execution_heatmap", {"y": "device", "x": "step"}
+    )
+    assert chart.panels
+    assert len(chart.panels[0].traces[0].y or []) == 2
+    png_path = tmp_path / "two_gpu_heatmap.png"
+    viz.render_chart(chart, opts, png_path)
+    assert png_path.stat().st_size > 1000
+
+
+def test_trace_analysis_input_validation_and_errors(
+    pair: models.ComparisonReport,
+) -> None:
+    """Verifies rejection of invalid options and NotApplicableError handling."""
+    ctx = data.DataContext(pair)
+
+    # 1. Invalid option choice
+    with pytest.raises(ValueError, match="is not one of"):
+        viz.build_chart(ctx, "metric_dist", {"mode": "invalid_mode"})
+
+    # 2. Unknown option with fuzzy suggestion
+    with pytest.raises(ValueError, match="did you mean 'rolling'"):
+        viz.build_chart(ctx, "metric_trace", {"roolling": 5})
+
+    # 3. Missing column raises NotApplicableError
+    with pytest.raises(viz_spec.NotApplicableError, match="not found in"):
+        viz.build_chart(ctx, "metric_correlation", {"x": "nonexistent_metric"})
+
+    # 4. Inapplicable table source raises NotApplicableError
+    with pytest.raises(viz_spec.NotApplicableError):
+        viz.build_chart(ctx, "metric_trace", {"source": "jtop"})
+
+
+def _network_context(
+    pair: models.ComparisonReport,
+) -> data.DataContext:
+    """Returns a context whose network_ops has two groups on two ranks.
+
+    "base" runs NCCL allreduce at 2 MB and 32 MB, "cand" runs MPI allreduce
+    at the same sizes, half as fast; the second rank starts each call later so
+    the durations differ across ranks.
+    """
+    rows = []
+    for label, api, scale in (("base", "nccl", 1), ("cand", "mpi", 2)):
+        for rank in (0, 1):
+            for call, size in enumerate((2 << 20, 32 << 20, 2 << 20)):
+                start = (call + 1) * 10_000_000 + rank * 1_000
+                duration = scale * (size // 1000) * (1 + rank)
+                rows.append(
+                    {
+                        "rank": rank,
+                        "device": rank,
+                        "stream": 7,
+                        "step": 0,
+                        "api": api,
+                        "op": "allreduce",
+                        "algo": "",
+                        "proto": "",
+                        "dtype": "f32",
+                        "group": "g",
+                        "group_size": 2,
+                        "peer": -1,
+                        "bytes": size,
+                        "posted": False,
+                        "launch_ns": start - 500,
+                        "start_ns": start,
+                        "end_ns": start + duration,
+                        "duration_ns": duration,
+                        "label": label,
+                        "trial": 0,
+                    }
+                )
+    ctx = data.DataContext(pair)
+    ctx._raw_tables = {"network_ops": pl.DataFrame(rows)}
+    ctx._is_built = True
+    return ctx
+
+
+def _bars(chart: Any) -> dict[str | None, dict[Any, float]]:
+    """Maps each trace's name to {category: value} of a one-panel bar chart."""
+    return {
+        trace.name: dict(zip(trace.x or [], trace.y or [], strict=True))
+        for trace in chart.panels[0].traces
+    }
+
+
+@pytest.mark.parametrize(
+    "kind", ["network_bandwidth", "network_skew", "network_size_sweep"]
+)
+def test_network_kinds_build_and_render(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path, kind: str
+) -> None:
+    ctx = _network_context(pair)
+    chart, options = viz.build_chart(ctx, kind)
+    assert chart.panels
+    assert all(panel.traces for panel in chart.panels)
+    viz.render_chart(chart, options, tmp_path / f"{kind}.png")
+    assert (tmp_path / f"{kind}.png").stat().st_size > 1000
+
+
+def test_network_bandwidth_matches_nccl_tests_arithmetic(
+    pair: models.ComparisonReport,
+) -> None:
+    chart, _ = viz.build_chart(_network_context(pair), "network_bandwidth")
+    bars = _bars(chart)
+    # Rank 0 and 1 together: 2 MB calls took (2 MB / 1000) and twice that ns.
+    # The pooled rate is bytes over time, times 2(n-1)/n = 1 for two ranks.
+    small = 2 << 20
+    expected = (4 * small) / (2 * (small // 1000) * 3)
+    assert bars["base"]["allreduce|1-16MB"] == pytest.approx(expected)
+    assert bars["cand"]["allreduce|1-16MB"] == pytest.approx(expected / 2)
+
+
+def test_network_skew_is_the_duration_spread_across_ranks(
+    pair: models.ComparisonReport,
+) -> None:
+    chart, _ = viz.build_chart(_network_context(pair), "network_skew")
+    bars = _bars(chart)
+    # Rank 1 takes twice as long as rank 0 on every call.
+    sizes = (2 << 20, 32 << 20, 2 << 20)
+    spreads = [size // 1000 for size in sizes]
+    assert bars["base"]["nccl|allreduce"] == pytest.approx(
+        sum(spreads) / len(spreads) / 1e3
+    )
+
+
+def test_network_kinds_can_split_by_api_and_filter(
+    pair: models.ComparisonReport,
+) -> None:
+    ctx = _network_context(pair)
+    chart, _ = viz.build_chart(ctx, "network_bandwidth", {"by": "api"})
+    assert {t.name for t in chart.panels[0].traces} == {
+        "base / nccl",
+        "cand / mpi",
+    }
+    chart, _ = viz.build_chart(ctx, "network_bandwidth", {"api": "mpi"})
+    assert [t.name for t in chart.panels[0].traces] == ["cand"]
+    with pytest.raises(viz_spec.NotApplicableError, match="match"):
+        viz.build_chart(ctx, "network_bandwidth", {"api": "ucx"})
+
+
+def test_network_ops_is_a_plot_source() -> None:
+    assert "network_ops" in data.SOURCES
+
+
+def test_network_matrix_sums_sends_by_rank_pair(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path
+) -> None:
+    ctx = _network_context(pair)
+    ops = ctx._raw_tables["network_ops"]
+    sends = ops.head(3).with_columns(
+        op=pl.lit("send"),
+        peer=pl.Series([1, 1, 0]),
+        rank=pl.Series([0, 0, 1]),
+        bytes=pl.Series([1_000_000, 3_000_000, 500_000]),
+        label=pl.lit("base"),
+    )
+    ctx._raw_tables["network_ops"] = pl.concat([ops, sends])
+    chart, options = viz.build_chart(ctx, "network_matrix")
+    assert [panel.title for panel in chart.panels] == ["base"]
+    heatmap = chart.panels[0].traces[0]
+    assert heatmap.z == [[0.0, 4.0], [0.5, 0.0]]
+    viz.render_chart(chart, options, tmp_path / "matrix.png")
+    calls, _ = viz.build_chart(ctx, "network_matrix", {"value": "calls"})
+    assert calls.panels[0].traces[0].z == [[0.0, 2.0], [1.0, 0.0]]
+
+
+def test_network_matrix_needs_a_known_peer(
+    pair: models.ComparisonReport,
+) -> None:
+    with pytest.raises(viz_spec.NotApplicableError, match="peer"):
+        viz.build_chart(_network_context(pair), "network_matrix")

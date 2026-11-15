@@ -26,7 +26,7 @@ from cta.core import registry
 _XPROF_HEAD_RE = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
 
 
-@registry.register_adapter("kineto", version="2.3")
+@registry.register_adapter("kineto", version="2.4")
 class KinetoAdapter:
     """Reads PyTorch Profiler (Kineto) Chrome traces, one file per rank.
 
@@ -36,7 +36,7 @@ class KinetoAdapter:
     """
 
     format_name = "kineto"
-    version = "2.3"
+    version = "2.4"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file looks like a Kineto Chrome trace.

@@ -30,6 +30,9 @@ NETWORK_OPS_SCHEMA = pl.Schema(
         # Process group the call ran in; "" if unknown.
         "group": pl.String(),
         "group_size": pl.Int32(),
+        # Rank on the other end of a point-to-point call, as the communicator
+        # numbers it; -1 for collectives and when the trace does not say.
+        "peer": pl.Int32(),
         # Message size in bytes as nccl-tests counts it; 0 when the trace does
         # not record it.
         "bytes": pl.Int64(),
@@ -199,6 +202,7 @@ def ops_from_kernels(
         pl.col("dtype").fill_null(""),
         pl.col("group").fill_null(""),
         pl.col("group_size").fill_null(0),
+        pl.lit(-1).alias("peer"),
         (elems.fill_null(0) * width).alias("bytes"),
         pl.lit(False).alias("posted"),
         "launch_ns",
@@ -235,6 +239,7 @@ def peer_copies(kernels: pl.DataFrame) -> pl.DataFrame:
         pl.lit("").alias("dtype"),
         pl.lit("").alias("group"),
         pl.lit(2).alias("group_size"),
+        pl.lit(-1).alias("peer"),
         "bytes",
         pl.lit(False).alias("posted"),
         "launch_ns",

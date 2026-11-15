@@ -13,20 +13,22 @@ from cta.core import network
 _MPI_QUERY = """
 SELECT e.start AS start_ns, e."end" AS end_ns, s.value AS name,
        CAST(e.commUid AS TEXT) AS "group", COALESCE(c.size, 0) AS group_size,
-       COALESCE(e.size, 0) AS size, COALESCE(e.recvSize, 0) AS recv_size
+       COALESCE(e.size, 0) AS size, COALESCE(e.recvSize, 0) AS recv_size,
+       COALESCE(e.remoteRank, -1) AS peer
 FROM ({calls}) e
 JOIN StringIds s ON s.id = e.textId
 LEFT JOIN (SELECT commUid, MAX(size) AS size FROM MPI_COMMUNICATORS
            GROUP BY commUid) c ON c.commUid = e.commUid
 """
+# The peer of a point-to-point call is the remote rank in its communicator.
 _MPI_CALLS = {
     "MPI_P2P_EVENTS": (
-        'SELECT start, "end", textId, commUid, size, NULL AS recvSize '
-        "FROM MPI_P2P_EVENTS"
+        'SELECT start, "end", textId, commUid, size, NULL AS recvSize, '
+        "{remote_rank} AS remoteRank FROM MPI_P2P_EVENTS"
     ),
     "MPI_COLLECTIVES_EVENTS": (
-        'SELECT start, "end", textId, commUid, size, recvSize '
-        "FROM MPI_COLLECTIVES_EVENTS"
+        'SELECT start, "end", textId, commUid, size, recvSize, '
+        "NULL AS remoteRank FROM MPI_COLLECTIVES_EVENTS"
     ),
 }
 _UCX_QUERY = """
@@ -61,7 +63,17 @@ def host_network_ops(
         export has no MPI or UCX tables.
     """
     frames = []
-    calls = [sql for table, sql in _MPI_CALLS.items() if table in tables]
+    # Older exports have no remoteRank column.
+    has_remote = any(
+        row[1] == "remoteRank"
+        for row in conn.execute("PRAGMA table_info(MPI_P2P_EVENTS)")
+    )
+    remote_rank = "remoteRank" if has_remote else "NULL"
+    calls = [
+        sql.format(remote_rank=remote_rank)
+        for table, sql in _MPI_CALLS.items()
+        if table in tables
+    ]
     if calls and "MPI_COMMUNICATORS" in tables:
         mpi = pl.read_database(
             _MPI_QUERY.format(calls=" UNION ALL ".join(calls)), conn
@@ -105,6 +117,7 @@ def _mpi_rows(mpi: pl.DataFrame) -> pl.DataFrame:
         "posted",
         "group",
         "group_size",
+        "peer",
         _message_bytes().alias("bytes"),
         "start_ns",
         "end_ns",
@@ -161,6 +174,7 @@ def _ucx_rows(ucx: pl.DataFrame) -> pl.DataFrame:
         pl.lit(True).alias("posted"),
         pl.lit("").alias("group"),
         pl.lit(0).alias("group_size"),
+        pl.lit(-1).alias("peer"),
         pl.col("size").alias("bytes"),
         "start_ns",
         "end_ns",

@@ -8,6 +8,11 @@
 - MPI and UCX come from the `nsys` adapter (`MPI_COLLECTIVES_EVENTS`, `MPI_P2P_EVENTS`, `UCP_SUBMIT_EVENTS`, `MPI_COMMUNICATORS`). MPI names map to the NCCL operation names, and GPU peer copies become `p2p` rows. Calls that only post a transfer (`MPI_Isend`, UCX submits) are counted but left out of bandwidth and skew.
 - MPI sizes are converted to the nccl-tests size per operation. I measured how nsys records them with 2, 3 and 4 Open MPI ranks; other MPI implementations were not checked. An in-place allreduce, allgather or alltoall cannot be told from a plain one and reads low by (n-1)/n.
 - New aspect `network_api`: bandwidth (algbw, busbw), time, call counts, cross-rank wait skew and launch-to-start gap, per API, operation and size bucket. The `by_operation` table pools the APIs so a run that used NCCL lines up with one that used MPI.
+- `network_ops` has a `peer` column: the remote rank of an MPI send or receive from nsys, -1 where the trace does not record one (collectives, NCCL, UCX). The `nsys` and `kineto` adapters are version 2.4, so cached tables are rebuilt.
+- New plot source `network_ops`, usable in `custom` and `--sql`, and four plot kinds on it: `network_bandwidth` (bus or algorithm bandwidth by operation and size), `network_skew` (cross-rank wait skew or launch gap), `network_size_sweep` (bandwidth against message size, one panel per operation) and `network_matrix` (send volume between rank pairs; MPI point-to-point only).
+
+### Trace analysis plots
+- New plot kinds `metric_trace`, `metric_dist`, `category_compare`, `execution_heatmap` and `metric_correlation` for time series, distributions, category comparisons, rank-by-time heatmaps and metric correlations over the raw tables.
 
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported. CI, the classifiers, ruff and mypy moved to 3.12.

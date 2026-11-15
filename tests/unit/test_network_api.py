@@ -112,6 +112,7 @@ def _ops(
             "dtype": "Float",
             "group": "0",
             "group_size": 2,
+            "peer": -1,
             "bytes": size,
             "start_ns": 1000 * i,
             "end_ns": 1000 * i + d,
@@ -190,8 +191,9 @@ def _mpi_export() -> sqlite3.Connection:
         INSERT INTO MPI_COLLECTIVES_EVENTS VALUES
             (1000, 3000, 1, 7, 16384, 16384), (5000, 6000, 3, 7, NULL, 128);
         CREATE TABLE MPI_P2P_EVENTS (start INTEGER, "end" INTEGER,
-            textId INTEGER, commUid INTEGER, size INTEGER);
-        INSERT INTO MPI_P2P_EVENTS VALUES (1500, 1600, 2, 7, 1024);
+            textId INTEGER, commUid INTEGER, size INTEGER,
+            remoteRank INTEGER);
+        INSERT INTO MPI_P2P_EVENTS VALUES (1500, 1600, 2, 7, 1024, 1);
         CREATE TABLE UCP_SUBMIT_EVENTS (start INTEGER, "end" INTEGER,
             textId INTEGER, packedSize INTEGER);
         INSERT INTO UCP_SUBMIT_EVENTS VALUES (1520, 1550, 4, 1024);
@@ -219,6 +221,9 @@ def test_host_ops_from_an_export() -> None:
     assert rows["mpi", "broadcast"]["bytes"] == 128
     assert rows["mpi", "broadcast"]["step"] == 1
     assert rows["mpi", "send"]["posted"]
+    assert rows["mpi", "send"]["peer"] == 1
+    assert rows["mpi", "allreduce"]["peer"] == -1
+    assert rows["ucx", "send"]["peer"] == -1
     assert rows["ucx", "send"]["posted"]
     assert rows["ucx", "send"]["bytes"] == 1024
 
@@ -254,6 +259,7 @@ def test_mpi_message_size_convention(
             "name": [name],
             "group": ["1"],
             "group_size": [4],
+            "peer": [-1],
             "size": [size],
             "recv_size": [recv],
         }
