@@ -119,6 +119,29 @@ void read_launches(const std::string& path, const std::set<std::string>& tables,
   }
 }
 
+// Every runtime call with its name, time, thread and correlation id.
+void read_runtime_calls(const std::string& path, const std::set<std::string>& tables, NsysCalls& out) {
+  if (!tables.count("CUPTI_ACTIVITY_KIND_RUNTIME")) return;
+  SqliteReader db(path);
+  const auto columns = sqlite_columns(db, "CUPTI_ACTIVITY_KIND_RUNTIME");
+  const bool has_names = tables.count("StringIds") > 0 && columns.count("nameId") > 0;
+  const std::string name_expr = has_names ? "COALESCE(s.value, 'unknown')" : "'unknown'";
+  const std::string join = has_names ? "LEFT JOIN StringIds s ON r.nameId = s.id" : "";
+  const std::string thread_expr = columns.count("globalTid") ? "r.globalTid" : "-1";
+  const std::string correlation_expr = columns.count("correlationId") ? "r.correlationId" : "-1";
+  SqliteQuery q(db, "SELECT " + name_expr + ", r.start, r.end, " + thread_expr + ", " + correlation_expr +
+                        " FROM CUPTI_ACTIVITY_KIND_RUNTIME r " + join + " WHERE r.end > r.start");
+  Interner names;
+  while (q.step()) {
+    out.name.push_back(names.intern(q.text(0)));
+    out.start.push_back(q.integer(1));
+    out.end.push_back(q.integer(2));
+    out.thread.push_back(q.is_null(3) ? -1 : q.integer(3));
+    out.correlation.push_back(q.is_null(4) ? -1 : q.integer(4));
+  }
+  out.names.assign(names.items().begin(), names.items().end());
+}
+
 struct Ranges {
   Interner texts;
   std::vector<std::int32_t> text;
@@ -204,7 +227,8 @@ NsysColumns read_nsys_sqlite(const std::string& path) {
   Ranges ranges;
   Metrics metrics;
   NsysSummary runtime, osrt;
-  std::exception_ptr errors[6];
+  NsysCalls runtime_calls;
+  std::exception_ptr errors[7];
   auto run = [&](int slot, auto&& body) {
     try {
       body();
@@ -219,6 +243,7 @@ NsysColumns read_nsys_sqlite(const std::string& path) {
     pool.emplace([&] { run(2, [&] { read_metrics(path, tables, metrics); }); });
     pool.emplace([&] { run(4, [&] { read_summary(path, tables, "CUPTI_ACTIVITY_KIND_RUNTIME", runtime); }); });
     pool.emplace([&] { run(5, [&] { read_summary(path, tables, "OSRT_API", osrt); }); });
+    pool.emplace([&] { run(6, [&] { read_runtime_calls(path, tables, runtime_calls); }); });
     run(3, [&] { read_events(path, tables, events); });
     pool.join_all();
   }
@@ -253,6 +278,7 @@ NsysColumns read_nsys_sqlite(const std::string& path) {
 
   out.runtime = std::move(runtime);
   out.osrt = std::move(osrt);
+  out.runtime_calls = std::move(runtime_calls);
   out.has_metrics = metrics.present;
   out.metric_names.assign(metrics.names.items().begin(), metrics.names.items().end());
   out.metric_name = std::move(metrics.name);

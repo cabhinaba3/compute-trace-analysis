@@ -130,6 +130,14 @@ nb::dict nsys_columns_to_dict(cta::NsysColumns&& c) {
     part["calls"] = to_numpy(std::move(summary->calls));
     d[key] = part;
   }
+  nb::dict calls;
+  calls["names"] = nb::cast(c.runtime_calls.names);
+  calls["name"] = to_numpy(std::move(c.runtime_calls.name));
+  calls["start"] = to_numpy(std::move(c.runtime_calls.start));
+  calls["end"] = to_numpy(std::move(c.runtime_calls.end));
+  calls["thread"] = to_numpy(std::move(c.runtime_calls.thread));
+  calls["correlation"] = to_numpy(std::move(c.runtime_calls.correlation));
+  d["runtime_calls"] = calls;
   return d;
 }
 
