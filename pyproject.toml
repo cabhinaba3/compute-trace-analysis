@@ -36,14 +36,9 @@ classifiers = [
 ]
 dependencies = [
     "polars>=1.0.0",
-    "duckdb>=1.0.0",
     "pyarrow>=15.0.0",
     "numpy>=1.26.0",
     "scipy>=1.12.0",
-    "protobuf>=6.31.1",
-    # Official MLCommons Chakra schema, vendored as a pinned git submodule: PyPI mlc-chakra 1.0.0 predates
-    # STORAGE_NODE/DATA_OP_NODE. Requires `git clone --recurse-submodules`.
-    "mlc-chakra @ {root:uri}/third_party/chakra",
     "pyyaml>=6.0.1",
     "typer>=0.12.0",
     "rich>=13.7.0",
@@ -59,9 +54,29 @@ profile = ["nsight-python @ {root:uri}/third_party/nsight-python ; sys_platform 
 viz = ["plotly>=5.20"]  # interactive HTML plots and the dashboard (static PDF/SVG/PNG need only matplotlib)
 jax = ["xprof>=2.24.2"]  # converts JAX/XProf *.xplane.pb to a trace (the Chrome-format files need nothing)
 hta = ["traceinsight>=0.6.1"]  # Meta Holistic Trace Analysis; enables the opt-in `hta_kineto` aspect
-dev = [
+sql = ["duckdb>=1.0.0"]  # SQL plots (`--sql`, the `custom` kind) and the `where` filter of raw-table plots
+# Writing Chakra .et files from Python (the readers are native and need none of this). mlc-chakra is the official
+# MLCommons schema, vendored as a pinned git submodule because PyPI's 1.0.0 predates STORAGE_NODE/DATA_OP_NODE;
+# installing this extra needs `git clone --recurse-submodules`.
+chakra = [
+    "protobuf>=6.31.1",
+    "mlc-chakra @ {root:uri}/third_party/chakra",
+]
+# The extras that add no heavy dependency (not hta, jax, ncu or profile, which pull in large or platform-bound packages).
+all = [
     "pandas>=2.1.0",
     "plotly>=5.20",
+    "duckdb>=1.0.0",
+    "protobuf>=6.31.1",
+    "mlc-chakra @ {root:uri}/third_party/chakra",
+]
+dev = [
+    "hatchling",
+    "pandas>=2.1.0",
+    "plotly>=5.20",
+    "duckdb>=1.0.0",
+    "protobuf>=6.31.1",
+    "mlc-chakra @ {root:uri}/third_party/chakra",
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
     "ruff>=0.5.0",
