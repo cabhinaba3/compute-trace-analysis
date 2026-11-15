@@ -23,6 +23,7 @@
 - Memory: `memcpy_bandwidth`, `memcpy_sizes` and `memcpy_overlap` (copy time hidden behind compute, per device).
 - Hierarchy and idle time: `scope_icicle` (time by nested scope), `idle_gaps` (gaps from the union of each device's kernels) and `critical_path` (compute, exposed communication and slack from the `dag_critical_path` summary; the solver returns no path, so the path itself is not drawn).
 - Host API: `runtime_top` (CUDA runtime or OS calls by time), `runtime_timeline` (calls and GPU kernels on one timeline), `sync_waits` and `runtime_step_mix`.
+- General: `metric_radar`, `parallel_coords`, `ridgeline` and `facet` (any raw-table kind once per rank, device or group). Charts can now have polar panels and a `radar` mark, and `scatter` and `text` traces can sit on the lanes of a `segment` chart.
 
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported. CI, the classifiers, ruff and mypy moved to 3.12.
