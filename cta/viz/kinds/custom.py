@@ -70,8 +70,9 @@ def _aggregation_expr(column: str, aggregation: str) -> pl.Expr:
         "source": spec.Opt(
             "str",
             None,
-            "kernels, steps, gpu_metrics, runtime, network_ops, ncu_kernels,"
-            " ncu_findings, jtop, osrt, or report:<aspect>[.<table>].",
+            "kernels, steps, gpu_metrics, runtime, runtime_calls, network_ops,"
+            " ncu_kernels, ncu_findings, jtop, osrt, or"
+            " report:<aspect>[.<table>].",
         ),
         "sql": spec.Opt(
             "str",
