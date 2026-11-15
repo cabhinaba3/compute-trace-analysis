@@ -1,0 +1,26 @@
+# A rootless build environment: compiler, CMake, Ninja and every native library
+# that cta's C++ extension needs, all from conda-forge. Create it, activate it
+# and install with build isolation off, so the build uses these tools:
+#
+#   conda env create -f environment.yml    # or: mamba / micromamba
+#   conda activate cta
+#   pip install --no-build-isolation -e ".[dev]"
+#
+# Run ./configure.sh to see whether this machine needs it.
+name: cta
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - gxx_linux-64
+  - cmake
+  - ninja
+  - zlib
+  - sqlite
+  - libprotobuf
+  - simdjson
+  - git
+  - nanobind
+  - hatchling
+  - editables
+  - pip
