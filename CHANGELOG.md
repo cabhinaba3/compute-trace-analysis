@@ -25,6 +25,13 @@
 - Host API: `runtime_top` (CUDA runtime or OS calls by time), `runtime_timeline` (calls and GPU kernels on one timeline), `sync_waits` and `runtime_step_mix`.
 - General: `metric_radar`, `parallel_coords`, `ridgeline` and `facet` (any raw-table kind once per rank, device or group). Charts can now have polar panels and a `radar` mark, and `scatter` and `text` traces can sit on the lanes of a `segment` chart.
 
+### Flexible install
+- `./configure.sh` checks the compiler, Python, submodules, the native libraries (with a CMake probe, honouring `CONDA_PREFIX` and `CMAKE_PREFIX_PATH`) and network access, then lists install options with the easiest first for the machine. It changes nothing unless run with `--run conda` or `--run system`.
+- `environment.yml` builds a rootless conda-forge environment with the compiler, CMake, Ninja and every native library. Install into it with `pip install --no-build-isolation -e .`.
+- The build reads `CTA_BUILD_JOBS`, `CTA_PREFIX_PATH`, `CTA_GENERATOR` (Ninja, or Unix Makefiles when Ninja is missing), `CTA_BUILD_TYPE`, `CTA_BUILD_DIR`, `CTA_CMAKE_ARGS` and `CTA_FRESH`.
+- A CMake cache left by an earlier build, which pointed into pip's deleted temporary environment, made the next build fail at `project()`. The build now starts from an empty cache when the old one is stale (`--fresh`), and only then, so an unchanged rebuild still compiles nothing. `CTA_FRESH=always` or `never` overrides this.
+- `duckdb` moves to the new `sql` extra, and `mlc-chakra` and `protobuf` to the new `chakra` extra: the readers are native, so only SQL plots and writing `.et` files from Python used them. The native build still reads the Chakra schema from the submodule, so clone with `--recurse-submodules`. Without the extras, those features raise an error that names the extra. `all` bundles the light extras, and `dev` includes all of them.
+
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported. CI, the classifiers, ruff and mypy moved to 3.12.
 - The generators in `cta.synth` (Kineto, GOAL, Chakra, nsys SQLite, ncu, jtop, trtexec) are now C++ in `native/`, built into the package as `cta._native` by `pip install`. The Python generators are gone. Output matches the old writers byte for byte (nsys SQLite: same rows).
