@@ -13,6 +13,7 @@
 
 ### Trace analysis plots
 - New plot kinds `metric_trace`, `metric_dist`, `category_compare`, `execution_heatmap` and `metric_correlation` for time series, distributions, category comparisons, rank-by-time heatmaps and metric correlations over the raw tables.
+- New `violin` mark and kinds `violin`, `boxplot` and `line_plot`; `metric_dist` has a `violin` mode.
 
 ### More plot kinds
 - New `runtime_calls` table from the `nsys` and `kineto` adapters (both now version 2.5): every CUDA runtime call with its name, thread, correlation id, step and time. It is also a plot source, usable in `custom` and `--sql`.

@@ -74,7 +74,7 @@ _BY_CORR_CHOICES = (
     "label",
     "none",
 )
-_DIST_MODES = ("hist", "ecdf", "box", "percentile")
+_DIST_MODES = ("hist", "ecdf", "box", "percentile", "violin")
 _CAT_CHOICES = (
     "op_family",
     "category",
@@ -93,59 +93,62 @@ _HEATMAP_AGG_CHOICES = ("sum", "mean", "max", "count")
 _CMAP_CHOICES = ("magma", "viridis", "plasma", "cividis", "Blues", "YlOrRd")
 
 
+_METRIC_TRACE_OPTIONS = {
+    "source": spec.Opt(
+        "str",
+        "kernels",
+        "Source raw table.",
+        _SOURCE_CHOICES,
+    ),
+    "metric": spec.Opt(
+        "str",
+        "duration_ms",
+        "Metric column to plot over time.",
+    ),
+    "time_col": spec.Opt(
+        "str",
+        "t_ms",
+        "Time or step column for X axis.",
+        _TIME_COL_CHOICES,
+    ),
+    "by": spec.Opt(
+        "str",
+        "category",
+        "Line grouping column.",
+        _BY_TRACE_CHOICES,
+    ),
+    "rolling": spec.Opt(
+        "int",
+        0,
+        "Rolling-median smoothing window in samples (0 = disabled).",
+    ),
+    "downsample": spec.Opt(
+        "int",
+        4000,
+        "Maximum points plotted per line (0 = disabled).",
+    ),
+    "yscale": spec.Opt(
+        "str",
+        "linear",
+        "Scale of Y axis.",
+        ("linear", "log"),
+    ),
+    "unit": spec.Opt(
+        "str",
+        "ms",
+        "Time axis display unit.",
+        ("ms", "s", "ns", "step"),
+    ),
+}
+
+
 @spec.register_plot(
     "metric_trace",
     group="timeline",
     title="Metric trace over time",
     needs="raw table (kernels, gpu_metrics, steps, network_ops, or jtop)",
     aliases=("metric_timeseries", "time_series"),
-    options={
-        "source": spec.Opt(
-            "str",
-            "kernels",
-            "Source raw table.",
-            _SOURCE_CHOICES,
-        ),
-        "metric": spec.Opt(
-            "str",
-            "duration_ms",
-            "Metric column to plot over time.",
-        ),
-        "time_col": spec.Opt(
-            "str",
-            "t_ms",
-            "Time or step column for X axis.",
-            _TIME_COL_CHOICES,
-        ),
-        "by": spec.Opt(
-            "str",
-            "category",
-            "Line grouping column.",
-            _BY_TRACE_CHOICES,
-        ),
-        "rolling": spec.Opt(
-            "int",
-            0,
-            "Rolling-median smoothing window in samples (0 = disabled).",
-        ),
-        "downsample": spec.Opt(
-            "int",
-            4000,
-            "Maximum points plotted per line (0 = disabled).",
-        ),
-        "yscale": spec.Opt(
-            "str",
-            "linear",
-            "Scale of Y axis.",
-            ("linear", "log"),
-        ),
-        "unit": spec.Opt(
-            "str",
-            "ms",
-            "Time axis display unit.",
-            ("ms", "s", "ns", "step"),
-        ),
-    },
+    options=_METRIC_TRACE_OPTIONS,
 )
 def metric_trace(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
     """Plots metric trends over continuous time or steps.
@@ -290,34 +293,62 @@ def metric_trace(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
 
 
 @spec.register_plot(
+    "line_plot",
+    group="timeline",
+    title="Metric line plot over time",
+    needs="raw table (kernels, gpu_metrics, steps, network_ops, or jtop)",
+    aliases=("line", "lineplot"),
+    options=_METRIC_TRACE_OPTIONS,
+)
+def line_plot(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
+    """Plots metric trends as a line plot over time or steps."""
+    return metric_trace(ctx, options)
+
+
+_DIST_BASE_OPTIONS = {
+    "source": spec.Opt(
+        "str",
+        "kernels",
+        "Source table.",
+        _DIST_SOURCE_CHOICES,
+    ),
+    "metric": spec.Opt(
+        "str",
+        "duration_ms",
+        "Numeric column for distribution analysis.",
+    ),
+    "by": spec.Opt(
+        "str",
+        "label",
+        "Grouping column.",
+        _BY_DIST_CHOICES,
+    ),
+    "logx": spec.Opt(
+        "bool",
+        False,
+        "Log-scale for metric values / X axis.",
+    ),
+    "logy": spec.Opt(
+        "bool",
+        False,
+        "Log-scale for counts/density / Y axis.",
+    ),
+}
+
+
+@spec.register_plot(
     "metric_dist",
     group="overview",
     title="Metric distribution",
     needs="any numeric column from kernels, steps, network_ops, or gpu_metrics",
     aliases=("dist", "distribution", "distributions"),
     options={
-        "source": spec.Opt(
-            "str",
-            "kernels",
-            "Source table.",
-            _DIST_SOURCE_CHOICES,
-        ),
-        "metric": spec.Opt(
-            "str",
-            "duration_ms",
-            "Numeric column for distribution analysis.",
-        ),
+        **_DIST_BASE_OPTIONS,
         "mode": spec.Opt(
             "str",
             "hist",
             "Distribution presentation format.",
             _DIST_MODES,
-        ),
-        "by": spec.Opt(
-            "str",
-            "label",
-            "Grouping column.",
-            _BY_DIST_CHOICES,
         ),
         "bins": spec.Opt("int", 50, "Histogram bin count."),
         "density": spec.Opt(
@@ -329,16 +360,6 @@ def metric_trace(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
             "list",
             ["50", "90", "95", "99", "99.9"],
             "Percentile cutoffs to compute and display.",
-        ),
-        "logx": spec.Opt(
-            "bool",
-            False,
-            "Log-scale for metric values / X axis.",
-        ),
-        "logy": spec.Opt(
-            "bool",
-            False,
-            "Log-scale for counts/density / Y axis.",
         ),
     },
 )
@@ -472,6 +493,31 @@ def metric_dist(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
             yscale="log" if options["logy"] else "linear",
         )
 
+    elif mode == "violin":
+        for color_idx, (name, grp) in enumerate(groups):
+            vals = grp[metric].to_numpy().astype(float)
+            if options["logy"]:
+                vals = vals[vals > 0]
+            if len(vals) == 0:
+                continue
+            traces.append(
+                ir.Trace(
+                    mark="violin",
+                    y=vals.tolist(),
+                    name=name,
+                    style={"ci": color_idx},
+                )
+            )
+            notes.append(
+                f"{name}: median={np.median(vals):.3g}, "
+                f"IQR={np.percentile(vals, 75) - np.percentile(vals, 25):.3g}"
+            )
+        panel = ir.Panel(
+            traces=traces,
+            ylabel=metric,
+            yscale="log" if options["logy"] else "linear",
+        )
+
     elif mode == "percentile":
         plist = [float(p) for p in options["percentiles"]]
         p_labels = [f"p{p:g}" for p in plist]
@@ -499,9 +545,48 @@ def metric_dist(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
     if not traces:
         raise spec.NotApplicableError("No valid values after filtering")
 
-    return chart_helpers.single(
-        "Metric distribution", panel, notes="; ".join(notes)
+    title = (
+        "Violin plot"
+        if mode == "violin"
+        else ("Box plot" if mode == "box" else "Metric distribution")
     )
+    return chart_helpers.single(title, panel, notes="; ".join(notes))
+
+
+@spec.register_plot(
+    "violin",
+    group="overview",
+    title="Violin plot of metric distributions",
+    needs="any numeric column from kernels, steps, network_ops, or gpu_metrics",
+    aliases=("violinplot", "violin_plot"),
+    options=_DIST_BASE_OPTIONS,
+)
+def violin_plot(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
+    """Plots metric distributions as violin plots."""
+    opts = dict(options)
+    opts["mode"] = "violin"
+    opts.setdefault("bins", 50)
+    opts.setdefault("density", True)
+    opts.setdefault("percentiles", ["50", "90", "95", "99", "99.9"])
+    return metric_dist(ctx, opts)
+
+
+@spec.register_plot(
+    "boxplot",
+    group="overview",
+    title="Boxplot of metric distributions",
+    needs="any numeric column from kernels, steps, network_ops, or gpu_metrics",
+    aliases=("box", "box_plot"),
+    options=_DIST_BASE_OPTIONS,
+)
+def box_plot(ctx: data.DataContext, options: dict[str, Any]) -> ir.Chart:
+    """Plots metric distributions as box plots."""
+    opts = dict(options)
+    opts["mode"] = "box"
+    opts.setdefault("bins", 50)
+    opts.setdefault("density", True)
+    opts.setdefault("percentiles", ["50", "90", "95", "99", "99.9"])
+    return metric_dist(ctx, opts)
 
 
 @spec.register_plot(
