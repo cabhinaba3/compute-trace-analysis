@@ -151,3 +151,101 @@ def unique_in_order(df: pl.DataFrame, column: str) -> list[Any]:
         The distinct values, in the order they first appear.
     """
     return df[column].unique(maintain_order=True).to_list()
+
+
+def merge_intervals(
+    starts: np.ndarray, ends: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Merges intervals into the disjoint ranges that cover them.
+
+    Intervals are half-open ``[start, end)``, so ones that only touch stay
+    separate.
+
+    Args:
+        starts: Interval starts, in any order.
+        ends: Interval ends, in the same order.
+
+    Returns:
+        The starts and ends of the merged ranges, in increasing order.
+    """
+    keep = ends > starts
+    starts, ends = starts[keep], ends[keep]
+    if not len(starts):
+        return starts, ends
+    order = np.argsort(starts, kind="stable")
+    starts, ends = starts[order], ends[order]
+    reach = np.maximum.accumulate(ends)
+    # A new range begins where an interval starts at or after everything
+    # before it has ended.
+    begins = np.concatenate([[True], starts[1:] >= reach[:-1]])
+    first = np.flatnonzero(begins)
+    last = np.append(first[1:] - 1, len(starts) - 1)
+    return starts[first], reach[last]
+
+
+def covered_length(
+    merged_starts: np.ndarray,
+    merged_ends: np.ndarray,
+    lows: np.ndarray,
+    highs: np.ndarray,
+) -> np.ndarray:
+    """Measures how much of each ``[low, high)`` the merged ranges cover.
+
+    Args:
+        merged_starts: Starts from ``merge_intervals``.
+        merged_ends: Ends from ``merge_intervals``.
+        lows: Starts of the intervals to measure.
+        highs: Ends of the intervals to measure.
+
+    Returns:
+        The covered length of each interval.
+    """
+    if not len(merged_starts):
+        return np.zeros(len(lows))
+    lengths = np.concatenate([[0.0], np.cumsum(merged_ends - merged_starts)])
+
+    def covered_before(point: np.ndarray) -> np.ndarray:
+        """Length of the merged ranges that lie before each point."""
+        index = np.searchsorted(merged_starts, point, side="right")
+        inside = np.where(
+            index > 0,
+            np.clip(
+                point - merged_starts[np.maximum(index - 1, 0)],
+                0.0,
+                merged_ends[np.maximum(index - 1, 0)]
+                - merged_starts[np.maximum(index - 1, 0)],
+            ),
+            0.0,
+        )
+        return lengths[np.maximum(index - 1, 0)] + inside
+
+    return covered_before(np.asarray(highs, float)) - covered_before(
+        np.asarray(lows, float)
+    )
+
+
+def summary_values(
+    table: pl.DataFrame, labels: list[str]
+) -> dict[str, dict[str, float]]:
+    """Reads an aspect summary as ``{metric: {group label: mean}}``.
+
+    Args:
+        table: A summary from ``compare_scalar_metrics``: ``baseline`` and
+            ``candidate`` columns for two groups, one column per label
+            otherwise.
+        labels: The group labels, baseline first.
+
+    Returns:
+        The mean of every metric in every group the table has a column for.
+    """
+    if {"baseline", "candidate"} <= set(table.columns):
+        columns = dict(zip(labels, ("baseline", "candidate"), strict=False))
+    else:
+        columns = {label: label for label in labels if label in table.columns}
+    return {
+        row["metric"]: {
+            label: float(row[column]) for label, column in columns.items()
+        }
+        for row in table.iter_rows(named=True)
+        if "metric" in row
+    }
