@@ -3,11 +3,29 @@
 One build for everything: `pip install .` (or `-e .`) runs CMake on native/,
 which writes `cta/_native*.so` next to the Python code, and the wheel is
 tagged as a platform wheel.
+
+The build can be adjusted with environment variables (all optional):
+
+    CTA_BUILD_DIR     CMake build directory (default: build/native).
+    CTA_GENERATOR     CMake generator (default: Ninja if installed, else
+                      "Unix Makefiles").
+    CTA_BUILD_TYPE    CMake build type (default: Release).
+    CTA_BUILD_JOBS    Parallel compile jobs (default: the generator's choice).
+    CTA_PREFIX_PATH   Extra prefixes to search for libraries, separated by
+                      ":" (becomes CMAKE_PREFIX_PATH).
+    CTA_CMAKE_ARGS    Extra arguments for the CMake configure step.
+    CTA_FRESH         "auto" (default) starts from an empty CMake cache only
+                      when the cache is stale, "always" always does, "never"
+                      never does.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+import os
 import pathlib
+import shlex
+import shutil
 import subprocess
 import sys
 
@@ -22,6 +40,7 @@ _PATH_ENTRIES = (
     "CMAKE_MAKE_PROGRAM",
     "NB_DIR",
 )
+_FRESH_MODES = ("auto", "always", "never")
 
 
 def cmake_supports_fresh() -> bool:
@@ -84,6 +103,114 @@ def cache_is_stale(
     )
 
 
+def choose_generator(env: Mapping[str, str], ninja_found: bool) -> str:
+    """Picks the CMake generator.
+
+    Args:
+        env: The environment variables.
+        ninja_found: Whether ``ninja`` is on the PATH.
+
+    Returns:
+        ``CTA_GENERATOR`` if set, else Ninja when installed, else Makefiles.
+    """
+    if env.get("CTA_GENERATOR"):
+        return env["CTA_GENERATOR"]
+    return "Ninja" if ninja_found else "Unix Makefiles"
+
+
+def use_fresh(env: Mapping[str, str], stale: bool) -> bool:
+    """Decides whether to configure from an empty cache.
+
+    Args:
+        env: The environment variables.
+        stale: Whether the existing cache is stale.
+
+    Returns:
+        True when ``CTA_FRESH`` is ``always``, or ``auto`` (the default) and
+        the cache is stale.
+
+    Raises:
+        ValueError: ``CTA_FRESH`` is not one of auto, always, never.
+    """
+    mode = env.get("CTA_FRESH", "auto").lower()
+    if mode not in _FRESH_MODES:
+        raise ValueError(
+            f"CTA_FRESH is '{mode}'; use one of {', '.join(_FRESH_MODES)}"
+        )
+    return mode == "always" or (mode == "auto" and stale)
+
+
+def configure_command(
+    env: Mapping[str, str],
+    *,
+    source_dir: pathlib.Path,
+    build_dir: pathlib.Path,
+    output_dir: pathlib.Path,
+    python: str,
+    nanobind_dir: str,
+    generator: str,
+    fresh: bool,
+) -> list[str]:
+    """Builds the cmake configure command.
+
+    Args:
+        env: The environment variables.
+        source_dir: The directory holding CMakeLists.txt.
+        build_dir: The build directory.
+        output_dir: Where the extension is written (the cta package).
+        python: The Python interpreter the extension is built for.
+        nanobind_dir: The nanobind CMake directory.
+        generator: The CMake generator.
+        fresh: Whether to pass ``--fresh``.
+
+    Returns:
+        The argument list; ``CTA_CMAKE_ARGS`` comes last, so it can override.
+    """
+    command = ["cmake"]
+    if fresh:
+        command.append("--fresh")
+    command += [
+        "-S",
+        str(source_dir),
+        "-B",
+        str(build_dir),
+        "-G",
+        generator,
+        f"-DCMAKE_BUILD_TYPE={env.get('CTA_BUILD_TYPE', 'Release')}",
+        f"-DPython_EXECUTABLE={python}",
+        f"-Dnanobind_DIR={nanobind_dir}",
+        f"-DCTA_NATIVE_OUTPUT={output_dir}",
+    ]
+    if env.get("CTA_PREFIX_PATH"):
+        command.append(f"-DCMAKE_PREFIX_PATH={env['CTA_PREFIX_PATH']}")
+    command += shlex.split(env.get("CTA_CMAKE_ARGS", ""))
+    return command
+
+
+def build_command(env: Mapping[str, str], build_dir: pathlib.Path) -> list[str]:
+    """Builds the ``cmake --build`` command.
+
+    Args:
+        env: The environment variables.
+        build_dir: The build directory.
+
+    Returns:
+        The argument list, with ``-j`` when ``CTA_BUILD_JOBS`` is set.
+
+    Raises:
+        ValueError: ``CTA_BUILD_JOBS`` is not a positive integer.
+    """
+    command = ["cmake", "--build", str(build_dir)]
+    jobs = env.get("CTA_BUILD_JOBS")
+    if jobs:
+        if not jobs.isdigit() or int(jobs) < 1:
+            raise ValueError(
+                f"CTA_BUILD_JOBS is '{jobs}'; use a positive integer"
+            )
+        command += ["-j", jobs]
+    return command
+
+
 class NativeBuildHook(BuildHookInterface):
     """Builds `cta._native` with CMake and nanobind."""
 
@@ -100,36 +227,38 @@ class NativeBuildHook(BuildHookInterface):
             return  # sdists ship the sources; only wheels compile them
         import nanobind
 
+        env = os.environ
         root = pathlib.Path(self.root)
         source_dir = root / "native"
-        build_dir = root / "build" / "native"
-        fresh = cache_is_stale(build_dir, source_dir, "Ninja")
+        build_dir = pathlib.Path(
+            env.get("CTA_BUILD_DIR") or root / "build" / "native"
+        ).resolve()
+        generator = choose_generator(env, shutil.which("ninja") is not None)
+        stale = cache_is_stale(build_dir, source_dir, generator)
+        fresh = use_fresh(env, stale)
         if fresh:
+            reason = "is stale" if stale else "was requested (CTA_FRESH)"
             self.app.display_info(
-                "cta: starting from an empty CMake cache, which is stale"
+                f"cta: starting from an empty CMake cache, which {reason}"
             )
-            if not cmake_supports_fresh():
-                # Before cmake 3.24: remove the cache by hand.
-                (build_dir / "CMakeCache.txt").unlink(missing_ok=True)
-                fresh = False
+        if fresh and not cmake_supports_fresh():
+            # Before cmake 3.24: remove the cache by hand.
+            (build_dir / "CMakeCache.txt").unlink(missing_ok=True)
+            fresh = False
         subprocess.run(
-            [
-                "cmake",
-                *(["--fresh"] if fresh else []),
-                "-S",
-                str(source_dir),
-                "-B",
-                str(build_dir),
-                "-G",
-                "Ninja",
-                "-DCMAKE_BUILD_TYPE=Release",
-                f"-DPython_EXECUTABLE={sys.executable}",
-                f"-Dnanobind_DIR={nanobind.cmake_dir()}",
-                f"-DCTA_NATIVE_OUTPUT={root / 'cta'}",
-            ],
+            configure_command(
+                env,
+                source_dir=source_dir,
+                build_dir=build_dir,
+                output_dir=root / "cta",
+                python=sys.executable,
+                nanobind_dir=nanobind.cmake_dir(),
+                generator=generator,
+                fresh=fresh,
+            ),
             check=True,
         )
-        subprocess.run(["cmake", "--build", str(build_dir)], check=True)
+        subprocess.run(build_command(env, build_dir), check=True)
         build_data["pure_python"] = False
         build_data["infer_tag"] = True
         build_data["artifacts"].append("cta/_native*.so")
