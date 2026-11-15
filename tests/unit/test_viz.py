@@ -1389,3 +1389,60 @@ def test_dashboard_suggests_only_registered_kinds() -> None:
     assert 'data-kind="metric_dist"' in markup
     assert 'data-kind="bar"' not in markup
 
+
+_EXTENDED_KINDS = (
+    "forest",
+    "volcano",
+    "memcpy_bandwidth",
+    "memcpy_sizes",
+    "memcpy_overlap",
+    "scope_icicle",
+    "idle_gaps",
+    "critical_path",
+    "runtime_top",
+    "runtime_timeline",
+    "sync_waits",
+    "runtime_step_mix",
+    "metric_radar",
+    "ridgeline",
+    "parallel_coords",
+    "facet",
+)
+
+
+@pytest.mark.parametrize("kind", _EXTENDED_KINDS)
+def test_extended_kinds_on_a_real_report_draw_or_decline(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path, kind: str
+) -> None:
+    """On cached tables each kind either draws or says why it cannot."""
+    ctx = data.DataContext(pair)
+    try:
+        chart, options = viz.build_chart(ctx, kind)
+    except viz_spec.NotApplicableError:
+        return
+    assert chart.panels
+    viz.render_chart(chart, options, tmp_path / f"{kind}.png")
+    assert (tmp_path / f"{kind}.png").stat().st_size > 1000
+
+
+def test_runtime_calls_reach_the_plots_through_the_cache(
+    pair: models.ComparisonReport,
+) -> None:
+    ctx = data.DataContext(pair)
+    assert "runtime_calls" in ctx.available()
+    calls = ctx.frame("runtime_calls")
+    assert {"label", "t_ms", "end_ms", "idx", "name", "thread"} <= set(
+        calls.columns
+    )
+    assert set(calls["name"].to_list()) == {"cudaLaunchKernel"}
+    assert set(calls["label"].to_list()) == {"base", "cand"}
+    chart, _ = viz.build_chart(ctx, "runtime_top")
+    assert chart.panels[0].traces[0].y == ["cudaLaunchKernel"]
+    timeline, _ = viz.build_chart(ctx, "runtime_timeline")
+    assert [panel.title for panel in timeline.panels] == [
+        "base (rank 0)",
+        "cand (rank 0)",
+    ]
+    for kind in ("memcpy_bandwidth", "sync_waits"):
+        with pytest.raises(viz_spec.NotApplicableError):
+            viz.build_chart(ctx, kind)
