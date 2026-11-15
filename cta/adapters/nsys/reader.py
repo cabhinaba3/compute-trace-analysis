@@ -25,6 +25,7 @@ import polars as pl
 
 from cta import _native as native
 from cta.adapters.nsys import network_ops
+from cta.adapters.nsys import runtime_calls
 from cta.core import alignment
 from cta.core import bundle
 from cta.core import intervals
@@ -526,8 +527,8 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         rank: The rank written to the kernels, steps and gpu_metrics rows.
 
     Returns:
-        The ``kernels``, ``steps``, ``runtime``, ``osrt``, ``gpu_metrics``
-        and ``network_ops`` frames, by table name.
+        The ``kernels``, ``steps``, ``runtime``, ``osrt``, ``gpu_metrics``,
+        ``network_ops`` and ``runtime_calls`` frames, by table name.
     """
     columns = native.read_nsys_sqlite(str(db_path))
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -592,7 +593,18 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     ) as host_conn:
         host_ops = network_ops.host_network_ops(host_conn, tables, rank, steps)
+    calls = columns["runtime_calls"]
     return {
+        "runtime_calls": runtime_calls.runtime_calls_frame(
+            calls["names"],
+            calls["name"],
+            calls["start"],
+            calls["end"],
+            calls["thread"],
+            calls["correlation"],
+            rank,
+            steps,
+        ),
         "kernels": kernels,
         "steps": steps,
         "runtime": runtime,
@@ -609,7 +621,7 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
     }
 
 
-@registry.register_adapter("nsys", version="2.4")
+@registry.register_adapter("nsys", version="2.5")
 class NsysAdapter:
     """Reads Nsight Systems reports and SQLite exports, one per rank.
 
@@ -619,7 +631,7 @@ class NsysAdapter:
     """
 
     format_name = "nsys"
-    version = "2.4"
+    version = "2.5"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Returns whether a file is an Nsight Systems report or export.
@@ -700,5 +712,8 @@ class NsysAdapter:
             "runtime": merge_summaries("runtime", RUNTIME_SCHEMA),
             "osrt": merge_summaries("osrt", OSRT_SCHEMA),
             "gpu_metrics": concat_reports("gpu_metrics", GPU_METRICS_SCHEMA),
+            "runtime_calls": concat_reports(
+                "runtime_calls", runtime_calls.RUNTIME_CALLS_SCHEMA
+            ).sort(["rank", "start_ns"]),
         }
         return bundle.write_tables(out_dir, merged_tables)

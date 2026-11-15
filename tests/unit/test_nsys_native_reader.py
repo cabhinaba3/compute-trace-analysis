@@ -23,6 +23,7 @@ import pytest
 
 from cta import _native
 from cta.adapters.nsys import reader
+from cta.adapters.nsys import runtime_calls
 from cta.core import intervals
 from cta.core import models
 from cta.synth import nsys as synth_nsys
@@ -258,11 +259,11 @@ def _tables(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         written = reader.NsysAdapter().ingest(artifact, out_dir)
-    # network_ops is newer than the Python reader the digests come from.
+    # These tables are newer than the Python reader the digests come from.
     return {
         name: pl.read_parquet(p)
         for name, p in written.items()
-        if name != "network_ops"
+        if name not in ("network_ops", "runtime_calls")
     }
 
 
@@ -457,3 +458,48 @@ def test_chains_of_coded_names_equal_chains_of_a_list() -> None:
             threads, wanted, [texts[c] for c in codes]
         )
         assert coded.tolist() == plain.tolist()
+
+
+def test_runtime_calls_are_listed_and_add_up_to_the_summary(
+    tmp_path: pathlib.Path,
+) -> None:
+    cols = _native.read_nsys_sqlite(str(_fixtures(tmp_path)["labels"]))
+    calls = cols["runtime_calls"]
+    assert len(calls["name"]) > 0
+    names = [calls["names"][code] for code in calls["name"].tolist()]
+    duration = calls["end"] - calls["start"]
+    assert (duration > 0).all()
+    totals: dict[str, list[int]] = {}
+    for name, ns in zip(names, duration.tolist(), strict=True):
+        entry = totals.setdefault(name, [0, 0])
+        entry[0] += ns
+        entry[1] += 1
+    summary = {
+        cols["runtime"]["names"][i]: [
+            int(cols["runtime"]["duration_ns"][i]),
+            int(cols["runtime"]["calls"][i]),
+        ]
+        for i in range(len(cols["runtime"]["names"]))
+    }
+    assert totals == summary
+
+
+def test_runtime_calls_table_has_steps_and_threads(
+    tmp_path: pathlib.Path,
+) -> None:
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    artifact = models.TraceArtifact(
+        format="nsys", paths=(_fixtures(tmp_path)["labels"],), world_size=1
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        written = reader.NsysAdapter().ingest(artifact, out_dir)
+    table = pl.read_parquet(written["runtime_calls"])
+    assert table.schema == runtime_calls.RUNTIME_CALLS_SCHEMA
+    assert table["start_ns"].is_sorted()
+    assert (table["duration_ns"] == table["end_ns"] - table["start_ns"]).all()
+    # The call at 115 on thread 1 launches a kernel and sits inside step 4.
+    launch = table.filter(pl.col("start_ns") == 115)
+    assert launch["thread"].to_list() == [1001]
+    assert launch["step"].to_list() == [4]

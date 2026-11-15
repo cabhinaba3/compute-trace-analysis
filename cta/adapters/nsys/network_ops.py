@@ -87,7 +87,7 @@ def host_network_ops(
     return (
         ops.with_columns(
             pl.lit(rank, dtype=pl.Int32).alias("rank"),
-            pl.Series("step", _step_of(ops["start_ns"].to_numpy(), steps)),
+            pl.Series("step", step_of(ops["start_ns"].to_numpy(), steps)),
         )
         .select(list(network.NETWORK_OPS_SCHEMA))
         .cast(network.NETWORK_OPS_SCHEMA)
@@ -194,8 +194,16 @@ def _with_host_columns(rows: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _step_of(start_ns: np.ndarray, steps: pl.DataFrame) -> np.ndarray:
-    """Returns the step each start time falls in, or -1."""
+def step_of(start_ns: np.ndarray, steps: pl.DataFrame) -> np.ndarray:
+    """Returns the step each start time falls in, or -1.
+
+    Args:
+        start_ns: Start times.
+        steps: Step ranges with ``step``, ``start_ns`` and ``end_ns``.
+
+    Returns:
+        One step number per start time; -1 outside every step.
+    """
     if steps.is_empty():
         return np.full(len(start_ns), -1, dtype=np.int32)
     ordered = steps.sort("start_ns")
