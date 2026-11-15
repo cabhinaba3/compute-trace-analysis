@@ -39,7 +39,7 @@ def _duration_weighted_mean(df: pl.DataFrame, column: str) -> float | None:
         return None
     total_ns = float(with_value["duration_ns"].sum() or 0.0)
     if total_ns <= 0:
-        return float(with_value[column].mean())  # type: ignore[arg-type]
+        return float(with_value[column].to_numpy().mean())
     weighted = with_value[column] * with_value["duration_ns"]
     return float(weighted.sum()) / total_ns
 

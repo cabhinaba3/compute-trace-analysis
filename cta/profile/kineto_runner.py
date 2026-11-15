@@ -22,6 +22,7 @@ import inspect
 import os
 import pathlib
 import sys
+from typing import Any
 
 from cta.profile import runners
 
@@ -71,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # torch only emits ProfilerStep#N ranges when a schedule is given, so use
     # one that records every step forever.
-    kwargs: dict[str, object] = {}
+    kwargs: dict[str, Any] = {}
     if args.step_on == "optimizer":
         kwargs["schedule"] = lambda _step: profiler.ProfilerAction.RECORD
         # Keep events across steps (torch >= 2.2).
@@ -79,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             kwargs["acc_events"] = True
 
     handle = None
-    with profiler.profile(activities=activities, **kwargs) as prof:  # type: ignore[arg-type]
+    with profiler.profile(activities=activities, **kwargs) as prof:
         if args.step_on == "optimizer":
             handle = optimizer.register_optimizer_step_post_hook(
                 lambda *_a, **_k: prof.step()

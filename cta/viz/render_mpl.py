@@ -239,7 +239,7 @@ def _draw_trace(
         _draw_heatmap(ax, trace, panel, fig)
     elif trace.mark == "hline":
         ax.axhline(
-            float(trace.y[0]),  # type: ignore[index]
+            float(_require_values(y, trace, "y")[0]),
             color=color,
             lw=style.get("width", 0.9),
             ls=style.get("dash", "--"),
@@ -247,7 +247,7 @@ def _draw_trace(
         )
     elif trace.mark == "vline":
         ax.axvline(
-            float(trace.x[0]),  # type: ignore[index]
+            float(_require_values(x, trace, "x")[0]),
             color=color,
             lw=style.get("width", 0.9),
             ls=style.get("dash", "--"),

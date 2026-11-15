@@ -254,9 +254,7 @@ def filter_choices(ctx: data.DataContext) -> dict[str, Any]:
             int(rank) for rank in steps["rank"].unique().to_list()
         )
         steps_per_rank = steps.group_by("label", "trial", "rank").len()["len"]
-        choices["nsteps"] = int(
-            steps_per_rank.max() or 0  # type: ignore[arg-type]
-        )
+        choices["nsteps"] = max(steps_per_rank.to_list(), default=0)
     with contextlib.suppress(viz_spec.NotApplicableError):
         devices = ctx.frame("kernels")["device"].unique().to_list()
         choices["devices"] = sorted(int(device) for device in devices)
