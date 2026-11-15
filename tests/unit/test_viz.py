@@ -850,7 +850,7 @@ def test_live_server_answers_filter_queries_over_http(
 
 
 def test_trace_analysis_catalog_registration() -> None:
-    """Verifies that all 5 trace analysis kinds are in the catalog."""
+    """All five trace analysis kinds are in the catalog."""
     viz_spec.load_kinds()
     catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
     expected_kinds = {
@@ -877,7 +877,7 @@ def test_trace_analysis_catalog_registration() -> None:
 def test_trace_analysis_dual_backend_svg_and_png(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
-    """Verifies Matplotlib SVG, PNG and Plotly HTML for all 5 kinds."""
+    """All five kinds render to PNG, SVG and Plotly HTML."""
     ctx = data.DataContext(pair)
     kinds = (
         "metric_trace",
@@ -910,10 +910,10 @@ def test_trace_analysis_dual_backend_svg_and_png(
 def test_trace_analysis_options_and_modes(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
-    """Tests varied options and presentation modes across the new plots."""
+    """Options and modes of the new plots change what is drawn."""
     ctx = data.DataContext(pair)
 
-    # 1. metric_dist across all 4 modes
+    # metric_dist across all 4 modes
     for mode in ("hist", "ecdf", "box", "percentile"):
         chart, _ = viz.build_chart(
             ctx,
@@ -929,7 +929,7 @@ def test_trace_analysis_options_and_modes(
         )
         assert (tmp_path / f"dist_{mode}.png").stat().st_size > 1000
 
-    # 2. category_compare horizontal, stacked, normalized, different aggs
+    # category_compare horizontal, stacked, normalized, different aggs
     chart, _ = viz.build_chart(
         ctx,
         "category_compare",
@@ -946,7 +946,7 @@ def test_trace_analysis_options_and_modes(
     assert chart.panels[0].traces[0].mark == "barh"
     assert chart.panels[0].stacked
 
-    # 3. execution_heatmap with time bins and log scale
+    # execution_heatmap with time bins and log scale
     chart, _ = viz.build_chart(
         ctx,
         "execution_heatmap",
@@ -955,7 +955,7 @@ def test_trace_analysis_options_and_modes(
     assert chart.panels
     assert chart.panels[0].traces[0].mark == "heatmap"
 
-    # 4. metric_trace with rolling median and downsampling
+    # metric_trace with rolling median and downsampling
     chart, _ = viz.build_chart(
         ctx,
         "metric_trace",
@@ -964,7 +964,7 @@ def test_trace_analysis_options_and_modes(
     assert chart.panels[0].traces
     assert any("median" in (t.name or "") for t in chart.panels[0].traces)
 
-    # 5. metric_correlation with trend line and annotations
+    # metric_correlation with trend line and annotations
     chart, _ = viz.build_chart(
         ctx,
         "metric_correlation",
@@ -984,7 +984,7 @@ def test_trace_analysis_options_and_modes(
     reason="real DDP fixtures not generated",
 )
 def test_trace_analysis_real_ddp_data(tmp_path: pathlib.Path) -> None:
-    """Verifies all 5 plot kinds against real DDP trace data."""
+    """The five kinds draw from real DDP trace data."""
     report = cta.analyze(
         REAL_DATA_DIR / "e", label="ddp", cache_dir=tmp_path / "c"
     )
@@ -1005,7 +1005,7 @@ def test_trace_analysis_real_ddp_data(tmp_path: pathlib.Path) -> None:
 
 
 def test_trace_analysis_two_gpu_trace(tmp_path: pathlib.Path) -> None:
-    """Verifies multi-device execution heatmap on synthetic two-GPU trace."""
+    """The execution heatmap covers both devices of a two-GPU trace."""
     trace_path = _two_gpu_trace(tmp_path / "two_gpu.json")
     report = cta.analyze(trace_path, label="two_gpu", cache_dir=tmp_path / "c")
     ctx = data.DataContext(report)
@@ -1023,22 +1023,22 @@ def test_trace_analysis_two_gpu_trace(tmp_path: pathlib.Path) -> None:
 def test_trace_analysis_input_validation_and_errors(
     pair: models.ComparisonReport,
 ) -> None:
-    """Verifies rejection of invalid options and NotApplicableError handling."""
+    """Bad options and missing columns raise clear errors."""
     ctx = data.DataContext(pair)
 
-    # 1. Invalid option choice
+    # Invalid option choice
     with pytest.raises(ValueError, match="is not one of"):
         viz.build_chart(ctx, "metric_dist", {"mode": "invalid_mode"})
 
-    # 2. Unknown option with fuzzy suggestion
+    # Unknown option with fuzzy suggestion
     with pytest.raises(ValueError, match="did you mean 'rolling'"):
         viz.build_chart(ctx, "metric_trace", {"roolling": 5})
 
-    # 3. Missing column raises NotApplicableError
+    # Missing column raises NotApplicableError
     with pytest.raises(viz_spec.NotApplicableError, match="not found in"):
         viz.build_chart(ctx, "metric_correlation", {"x": "nonexistent_metric"})
 
-    # 4. Inapplicable table source raises NotApplicableError
+    # Inapplicable table source raises NotApplicableError
     with pytest.raises(viz_spec.NotApplicableError):
         viz.build_chart(ctx, "metric_trace", {"source": "jtop"})
 
