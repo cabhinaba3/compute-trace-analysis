@@ -22,6 +22,7 @@
 - Statistics: `forest` (change of every metric with its combined 95% interval) and `volcano` (size of the change against -log10 p).
 - Memory: `memcpy_bandwidth`, `memcpy_sizes` and `memcpy_overlap` (copy time hidden behind compute, per device).
 - Hierarchy and idle time: `scope_icicle` (time by nested scope), `idle_gaps` (gaps from the union of each device's kernels) and `critical_path` (compute, exposed communication and slack from the `dag_critical_path` summary; the solver returns no path, so the path itself is not drawn).
+- Host API: `runtime_top` (CUDA runtime or OS calls by time), `runtime_timeline` (calls and GPU kernels on one timeline), `sync_waits` and `runtime_step_mix`.
 
 ### Native synthetic generators; Linux only; Python 3.12+ (breaking)
 - Python 3.11 is no longer supported. CI, the classifiers, ruff and mypy moved to 3.12.
