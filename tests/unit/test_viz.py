@@ -1184,6 +1184,140 @@ def test_network_matrix_needs_a_known_peer(
         viz.build_chart(_network_context(pair), "network_matrix")
 
 
+def test_queue_depth_catalog_registration() -> None:
+    """queue_depth is registered with its aliases and options."""
+    viz_spec.load_kinds()
+    catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
+    assert "queue_depth" in catalog
+    kind = catalog["queue_depth"]
+    assert kind.group == "timeline"
+    assert set(kind.aliases) == {
+        "concurrency",
+        "stream_concurrency",
+        "active_kernels",
+    }
+    assert "by" in kind.options
+    assert "bins" in kind.options
+    assert "devices" in kind.options
+    assert "max_events" in kind.options
+    for alias in kind.aliases:
+        assert viz_spec.get_kind(alias).name == "queue_depth"
+
+
+def test_queue_depth_dual_backend_rendering(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path
+) -> None:
+    """queue_depth renders on both backends."""
+    ctx = data.DataContext(pair)
+    chart, opts = viz.build_chart(ctx, "queue_depth", {"by": "category"})
+    assert chart.panels
+    assert all(t.mark == "step" for p in chart.panels for t in p.traces)
+
+    png_path = tmp_path / "qd.png"
+    svg_path = tmp_path / "qd.svg"
+    pdf_path = tmp_path / "qd.pdf"
+    html_path = tmp_path / "qd.html"
+
+    viz.render_chart(chart, opts, png_path)
+    assert png_path.stat().st_size > 1000
+
+    viz.render_chart(chart, opts, svg_path)
+    assert svg_path.stat().st_size > 500
+    assert "<svg" in svg_path.read_text()
+
+    viz.render_chart(chart, opts, pdf_path)
+    assert pdf_path.stat().st_size > 1000
+
+    pytest.importorskip("plotly")
+    viz.render_chart(chart, opts, html_path)
+    assert html_path.stat().st_size > 1000
+    assert "plotly" in html_path.read_text()[:200000].lower()
+
+    # Test options: stream, total, and bins=0
+    for by_mode in ("stream", "total"):
+        c_by, _ = viz.build_chart(ctx, "queue_depth", {"by": by_mode})
+        assert c_by.panels[0].traces
+
+    c_bins0, _ = viz.build_chart(ctx, "queue_depth", {"bins": 0})
+    assert c_bins0.panels[0].traces
+
+
+def _kernel_context(rows: list[dict[str, Any]]) -> data.DataContext:
+    """Returns a context whose kernels table is ``rows``."""
+    ctx = data.DataContext(None)
+    ctx._raw_tables = {"kernels": pl.DataFrame(rows)}
+    ctx._is_built = True
+    return ctx
+
+
+def _kernel(
+    label: str,
+    start: float,
+    duration: float,
+    *,
+    rank: int = 0,
+    stream: int = 7,
+) -> dict[str, Any]:
+    return {
+        "label": label,
+        "trial": 0,
+        "rank": rank,
+        "device": rank,
+        "stream": stream,
+        "category": "compute",
+        "t_ms": start,
+        "end_ms": start + duration,
+        "duration_ms": duration,
+    }
+
+
+def _deepest(chart: Any) -> float:
+    return max(max(t.y) for p in chart.panels for t in p.traces)
+
+
+def test_queue_depth_cap_applies_to_each_group() -> None:
+    rows = [_kernel("base", i * 0.01, 0.005) for i in range(50)]
+    rows += [_kernel("cand", i * 0.01, 0.005) for i in range(5)]
+    chart, _ = viz.build_chart(
+        _kernel_context(rows), "queue_depth", {"max_events": 10}
+    )
+    assert [panel.title for panel in chart.panels] == ["base", "cand"]
+    assert "base" in chart.notes
+    assert "cand" not in chart.notes
+
+
+def test_queue_depth_sees_an_overlap_between_bins() -> None:
+    # A 1 us kernel on a second stream, far from any bin edge.
+    rows = [_kernel("g", 0.0, 1000.0, stream=1)]
+    rows += [_kernel("g", 502.5, 0.001, stream=2)]
+    chart, _ = viz.build_chart(
+        _kernel_context(rows), "queue_depth", {"by": "total"}
+    )
+    assert _deepest(chart) == 2
+
+
+def test_queue_depth_back_to_back_kernels_do_not_overlap() -> None:
+    rows = [_kernel("g", float(i), 1.0) for i in range(20)]
+    chart, _ = viz.build_chart(
+        _kernel_context(rows), "queue_depth", {"by": "total", "bins": 0}
+    )
+    assert _deepest(chart) == 1
+
+
+def test_queue_depth_counts_each_gpu_on_its_own() -> None:
+    rows = [
+        _kernel("g", float(i), 0.9, rank=r) for r in range(4) for i in range(20)
+    ]
+    ctx = _kernel_context(rows)
+    busiest, _ = viz.build_chart(ctx, "queue_depth", {"by": "total"})
+    assert _deepest(busiest) == 1
+    assert len(busiest.panels[0].traces) == 1
+    split, _ = viz.build_chart(
+        ctx, "queue_depth", {"by": "total", "devices": "split"}
+    )
+    assert len(split.panels[0].traces) == 4
+
+
 def test_suggested_alternatives_are_registered_kinds() -> None:
     import ast
     import re
