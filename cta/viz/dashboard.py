@@ -26,6 +26,7 @@ from typing import Any
 from cta.viz import data
 from cta.viz import plots
 from cta.viz import spec as viz_spec
+from cta.viz import suitability
 
 # Plot group -> tab title.
 _TAB_TITLES = {
@@ -62,7 +63,26 @@ _STYLE = (
     ".card h3{margin:4px 0;font-size:15px}"
     ".card small{opacity:.5;font-weight:normal;margin-left:8px}\n"
     ".note{margin:4px 0 0;font-size:12px;opacity:.75}"
-    "details{padding:8px 20px;font-size:12px;opacity:.8}"
+    "details{padding:8px 20px;font-size:12px;opacity:.8}\n"
+    ".card-header{display:flex;justify-content:space-between;"
+    "align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px}\n"
+    ".card-controls{display:flex;align-items:center;gap:6px;font-size:12px}\n"
+    ".kind-switcher{border:1px solid #8886;background:transparent;"
+    "color:inherit;padding:3px 8px;border-radius:4px;font-size:12px;"
+    "cursor:pointer}\n"
+    ".suitability-callouts{margin:4px 0 8px;display:flex;"
+    "flex-direction:column;gap:4px}\n"
+    ".badge{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;"
+    "padding:4px 8px;border-radius:4px;font-size:12px;line-height:1.3}\n"
+    ".badge-warning{background:#D55E0018;border:1px solid #D55E0066;"
+    "color:#D55E00}\n"
+    ".badge-ok{background:#009E7318;border:1px solid #009E7366;"
+    "color:#009E73;font-size:11px}\n"
+    ".badge-suggestions{display:inline-flex;align-items:center;gap:4px;"
+    "margin-left:6px;font-weight:500}\n"
+    ".chip-alt{background:#8882;border:1px solid #8886;color:inherit;"
+    "padding:1px 6px;border-radius:3px;cursor:pointer;font-size:11px}\n"
+    ".chip-alt:hover{background:#0072B2;color:#fff;border-color:#0072B2}\n"
 )
 
 
@@ -103,6 +123,9 @@ class Card:
         spec: The plot spec.
         fig_json: Plotly figure JSON of the full data, safe to embed in a
             ``<script>`` element (``</`` is escaped).
+        suitability: Warnings that the data does not suit the plot kind.
+        available_kinds: Kinds the card's selector offers: those of its own
+            group, and the ones its warnings suggest.
     """
 
     index: int
@@ -112,6 +135,8 @@ class Card:
     notes: str
     spec: viz_spec.PlotSpec
     fig_json: str
+    suitability: list[str] = dataclasses.field(default_factory=list)
+    available_kinds: list[str] = dataclasses.field(default_factory=list)
 
 
 def default_specs(ctx: data.DataContext) -> list[viz_spec.PlotSpec]:
@@ -149,8 +174,8 @@ def figure_json(
     spec: viz_spec.PlotSpec,
     theme: str = "light",
     palette: str | None = None,
-) -> tuple[str, str, str]:
-    """Builds one spec's Plotly figure as JSON.
+) -> tuple[str, str, str, list[str]]:
+    """Builds one spec's Plotly figure as JSON with suitability advisories.
 
     Args:
         ctx: Data the plot draws from.
@@ -160,7 +185,7 @@ def figure_json(
 
     Returns:
         The figure JSON (with ``</`` escaped for embedding in HTML), the
-        chart title and the chart notes.
+        chart title, the chart notes and the suitability warnings.
 
     Raises:
         viz_spec.NotApplicableError: If the plot cannot be drawn from this data.
@@ -173,9 +198,17 @@ def figure_json(
         **({"palette": palette} if palette else {}),
         **spec.options,
     }
-    chart, resolved = plots.build_chart(ctx, spec.kind, options)
+    chart, resolved = plots.build_chart(ctx, spec.kind, options, warn=False)
     fig_json = pio.to_json(plots.to_plotly(chart, resolved))
-    return fig_json.replace("</", "<\\/"), chart.title, chart.notes
+    warnings = suitability.check_suitability(
+        ctx, spec.kind, resolved, chart=chart
+    )
+    return (
+        fig_json.replace("</", "<\\/"),
+        chart.title,
+        chart.notes,
+        warnings,
+    )
 
 
 def plan(
@@ -207,19 +240,35 @@ def plan(
     skipped: dict[str, str] = {}
     for spec in specs if specs is not None else default_specs(ctx):
         try:
-            fig_json, title, notes = figure_json(ctx, spec, theme, palette)
+            fig_json, title, notes, warnings = figure_json(
+                ctx, spec, theme, palette
+            )
         except (viz_spec.NotApplicableError, ValueError) as exc:
             skipped[spec.stem] = str(exc)
             continue
+        group = viz_spec.get_kind(spec.kind).group
+        own_group = [
+            k.name
+            for k in viz_spec.kind_catalog()
+            if k.group == group and k.name != "custom"
+        ]
+        suggested = [
+            alt for w in warnings for alt in suitability.known_alternatives(w)
+        ]
+        available_kinds = list(
+            dict.fromkeys([spec.kind, *own_group, *suggested])
+        )
         cards.append(
             Card(
                 len(cards),
                 spec.stem,
-                viz_spec.get_kind(spec.kind).group,
+                group,
                 title,
                 notes,
                 spec,
                 fig_json,
+                suitability=warnings,
+                available_kinds=available_kinds,
             )
         )
     if not cards:
@@ -399,6 +448,46 @@ def _tab_pane(group: str, cards: list[Card], *, live: bool) -> str:
     return f'<section id="tab-{group}" class="pane">{group_cards}</section>'
 
 
+def _badges_html(
+    warnings: list[str], card_index: int, current_kind: str
+) -> str:
+    """Renders a card's suitability warnings, with a button per suggestion.
+
+    Args:
+        warnings: The card's warnings; none means the data suits the kind.
+        card_index: Index of the card the buttons switch.
+        current_kind: The card's plot kind.
+
+    Returns:
+        The HTML of the warning boxes, or of one "suits" box.
+    """
+    if not warnings:
+        return (
+            f'<div class="badge badge-ok">'
+            f"Data suits {html.escape(current_kind)}</div>"
+        )
+    badge_items = []
+    for w in warnings:
+        alts = suitability.known_alternatives(w)
+        chips = ""
+        if alts:
+            chip_btns = "".join(
+                f'<button type="button" class="chip-alt" '
+                f'data-card="{card_index}" '
+                f'data-kind="{html.escape(alt)}">{html.escape(alt)}</button>'
+                for alt in alts
+            )
+            chips = (
+                f'<span class="badge-suggestions">Switch to: {chip_btns}</span>'
+            )
+        badge_items.append(
+            f'<div class="badge badge-warning">'
+            f'<span class="badge-text">{html.escape(w)}</span>'
+            f"{chips}</div>"
+        )
+    return "".join(badge_items)
+
+
 def _card_html(card: Card, *, live: bool) -> str:
     """Returns one plot's card.
 
@@ -418,8 +507,29 @@ def _card_html(card: Card, *, live: bool) -> str:
     )
     card_title = html.escape(card.title)
     stem = html.escape(card.spec.stem)
+    kind_options = "".join(
+        f'<option value="{html.escape(k)}"'
+        f"{' selected' if k == card.spec.kind else ''}>"
+        f"{html.escape(k)}</option>"
+        for k in card.available_kinds
+    )
+    switcher_html = (
+        f'<div class="card-controls"><label>Kind: '
+        f'<select class="kind-switcher" data-card="{card.index}" '
+        f'data-default="{html.escape(card.spec.kind)}">'
+        f"{kind_options}</select></label></div>"
+        if card.available_kinds
+        else ""
+    )
+    badges = _badges_html(card.suitability, card.index, card.spec.kind)
     return (
-        f'<div class="card"><h3>{card_title} <small>{stem}</small></h3>'
+        f'<div class="card" id="card-{card.index}">'
+        f'<div class="card-header">'
+        f'<h3><span id="title-{card.index}">{card_title}</span> '
+        f'<small id="stem-{card.index}">{stem}</small></h3>'
+        f"{switcher_html}</div>"
+        f'<div class="suitability-callouts" id="suitability-{card.index}">'
+        f"{badges}</div>"
         f'<div class="plot" id="plot-{card.index}"></div>{note}{payload}</div>'
     )
 
@@ -473,62 +583,138 @@ def _filter_bar(choices: dict[str, Any], *, live: bool) -> str:
     )
 
 
-# The page scripts stay verbatim JavaScript, so their long lines are kept.
-_COMMON_JS = """
+_COMMON_JS = r"""
 const done=new Set();
-function show(tab){document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',b.dataset.tab===tab));
- document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',p.id==='tab-'+tab));
- document.querySelectorAll('#tab-'+tab+' .plot').forEach(d=>{const i=d.id.split('-')[1];
+function show(tab){
+ document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('on',
+ b.dataset.tab===tab));
+ document.querySelectorAll('.pane').forEach(p=>p.classList.toggle('on',
+  p.id==='tab-'+tab));
+ document.querySelectorAll('#tab-'+tab+' .plot').forEach(d=>{
+  const i=d.id.split('-')[1];
   if(!done.has(i)){done.add(i);draw(d,i);}else Plotly.Plots.resize(d);});}
-function checked(c){return new Set([...document.querySelectorAll(c+':checked')].map(x=>x.value));}
-document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>show(b.dataset.tab)));
-"""  # noqa: E501
+function checked(c){
+ return new Set([...document.querySelectorAll(c+':checked')].map(x=>x.value));}
+document.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',
+ ()=>show(b.dataset.tab)));
+function escH(s){return String(s).replace(/&/g,'&amp;').replace(/</g,
+ '&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function bindChips(root){
+ root.querySelectorAll('.chip-alt').forEach(b=>{b.onclick=()=>{
+  const i=b.dataset.card,k=b.dataset.kind;
+  const s=document.querySelector('.kind-switcher[data-card="'+i+'"]');
+   if(s)s.value=k;
+  switchKind(i,k);};});}
+function updateBadges(i,k,warns,alts){
+ const c=document.getElementById('suitability-'+i);if(!c)return;
+ if(!warns||!warns.length){
+  c.innerHTML='<div class="badge badge-ok">Data suits '+escH(k)+'</div>';
+  return;}
+ let h='';
+ warns.forEach((w,n)=>{
+  const names=(alts&&alts[n])||[];let ch='';
+  if(names.length){
+   const btns=names.map(a=>'<button type="button" class="chip-alt" data-card="'
+   +i+'" data-kind="'+escH(a)+'">'+escH(a)+'</button>').join('');
+   ch='<span class="badge-suggestions">Switch to: '+btns+'</span>';}
+  h+='<div class="badge badge-warning"><span class="badge-text">'+escH(w)
+   +'</span>'+ch+'</div>';});
+ c.innerHTML=h;bindChips(c);}
+document.querySelectorAll('.kind-switcher').forEach(s=>{
+ s.onchange=()=>switchKind(s.dataset.card,s.value);});
+bindChips(document);
+"""
 
 _STATIC_JS = (
     """const LABELS=new Set(__LABELS__);const figs={};
-function figOf(i){return figs[i]||(figs[i]=JSON.parse(document.getElementById('fig-'+i).textContent));}
+function figOf(i){return figs[i]
+ ||(figs[i]=JSON.parse(document.getElementById('fig-'+i).textContent));}
 function draw(d,i){const f=figOf(i);
- Plotly.newPlot(d,structuredClone(f.data),structuredClone(f.layout),{responsive:true,displaylogo:false}).then(()=>apply(d,i));}
-function apply(d,i){const labs=checked('.f-label'),rk=checked('.f-rank'),f=figOf(i);
- const vis=f.data.map(t=>{const m=t.meta||{};if(m.label!==undefined&&!labs.has(String(m.label)))return false;
-  if(m.rank!==undefined&&rk.size&&!rk.has(String(m.rank)))return false;return true;});
+ Plotly.newPlot(d,structuredClone(f.data),structuredClone(f.layout),{
+  responsive:true,displaylogo:false}).then(()=>apply(d,i));}
+function switchKind(i,k){
+ const d=document.getElementById('plot-'+i);
+ const s=document.querySelector('.kind-switcher[data-card="'+i+'"]');
+ const defaultKind=s?s.dataset.default:'';
+ if(k===defaultKind){draw(d,i);}
+ else{Plotly.purge(d);
+  d.innerHTML='<div class="note" style="padding:16px;text-align:center;">'+
+   'Plot switching to <b>'+escH(k)+'</b> requires the live server: '+
+   '<code>cta plot ... --serve</code></div>';}}
+function apply(d,i){const labs=checked('.f-label'),rk=checked('.f-rank'),
+ f=figOf(i);
+ const vis=f.data.map(t=>{const m=t.meta||{};if(m.label!==undefined
+  &&!labs.has(String(m.label)))return false;
+  if(m.rank!==undefined&&rk.size&&!rk.has(String(m.rank)))return false;
+   return true;});
  Plotly.restyle(d,{visible:vis});
- f.data.forEach((t,k)=>{ // plots with the group on a category axis: drop the unchecked groups' bars / heatmap columns
-  const cat=t.type==='bar'?(t.orientation==='h'?t.y:t.x):(t.type==='heatmap'?t.x:null);
+ f.data.forEach((t,k)=>{
+  // Groups on a category axis: drop the unchecked groups' bars or columns.
+  const cat=t.type==='bar'?(t.orientation==='h'?t.y:t.x):
+   (t.type==='heatmap'?t.x:null);
   if(!cat||!cat.length||!cat.every(c=>LABELS.has(String(c))))return;
-  const keep=cat.map(c=>labs.has(String(c)));const pick=a=>a.filter((_,j)=>keep[j]);
+  const keep=cat.map(c=>labs.has(String(c)));const pick=a=>a.filter((_,
+   j)=>keep[j]);
   if(t.type==='heatmap')Plotly.restyle(d,{x:[pick(t.x)],z:[t.z.map(pick)]},[k]);
-  else if(t.orientation==='h')Plotly.restyle(d,{y:[pick(t.y)],x:[pick(t.x)]},[k]);
+  else if(t.orientation==='h')Plotly.restyle(d,{y:[pick(t.y)],x:[pick(t.x)]},
+   [k]);
   else Plotly.restyle(d,{x:[pick(t.x)],y:[pick(t.y)]},[k]);});
  const lo=document.getElementById('s-lo'),hi=document.getElementById('s-hi');
  const axes=(f.layout.meta&&f.layout.meta.step_axes)||[];
- if(lo&&axes.length){const u={};axes.forEach(a=>u[a+'.range']=[+lo.value-0.5,+hi.value-0.5]);Plotly.relayout(d,u);}}
-function applyAll(){done.forEach(i=>apply(document.getElementById('plot-'+i),i));}
-document.querySelectorAll('.filters input').forEach(x=>x.addEventListener('change',applyAll));
-"""  # noqa: E501
+ if(lo&&axes.length){const u={};axes.forEach(a=>u[a+'.range']=[+lo.value-0.5,
+  +hi.value-0.5]);Plotly.relayout(d,u);}}
+function applyAll(){done.forEach(i=>apply(document.getElementById('plot-'+i),
+ i));}
+document.querySelectorAll('.filters input').forEach(x=>
+ x.addEventListener('change',applyAll));
+"""
     + _COMMON_JS
     + "show(document.querySelector('.tab').dataset.tab);"
 )
 
 _LIVE_JS = (
-    """function query(){const q=new URLSearchParams();
- const add=(k,c)=>{const all=document.querySelectorAll(c),on=[...document.querySelectorAll(c+':checked')];
-  if(all.length&&on.length!==all.length)q.set(k,on.map(x=>x.value).join(',')||'none');};
+    """const activeKinds={};
+function switchKind(i,k){
+ activeKinds[i]=k;const d=document.getElementById('plot-'+i);draw(d,i);
+}
+function query(i){const q=new URLSearchParams();
+ const add=(k,c)=>{const all=document.querySelectorAll(c),
+  on=[...document.querySelectorAll(c+':checked')];
+  if(all.length&&on.length!==all.length)q.set(k,on.map(x=>x.value).join(',')
+   ||'none');};
  add('labels','.f-label');add('ranks','.f-rank');add('devices','.f-device');
- const lo=document.getElementById('s-lo'),hi=document.getElementById('s-hi');if(lo)q.set('steps',lo.value+':'+hi.value);return q.toString();}
+ const lo=document.getElementById('s-lo'),hi=document.getElementById('s-hi');
+  if(lo)q.set('steps',lo.value+':'+hi.value);
+ if(i!==undefined&&activeKinds[i])q.set('kind',activeKinds[i]);
+ return q.toString();}
 let token=0;
-async function draw(d,i){const t=++token;const st=document.getElementById('status');st.classList.add('busy');st.textContent='recomputing...';
- try{const r=await fetch('/api/plot?id='+i+'&'+query());const j=await r.json();
+async function draw(d,i){const t=++token;
+ const st=document.getElementById('status');st.classList.add('busy');
+ st.textContent='recomputing...';
+ try{const r=await fetch('/api/plot?id='+i+'&'+query(i));const j=await r.json();
   d.querySelectorAll('.err').forEach(e=>e.remove());
-  if(j.error){Plotly.purge(d);d.innerHTML='<div class="err">'+j.error.replace(/</g,'&lt;')+'</div>';}
-  else{const f=JSON.parse(j.figure);await Plotly.react(d,f.data,f.layout,{responsive:true,displaylogo:false});}
+  if(j.error){Plotly.purge(d);d.innerHTML='<div class="err">'
+   +j.error.replace(/</g,'&lt;')+'</div>';}
+  else{const f=JSON.parse(j.figure);await Plotly.react(d,f.data,f.layout,{
+   responsive:true,displaylogo:false});
+   if(j.title){const te=document.getElementById('title-'+i);
+    if(te)te.textContent=j.title;}
+   if(j.stem){const se=document.getElementById('stem-'+i);
+    if(se)se.textContent=j.stem;}
+   if(j.suitability!==undefined){updateBadges(i,activeKinds[i]
+    ||(document.querySelector('.kind-switcher[data-card="'+i+'"]')||{}).value
+    ||'',j.suitability,j.alternatives);}}
   document.getElementById('note-'+i).textContent=j.notes||'';}
  catch(e){d.innerHTML='<div class="err">'+e+'</div>';}
- if(t===token){st.classList.remove('busy');st.textContent='live: every filter recomputes the analysis';}}
+ if(t===token){st.classList.remove('busy');
+  st.textContent='live: every filter recomputes the analysis';}}
 let timer=null;
-function refresh(){clearTimeout(timer);timer=setTimeout(()=>done.forEach(i=>draw(document.getElementById('plot-'+i),i)),300);}
-document.querySelectorAll('.filters input').forEach(x=>x.addEventListener('change',refresh));
-"""  # noqa: E501
+function refresh(){clearTimeout(timer);
+ timer=setTimeout(()=>done.forEach(i=>draw(document.getElementById('plot-'+i),
+ i)),300);}
+document.querySelectorAll('.filters input').forEach(x=>
+ x.addEventListener('change',refresh));
+"""
     + _COMMON_JS
     + "show(document.querySelector('.tab').dataset.tab);"
 )

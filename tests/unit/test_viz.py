@@ -1242,6 +1242,48 @@ def test_queue_depth_dual_backend_rendering(
     assert c_bins0.panels[0].traces
 
 
+def test_dashboard_html_controls_and_suitability_badges(
+    pair: models.ComparisonReport, tmp_path: pathlib.Path
+) -> None:
+    """The dashboard HTML has kind selectors and suitability boxes."""
+    pytest.importorskip("plotly")
+    dashboard_path = pair.dashboard(tmp_path / "dash_controls.html", cdn=True)
+    html_content = dashboard_path.read_text()
+
+    assert 'class="card-header"' in html_content
+    assert 'class="kind-switcher"' in html_content
+    assert 'class="suitability-callouts"' in html_content
+    assert 'class="badge' in html_content
+    assert 'data-default="' in html_content
+    assert "Switch to:" in html_content or "Data suits" in html_content
+
+
+def test_live_server_kind_switching_api(
+    pair: models.ComparisonReport,
+) -> None:
+    """/api/plot switches kinds and returns the suitability warnings."""
+    pytest.importorskip("plotly")
+    from cta.viz import server
+
+    session = server.LiveSession(pair, [viz_spec.PlotSpec("step_trace")])
+    card = session.cards[0]
+
+    # Switch to boxplot
+    res_box = session.plot(card, server.Filters(), kind="boxplot")
+    assert "figure" in res_box
+    assert res_box.get("stem") == "boxplot"
+    assert "suitability" in res_box
+    assert isinstance(res_box["suitability"], list)
+    assert len(res_box["alternatives"]) == len(res_box["suitability"])
+
+    # Switch to queue_depth
+    res_qd = session.plot(card, server.Filters(), kind="queue_depth")
+    assert "figure" in res_qd
+    assert res_qd.get("stem") == "queue_depth"
+    assert "suitability" in res_qd
+    assert isinstance(res_qd["suitability"], list)
+
+
 def _kernel_context(rows: list[dict[str, Any]]) -> data.DataContext:
     """Returns a context whose kernels table is ``rows``."""
     ctx = data.DataContext(None)
@@ -1337,4 +1379,13 @@ def test_suggested_alternatives_are_registered_kinds() -> None:
     assert suggested
     for name in suggested:
         assert viz_spec.get_kind(name).name
+
+
+def test_dashboard_suggests_only_registered_kinds() -> None:
+    from cta.viz import dashboard
+
+    warning = "Too few. Suggested alternatives: 'bar', 'metric_dist'."
+    markup = dashboard._badges_html([warning], 3, "violin")
+    assert 'data-kind="metric_dist"' in markup
+    assert 'data-kind="bar"' not in markup
 
