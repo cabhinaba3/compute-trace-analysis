@@ -23,7 +23,7 @@ import pytest
 
 from cta import _native
 from cta import models
-from cta.adapters import runtime_calls
+from cta import table_schemas
 from cta.adapters.nsys import reader
 from cta.analysis import intervals
 from cta.synth import nsys as synth_nsys
@@ -496,7 +496,7 @@ def test_runtime_calls_table_has_steps_and_threads(
         warnings.simplefilter("ignore", RuntimeWarning)
         written = reader.NsysAdapter().ingest(artifact, out_dir)
     table = pl.read_parquet(written["runtime_calls"])
-    assert table.schema == runtime_calls.RUNTIME_CALLS_SCHEMA
+    assert table.schema == table_schemas.RUNTIME_CALLS
     assert table["start_ns"].is_sorted()
     assert (table["duration_ns"] == table["end_ns"] - table["start_ns"]).all()
     # The call at 115 on thread 1 launches a kernel and sits inside step 4.

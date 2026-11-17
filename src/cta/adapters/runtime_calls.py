@@ -7,23 +7,8 @@ from collections.abc import Sequence
 import numpy as np
 import polars as pl
 
-from cta.adapters.nsys import network_ops
-
-RUNTIME_CALLS_SCHEMA = pl.Schema(
-    {
-        "rank": pl.Int32(),
-        "step": pl.Int32(),
-        "name": pl.String(),
-        # Thread that made the call: nsys globalTid, or a dense id for Kineto;
-        # -1 when unknown.
-        "thread": pl.Int64(),
-        # Id shared with the GPU work the call launched; -1 when there is none.
-        "correlation": pl.Int64(),
-        "start_ns": pl.Int64(),
-        "end_ns": pl.Int64(),
-        "duration_ns": pl.Int64(),
-    }
-)
+from cta import table_schemas
+from cta.analysis import step_slicing
 
 
 def runtime_calls_frame(
@@ -50,10 +35,10 @@ def runtime_calls_frame(
             used to number the calls; calls outside every step get -1.
 
     Returns:
-        A frame conforming to ``RUNTIME_CALLS_SCHEMA``, in start order.
+        A frame conforming to ``table_schemas.RUNTIME_CALLS``, in start order.
     """
     if not len(name_code):
-        return pl.DataFrame(schema=RUNTIME_CALLS_SCHEMA)
+        return pl.DataFrame(schema=table_schemas.RUNTIME_CALLS)
     order = np.argsort(start_ns, kind="stable")
     start = np.asarray(start_ns)[order]
     end = np.asarray(end_ns)[order]
@@ -63,7 +48,7 @@ def runtime_calls_frame(
     return pl.DataFrame(
         {
             "rank": np.full(len(order), rank, dtype=np.int32),
-            "step": network_ops.step_of(start, steps),
+            "step": step_slicing.step_of(start, steps),
             "name": pl.Series(name_array, dtype=pl.String),
             "thread": np.asarray(thread)[order],
             "correlation": np.asarray(correlation)[order],
@@ -71,4 +56,4 @@ def runtime_calls_frame(
             "end_ns": end,
             "duration_ns": end - start,
         }
-    ).cast(RUNTIME_CALLS_SCHEMA)
+    ).cast(table_schemas.RUNTIME_CALLS)

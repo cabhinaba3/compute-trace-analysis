@@ -20,8 +20,8 @@ def _trace(mark: str, **fields: Any) -> ir.Trace:
     return ir.Trace(mark, **fields)
 
 
-def _empty_report(world_size: int = 1) -> models.ComparisonReport:
-    """Creates a minimal synthetic ComparisonReport."""
+def _empty_report(world_size: int = 1) -> models.Report:
+    """Creates a minimal synthetic Report."""
     art = models.TraceArtifact(
         format="kineto",
         paths=(pathlib.Path("/fake/trace.json"),),
@@ -37,7 +37,7 @@ def _empty_report(world_size: int = 1) -> models.ComparisonReport:
         label="base",
         trials=(bundle,),
     )
-    return models.ComparisonReport(
+    return models.Report(
         mode="single",
         groups=(group,),
         aspects={},

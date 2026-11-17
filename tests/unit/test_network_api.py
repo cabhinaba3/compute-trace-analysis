@@ -11,10 +11,10 @@ import pytest
 
 from cta import models
 from cta import plugins
+from cta import table_schemas
 from cta.adapters.kineto import reader
 from cta.adapters.nsys import network_ops
 from cta.analysis import network
-from cta.aspects import network as network_aspect
 
 REAL_DDP_KINETO_DIR = (
     pathlib.Path(__file__).resolve().parents[1] / "data_real" / "e" / "kineto"
@@ -125,12 +125,12 @@ def _ops(
         for rank, durations in durations_ns.items()
         for i, d in enumerate(durations)
     ]
-    return pl.DataFrame(rows, schema=network.NETWORK_OPS_SCHEMA)
+    return pl.DataFrame(rows, schema=table_schemas.NETWORK_OPS)
 
 
 def test_bandwidth_and_wait_skew() -> None:
     ops = _ops({0: [1000, 1000], 1: [400, 1000]}, size=2_000_000)
-    per_key = network_aspect.per_operation(ops).row(0, named=True)
+    per_key = network.per_operation(ops).row(0, named=True)
     assert (per_key["api"], per_key["op"], per_key["bucket"]) == (
         "nccl",
         "allreduce",
@@ -142,29 +142,29 @@ def test_bandwidth_and_wait_skew() -> None:
         8_000_000 / 3400
     )
     assert per_key["weighted_bytes"] == per_key["timed_bytes"]
-    skew = network_aspect.wait_skew_us(ops)
+    skew = network.wait_skew_us(ops)
     # Call 0 differs by 600 ns between the ranks, call 1 by none.
     assert skew["skew_us"].to_list() == [pytest.approx(0.3)]
 
 
 def test_launch_gap_is_start_minus_launch() -> None:
     ops = _ops({0: [1000, 1000], 1: [400, 1000]}, size=1)
-    gap = network_aspect.launch_gap_us(ops)
+    gap = network.launch_gap_us(ops)
     # Two calls at 300 ns and two at 100 ns.
     assert gap["gap_us"].to_list() == [pytest.approx(0.2)]
     unknown = ops.with_columns(launch_ns=pl.lit(-1))
-    assert network_aspect.launch_gap_us(unknown).is_empty()
+    assert network.launch_gap_us(unknown).is_empty()
 
 
 def test_posted_calls_are_counted_but_not_timed() -> None:
     ops = _ops({0: [1000], 1: [1000]}, size=2_000_000).with_columns(
         posted=pl.lit(True)
     )
-    per_key = network_aspect.per_operation(ops).row(0, named=True)
+    per_key = network.per_operation(ops).row(0, named=True)
     assert per_key["calls"] == 2
     assert per_key["bytes"] == 4_000_000
     assert per_key["timed_bytes"] == per_key["timed_ns"] == 0
-    assert network_aspect.wait_skew_us(ops).is_empty()
+    assert network.wait_skew_us(ops).is_empty()
 
 
 def test_mpi_and_ucx_names() -> None:
@@ -215,7 +215,7 @@ def test_host_ops_from_an_export() -> None:
         {"step": [0, 1], "start_ns": [0, 4000], "end_ns": [3500, 9000]}
     )
     ops = network_ops.host_network_ops(conn, tables, rank=3, steps=steps)
-    assert ops.schema == network.NETWORK_OPS_SCHEMA
+    assert ops.schema == table_schemas.NETWORK_OPS
     rows = {(r["api"], r["op"]): r for r in ops.iter_rows(named=True)}
     allreduce = rows["mpi", "allreduce"]
     # nsys records the buffer times the four ranks; the buffer is 4096 bytes.
@@ -280,7 +280,7 @@ def test_export_without_network_tables_gives_no_rows() -> None:
     )
     ops = network_ops.host_network_ops(conn, set(), 0, steps)
     assert ops.is_empty()
-    assert ops.schema == network.NETWORK_OPS_SCHEMA
+    assert ops.schema == table_schemas.NETWORK_OPS
 
 
 def test_peer_copies_become_p2p_rows() -> None:
@@ -306,7 +306,7 @@ def test_aspect_compares_two_apis(tmp_path: pathlib.Path) -> None:
         groups.append(models.TrialGroup(name, name, ()))
         tables[name] = [{"kineto.network_ops": path}] * 3
     result = plugins.ASPECTS["network_api"].run(
-        tuple(groups), tables, models.CompareConfig()
+        tuple(groups), tables, models.AnalysisConfig()
     )
     rows = {r["metric"]: r for r in result.summary.iter_rows(named=True)}
     # Each group ran one API, so the per-API metrics do not overlap...

@@ -199,7 +199,7 @@ def topk(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
 
 
 def _topk_table(
-    report: models.ComparisonReport,
+    report: models.Report,
     options: dict[str, Any],
     value_column: str,
 ) -> tuple[pl.DataFrame, str, str]:
@@ -805,7 +805,7 @@ def gates(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
 
 
 def _gate_rows(
-    report: models.ComparisonReport, thresholds: dict[str, float]
+    report: models.Report, thresholds: dict[str, float]
 ) -> list[tuple[str, float, float]]:
     """Pairs each gated metric's delta (%) with its threshold.
 

@@ -143,9 +143,9 @@ def inspect_command(
     ] = pathlib.Path(".cta_cache"),
 ) -> None:
     """Shows the detected formats, the world size and the table schemas."""
-    from cta import engine
+    from cta import api
 
-    info = engine.inspect_trace(source, cache_dir=cache_dir)
+    info = api.inspect_trace(source, cache_dir=cache_dir)
     output.console.print(pretty.Pretty(info))
 
 
@@ -156,7 +156,6 @@ def list_command() -> None:
     """
     from cta import plugins
 
-    plugins.load_plugins()
     formats_table = table.Table(title="Trace formats")
     formats_table.add_column("format")
     formats_table.add_column("adapter version")

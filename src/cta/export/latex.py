@@ -53,7 +53,7 @@ def _format_cell(column: str, value: Any) -> str:
 
 
 def export_latex(
-    report: models.ComparisonReport,
+    report: models.Report,
     path: pathlib.Path | None = None,
     *,
     aspect: str | None = None,

@@ -19,7 +19,7 @@ from cta.analysis import step_slicing
     required_formats=step_slicing.TIMELINE_FORMATS,
     any_of_formats=True,
 )
-class LatencyThroughputAspect(plugins.ComparisonAspect):
+class LatencyThroughputAspect(plugins.Aspect):
     """Compares step latency percentiles, throughput and CUDA runtime time.
 
     Attributes:
@@ -33,7 +33,7 @@ class LatencyThroughputAspect(plugins.ComparisonAspect):
         self,
         groups: tuple[models.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: models.CompareConfig,
+        config: models.AnalysisConfig,
     ) -> models.AspectResult:
         """Compares per-step latency and throughput across the trial groups.
 

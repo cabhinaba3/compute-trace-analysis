@@ -1,14 +1,17 @@
-"""Plugin registry for trace adapters and comparison aspects.
+"""Extension points: registries of trace adapters and comparison aspects.
 
-Adapters and aspects register themselves with the ``register_adapter`` and
-``register_aspect`` class decorators when their module is imported.
-``load_plugins`` imports the built-in ones and every ``cta.plugins`` entry
-point.
+A :class:`Registry` holds the plugins of one kind under their names. It
+imports its built-in modules, and then every module of the ``cta.plugins``
+entry-point group, the first time it is used, so callers never load anything
+by hand. Built-in and third-party plugins register the same way, with the
+``register_adapter`` and ``register_aspect`` class decorators (and
+``cta.viz.registry.register_plot`` for plot kinds) run at import time.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+import difflib
 import importlib
 from importlib import metadata
 import pathlib
@@ -16,6 +19,128 @@ from typing import Protocol, TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from cta import models
+
+ENTRY_POINT_GROUP = "cta.plugins"
+
+T = TypeVar("T")
+TAdapter = TypeVar("TAdapter", bound=type)
+TAspect = TypeVar("TAspect", bound=type)
+
+_entry_points_loaded = False
+
+
+def load_entry_points() -> None:
+    """Imports every ``cta.plugins`` entry point, once per process."""
+    global _entry_points_loaded
+    if _entry_points_loaded:
+        return
+    _entry_points_loaded = True
+    for entry_point in metadata.entry_points(group=ENTRY_POINT_GROUP):
+        entry_point.load()
+
+
+class Registry(Mapping[str, T]):
+    """Plugins of one kind, keyed by name, in registration order.
+
+    Reading the registry (lookup, iteration, ``len``) or registering into it
+    first loads the built-in modules and the entry points. Registering a name
+    again replaces the earlier plugin, so a plugin can override a built-in.
+
+    Attributes:
+        kind: What the registry holds, for error messages (``"adapter"``).
+    """
+
+    def __init__(self, kind: str, builtins: Sequence[str]) -> None:
+        """Initialises an empty registry.
+
+        Args:
+            kind: What the registry holds, for error messages.
+            builtins: Modules that register the built-in plugins when
+                imported, in the order their plugins should be listed.
+        """
+        self.kind = kind
+        self._builtins = tuple(builtins)
+        self._items: dict[str, T] = {}
+        self._aliases: dict[str, str] = {}
+        self._loaded = False
+
+    def load(self) -> None:
+        """Imports the built-in modules, then the entry points, once."""
+        if self._loaded:
+            return
+        # Set first: the imported modules register into this registry.
+        self._loaded = True
+        for module in self._builtins:
+            importlib.import_module(module)
+        load_entry_points()
+
+    def register(
+        self, name: str, item: T, *, aliases: Iterable[str] = ()
+    ) -> None:
+        """Adds a plugin under a name and optional aliases.
+
+        Args:
+            name: Name of the plugin.
+            item: The plugin.
+            aliases: Other names that resolve to ``name``.
+        """
+        self.load()
+        self._items[name] = item
+        for alias in aliases:
+            self._aliases[alias] = name
+
+    def resolve(self, name: str) -> str:
+        """Returns the plugin name an alias stands for (or ``name`` itself).
+
+        Args:
+            name: A plugin name or alias.
+
+        Returns:
+            The registered name; unknown names are returned unchanged.
+        """
+        self.load()
+        return self._aliases.get(name, name)
+
+    def suggest(self, name: str) -> str | None:
+        """Returns the registered name or alias closest to ``name``.
+
+        Args:
+            name: An unknown name.
+
+        Returns:
+            The closest known name or alias, or None if none is close.
+        """
+        self.load()
+        matches = difflib.get_close_matches(
+            name, [*self._items, *self._aliases], n=1
+        )
+        return matches[0] if matches else None
+
+    def __getitem__(self, name: str) -> T:
+        """Returns the plugin registered under a name or alias.
+
+        Raises:
+            KeyError: Nothing is registered under ``name``; the message names
+                the closest match.
+        """
+        key = self.resolve(name)
+        if key not in self._items:
+            hint = self.suggest(name)
+            raise KeyError(
+                f"Unknown {self.kind} {name!r}."
+                + (f" Did you mean {hint!r}?" if hint else "")
+            )
+        return self._items[key]
+
+    def __iter__(self) -> Iterator[str]:
+        """Iterates over the registered names in registration order."""
+        self.load()
+        return iter(list(self._items))
+
+    def __len__(self) -> int:
+        """Returns the number of registered plugins."""
+        self.load()
+        return len(self._items)
 
 
 class TraceAdapter(Protocol):
@@ -54,7 +179,7 @@ class TraceAdapter(Protocol):
         """
 
 
-class ComparisonAspect(Protocol):
+class Aspect(Protocol):
     """Computes one family of metrics across trial groups.
 
     Attributes:
@@ -77,7 +202,7 @@ class ComparisonAspect(Protocol):
         self,
         groups: tuple[models.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: models.CompareConfig,
+        config: models.AnalysisConfig,
     ) -> models.AspectResult:
         """Computes the aspect's metrics for all groups.
 
@@ -92,12 +217,42 @@ class ComparisonAspect(Protocol):
         """
 
 
-ADAPTERS: dict[str, TraceAdapter] = {}
-ASPECTS: dict[str, ComparisonAspect] = {}
-_plugins_loaded = False
+# Built-in adapters, in detection order: the first adapter whose ``detect``
+# accepts a file decides its format.
+ADAPTERS: Registry[TraceAdapter] = Registry(
+    "trace format",
+    (
+        "cta.adapters.chakra.reader",
+        "cta.adapters.goal.reader",
+        "cta.adapters.jax.reader",
+        "cta.adapters.jtop.reader",
+        "cta.adapters.kineto.reader",
+        "cta.adapters.ncu.reader",
+        "cta.adapters.nsys.reader",
+        "cta.adapters.trtexec.reader",
+    ),
+)
 
-TAdapter = TypeVar("TAdapter", bound=type)
-TAspect = TypeVar("TAspect", bound=type)
+# Built-in aspects, in report order.
+ASPECTS: Registry[Aspect] = Registry(
+    "aspect",
+    (
+        "cta.aspects.device.latency",
+        "cta.aspects.device.kernels",
+        "cta.aspects.device.timeline",
+        "cta.aspects.device.os_runtime",
+        "cta.aspects.device.roofline",
+        "cta.aspects.distributed.critical_path",
+        "cta.aspects.distributed.collectives",
+        "cta.aspects.distributed.rank_skew",
+        "cta.aspects.distributed.traffic",
+        "cta.aspects.distributed.equivalence",
+        "cta.aspects.edge.layer_fusion",
+        "cta.aspects.edge.energy",
+        "cta.aspects.hta",
+        "cta.aspects.network",
+    ),
+)
 
 
 def register_adapter(
@@ -122,7 +277,7 @@ def register_adapter(
         instance = cls()
         instance.format_name = name
         instance.version = getattr(instance, "version", version)
-        ADAPTERS[name] = instance
+        ADAPTERS.register(name, instance)
         return cls
 
     return decorator
@@ -161,24 +316,7 @@ def register_aspect(
         instance.required_formats = required_formats
         instance.any_of_formats = any_of_formats
         instance.default_enabled = default_enabled
-        ASPECTS[name] = instance
+        ASPECTS.register(name, instance)
         return cls
 
     return decorator
-
-
-def load_plugins() -> None:
-    """Imports the built-in and entry-point plugins, once per process.
-
-    Importing ``cta.adapters`` and ``cta.aspects`` registers the built-in
-    adapters and aspects; then every ``cta.plugins`` entry point is loaded.
-    """
-    global _plugins_loaded
-    if _plugins_loaded:
-        return
-    _plugins_loaded = True
-    importlib.import_module("cta.adapters")
-    importlib.import_module("cta.aspects")
-
-    for entry_point in metadata.entry_points(group="cta.plugins"):
-        entry_point.load()

@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import sqlite3
 
-import numpy as np
 import polars as pl
 
+from cta import table_schemas
 from cta.analysis import network
+from cta.analysis import step_slicing
 
 # Calls come from MPI_* tables (with the communicator's size) and UCP submits.
 _MPI_QUERY = """
@@ -59,7 +60,7 @@ def host_network_ops(
             used to number the calls; calls outside every step get -1.
 
     Returns:
-        A frame conforming to ``network.NETWORK_OPS_SCHEMA``; empty when the
+        A frame conforming to ``table_schemas.NETWORK_OPS``; empty when the
         export has no MPI or UCX tables.
     """
     frames = []
@@ -82,15 +83,17 @@ def host_network_ops(
     if "UCP_SUBMIT_EVENTS" in tables:
         frames.append(_ucx_rows(pl.read_database(_UCX_QUERY, conn)))
     if not frames:
-        return pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA)
+        return pl.DataFrame(schema=table_schemas.NETWORK_OPS)
     ops = pl.concat(frames, how="vertical_relaxed")
     return (
         ops.with_columns(
             pl.lit(rank, dtype=pl.Int32).alias("rank"),
-            pl.Series("step", step_of(ops["start_ns"].to_numpy(), steps)),
+            pl.Series(
+                "step", step_slicing.step_of(ops["start_ns"].to_numpy(), steps)
+            ),
         )
-        .select(list(network.NETWORK_OPS_SCHEMA))
-        .cast(network.NETWORK_OPS_SCHEMA)
+        .select(list(table_schemas.NETWORK_OPS))
+        .cast(table_schemas.NETWORK_OPS)
     )
 
 
@@ -192,26 +195,3 @@ def _with_host_columns(rows: pl.DataFrame) -> pl.DataFrame:
         pl.lit("").alias("proto"),
         pl.lit("").alias("dtype"),
     )
-
-
-def step_of(start_ns: np.ndarray, steps: pl.DataFrame) -> np.ndarray:
-    """Returns the step each start time falls in, or -1.
-
-    Args:
-        start_ns: Start times.
-        steps: Step ranges with ``step``, ``start_ns`` and ``end_ns``.
-
-    Returns:
-        One step number per start time; -1 outside every step.
-    """
-    if steps.is_empty():
-        return np.full(len(start_ns), -1, dtype=np.int32)
-    ordered = steps.sort("start_ns")
-    begin = ordered["start_ns"].to_numpy()
-    index = np.searchsorted(begin, start_ns, side="right") - 1
-    inside = (index >= 0) & (
-        start_ns <= ordered["end_ns"].to_numpy()[np.maximum(index, 0)]
-    )
-    return np.where(
-        inside, ordered["step"].to_numpy()[np.maximum(index, 0)], -1
-    ).astype(np.int32)

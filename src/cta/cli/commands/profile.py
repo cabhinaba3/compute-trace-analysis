@@ -82,11 +82,11 @@ def _finish_profile(result: runners.ProfileResult, analyze: bool) -> None:
             f"{result.returncode}[/yellow]"
         )
     if analyze:
-        from cta import engine
+        from cta import api
         from cta.export import terminal
 
         terminal.render_terminal_report(
-            engine.analyze(result.bundle_dir), console=output.console
+            api.analyze(result.bundle_dir), console=output.console
         )
     if result.returncode != 0:
         raise typer.Exit(code=result.returncode)

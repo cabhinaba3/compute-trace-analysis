@@ -136,12 +136,13 @@ def compare_command(
     ] = None,
 ) -> None:
     """Compares two traces or bundles (baseline and candidate), or N of them."""
-    from cta import diagnosis
+    from cta import api
     from cta import engine
+    from cta import gating
     from cta.ingest import manifest as ingest_manifest
 
     try:
-        gates = diagnosis.parse_gate_spec(gate)
+        gates = gating.parse_gate_spec(gate)
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--gate") from exc
     try:
@@ -179,7 +180,7 @@ def compare_command(
                     "Provide at least two trace paths/directories or "
                     "--manifest."
                 )
-            report = engine.compare(
+            report = api.compare(
                 traces[0],
                 traces[1],
                 *traces[2:],
@@ -232,9 +233,9 @@ def verify_equivalence_command(
 
     Compares compute durations and the bytes of each decomposed collective.
     """
-    from cta.aspects import distributed
+    from cta.aspects.distributed import equivalence
 
-    verdict = distributed.verify_chakra_goal_equivalence(
+    verdict = equivalence.verify_chakra_goal_equivalence(
         chakra_trace,
         goal_schedule,
         collective_algorithm=collective_algorithm,
@@ -350,10 +351,10 @@ def analyze_command(
     ] = pathlib.Path(".cta_cache"),
 ) -> None:
     """Analyses one trace, a glob, or a directory holding a run bundle."""
-    from cta import engine
+    from cta import api
 
     try:
-        report = engine.analyze(
+        report = api.analyze(
             trace,
             aspects=output.split_comma_separated(aspects),
             warmup_steps=warmup_steps,

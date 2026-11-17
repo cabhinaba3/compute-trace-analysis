@@ -17,7 +17,7 @@ def _format_cell(value: object) -> str:
 
 
 def export_markdown(
-    report: models.ComparisonReport, path: pathlib.Path | None = None
+    report: models.Report, path: pathlib.Path | None = None
 ) -> str:
     """Renders a report as Markdown.
 

@@ -9,6 +9,7 @@ import zlib
 import polars as pl
 import pytest
 
+from cta.adapters import common
 from cta.adapters.jax import reader as jax_reader
 from cta.adapters.kineto import reader as kineto_reader
 from cta.ingest import discovery
@@ -17,35 +18,33 @@ from cta.ingest import discovery
 def test_peek_text_plain_text(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "sample.txt"
     path.write_text("hello trace analysis world", encoding="utf-8")
-    assert discovery.peek_text(path, max_bytes=5) == "hello"
-    assert (
-        discovery.peek_text(path, max_bytes=100) == "hello trace analysis world"
-    )
+    assert common.peek_text(path, max_bytes=5) == "hello"
+    assert common.peek_text(path, max_bytes=100) == "hello trace analysis world"
 
 
 def test_peek_text_valid_gz(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "trace.json.gz"
     with gzip.open(path, "wt", encoding="utf-8") as gz:
         gz.write('{"traceEvents": [{"name": "kernel"}]}')
-    assert discovery.peek_text(path, max_bytes=14) == '{"traceEvents"'
-    assert '{"traceEvents": [{"name": "kernel"}]}' in discovery.peek_text(path)
+    assert common.peek_text(path, max_bytes=14) == '{"traceEvents"'
+    assert '{"traceEvents": [{"name": "kernel"}]}' in common.peek_text(path)
 
 
 def test_peek_text_nonexistent_and_empty(tmp_path: pathlib.Path) -> None:
     nonexistent = tmp_path / "does_not_exist.json.gz"
-    assert discovery.peek_text(nonexistent) == ""
+    assert common.peek_text(nonexistent) == ""
 
     empty_txt = tmp_path / "empty.txt"
     empty_txt.touch()
-    assert discovery.peek_text(empty_txt) == ""
+    assert common.peek_text(empty_txt) == ""
 
     empty_gz = tmp_path / "empty.json.gz"
     empty_gz.touch()
-    assert discovery.peek_text(empty_gz) == ""
+    assert common.peek_text(empty_gz) == ""
 
 
 def test_peek_text_directory(tmp_path: pathlib.Path) -> None:
-    assert discovery.peek_text(tmp_path) == ""
+    assert common.peek_text(tmp_path) == ""
 
 
 @pytest.mark.parametrize(
@@ -67,7 +66,7 @@ def test_peek_text_truncated_gz(
 ) -> None:
     path = tmp_path / filename
     path.write_bytes(data)
-    assert discovery.peek_text(path) == ""
+    assert common.peek_text(path) == ""
 
 
 def test_peek_text_corrupted_gz_stream(tmp_path: pathlib.Path) -> None:
@@ -76,7 +75,7 @@ def test_peek_text_corrupted_gz_stream(tmp_path: pathlib.Path) -> None:
     corrupt_data = valid_gz[:12] + b"\xff\xff\xff\xff\xff\xff" + valid_gz[18:]
     path = tmp_path / "corrupted.json.gz"
     path.write_bytes(corrupt_data)
-    assert discovery.peek_text(path) == ""
+    assert common.peek_text(path) == ""
 
 
 def test_adapters_survive_corrupted_and_truncated_traces(
@@ -114,7 +113,7 @@ def test_write_tables(tmp_path: pathlib.Path) -> None:
         ),
         "nodes": pl.DataFrame({"id": [1, 2], "name": ["fwd", "bwd"]}),
     }
-    result = discovery.write_tables(out_dir, tables)
+    result = common.write_tables(out_dir, tables)
 
     assert set(result.keys()) == {"metrics", "nodes"}
     assert result["metrics"] == out_dir / "metrics.parquet"

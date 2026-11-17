@@ -163,7 +163,7 @@ def render_chart(
 
 
 def render_plot(
-    report: models.ComparisonReport,
+    report: models.Report,
     *,
     kind: str = "breakdown",
     path: pathlib.Path | None = None,

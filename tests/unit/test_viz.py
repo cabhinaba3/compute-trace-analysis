@@ -97,7 +97,7 @@ def _kineto_trace(
 
 
 @pytest.fixture()
-def pair(tmp_path: pathlib.Path) -> models.ComparisonReport:
+def pair(tmp_path: pathlib.Path) -> models.Report:
     """Returns a report comparing a baseline trace with a slower candidate.
 
     The groups are labelled "base" and "cand"; candidate step i is 40*i us
@@ -190,7 +190,7 @@ def test_raw_tables_are_per_rank_relative_and_honour_slicing(
         ctx.frame("jtop")
 
 
-def test_sql_over_named_tables(pair: models.ComparisonReport) -> None:
+def test_sql_over_named_tables(pair: models.Report) -> None:
     kernel_counts = context.DataContext(pair).sql(
         "SELECT label, count(*) AS n FROM kernels GROUP BY label ORDER BY label"
     )
@@ -226,7 +226,7 @@ def test_sql_over_named_tables(pair: models.ComparisonReport) -> None:
     ],
 )
 def test_kinds_build_and_render_both_backends(
-    pair: models.ComparisonReport, kind: str, tmp_path: pathlib.Path
+    pair: models.Report, kind: str, tmp_path: pathlib.Path
 ) -> None:
     ctx = context.DataContext(pair)
     png_path = tmp_path / f"{kind}.png"
@@ -256,7 +256,7 @@ def test_step_trace_flags_a_drifting_run(tmp_path: pathlib.Path) -> None:
 
 
 def test_inapplicable_plots_raise_not_applicable_which_is_a_value_error(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     inapplicable_kinds = (
         "power_trace",
@@ -273,7 +273,7 @@ def test_inapplicable_plots_raise_not_applicable_which_is_a_value_error(
         viz.build_chart(context.DataContext(pair), "power_trace")
 
 
-def test_waterfall_adds_up(pair: models.ComparisonReport) -> None:
+def test_waterfall_adds_up(pair: models.Report) -> None:
     chart, _ = viz.build_chart(context.DataContext(pair), "waterfall")
     totals = chart.panels[0].traces[0]
     total_values = totals.y or [0]
@@ -353,7 +353,7 @@ def test_history_control_chart_flags_the_regression(
 
 
 def test_report_json_carries_created_at_for_history(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     pair.export(tmp_path / "r", formats=["json"])
     saved_report = json.loads((tmp_path / "r" / "report.json").read_text())
@@ -361,7 +361,7 @@ def test_report_json_carries_created_at_for_history(
 
 
 def test_custom_plot_from_sql_and_report_table(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     ctx = context.DataContext(pair)
     chart, _ = viz.build_chart(
@@ -414,7 +414,7 @@ def test_custom_plot_from_sql_and_report_table(
 
 
 def test_dashboard_has_tabs_filters_and_skips_what_does_not_apply(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     pytest.importorskip("plotly")
     dashboard_path = pair.dashboard(tmp_path / "d.html")
@@ -433,7 +433,7 @@ def test_dashboard_has_tabs_filters_and_skips_what_does_not_apply(
 
 
 def test_cli_list_kinds_spec_html_and_errors(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     cli_runner = testing.CliRunner()
     figures_dir = tmp_path / "f"
@@ -641,7 +641,7 @@ def test_ncu_plots_do_not_pool_groups(tmp_path: pathlib.Path) -> None:
 
 
 def test_dashboard_filters_in_the_page(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     pytest.importorskip("plotly")
     page = pair.dashboard(tmp_path / "d.html").read_text()
@@ -713,7 +713,7 @@ def _two_gpu_trace(path: pathlib.Path, steps: int = 8) -> pathlib.Path:
     return path
 
 
-def _metric_value(report: models.ComparisonReport, metric: str) -> float:
+def _metric_value(report: models.Report, metric: str) -> float:
     """Returns the first group's value of a metric from the aspect summaries.
 
     Args:
@@ -875,7 +875,7 @@ def test_trace_analysis_catalog_registration() -> None:
 
 
 def test_trace_analysis_dual_backend_svg_and_png(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     """All five kinds render to PNG, SVG and Plotly HTML."""
     ctx = context.DataContext(pair)
@@ -908,7 +908,7 @@ def test_trace_analysis_dual_backend_svg_and_png(
 
 
 def test_trace_analysis_options_and_modes(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     """Options and modes of the new plots change what is drawn."""
     ctx = context.DataContext(pair)
@@ -1021,7 +1021,7 @@ def test_trace_analysis_two_gpu_trace(tmp_path: pathlib.Path) -> None:
 
 
 def test_trace_analysis_input_validation_and_errors(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     """Bad options and missing columns raise clear errors."""
     ctx = context.DataContext(pair)
@@ -1044,7 +1044,7 @@ def test_trace_analysis_input_validation_and_errors(
 
 
 def _network_context(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> context.DataContext:
     """Returns a context whose network_ops has two groups on two ranks.
 
@@ -1100,7 +1100,7 @@ def _bars(chart: Any) -> dict[str | None, dict[Any, float]]:
     "kind", ["network_bandwidth", "network_skew", "network_size_sweep"]
 )
 def test_network_kinds_build_and_render(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path, kind: str
+    pair: models.Report, tmp_path: pathlib.Path, kind: str
 ) -> None:
     ctx = _network_context(pair)
     chart, options = viz.build_chart(ctx, kind)
@@ -1111,7 +1111,7 @@ def test_network_kinds_build_and_render(
 
 
 def test_network_bandwidth_matches_nccl_tests_arithmetic(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     chart, _ = viz.build_chart(_network_context(pair), "network_bandwidth")
     bars = _bars(chart)
@@ -1124,7 +1124,7 @@ def test_network_bandwidth_matches_nccl_tests_arithmetic(
 
 
 def test_network_skew_is_the_duration_spread_across_ranks(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     chart, _ = viz.build_chart(_network_context(pair), "network_skew")
     bars = _bars(chart)
@@ -1137,7 +1137,7 @@ def test_network_skew_is_the_duration_spread_across_ranks(
 
 
 def test_network_kinds_can_split_by_api_and_filter(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     ctx = _network_context(pair)
     chart, _ = viz.build_chart(ctx, "network_bandwidth", {"by": "api"})
@@ -1156,7 +1156,7 @@ def test_network_ops_is_a_plot_source() -> None:
 
 
 def test_network_matrix_sums_sends_by_rank_pair(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     ctx = _network_context(pair)
     ops = ctx._raw_tables["network_ops"]
@@ -1178,7 +1178,7 @@ def test_network_matrix_sums_sends_by_rank_pair(
 
 
 def test_network_matrix_needs_a_known_peer(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     with pytest.raises(viz_spec.NotApplicableError, match="peer"):
         viz.build_chart(_network_context(pair), "network_matrix")
@@ -1205,7 +1205,7 @@ def test_queue_depth_catalog_registration() -> None:
 
 
 def test_queue_depth_dual_backend_rendering(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     """queue_depth renders on both backends."""
     ctx = context.DataContext(pair)
@@ -1243,7 +1243,7 @@ def test_queue_depth_dual_backend_rendering(
 
 
 def test_dashboard_html_controls_and_suitability_badges(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path
+    pair: models.Report, tmp_path: pathlib.Path
 ) -> None:
     """The dashboard HTML has kind selectors and suitability boxes."""
     pytest.importorskip("plotly")
@@ -1259,7 +1259,7 @@ def test_dashboard_html_controls_and_suitability_badges(
 
 
 def test_live_server_kind_switching_api(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     """/api/plot switches kinds and returns the suitability warnings."""
     pytest.importorskip("plotly")
@@ -1412,7 +1412,7 @@ _EXTENDED_KINDS = (
 
 @pytest.mark.parametrize("kind", _EXTENDED_KINDS)
 def test_extended_kinds_on_a_real_report_draw_or_decline(
-    pair: models.ComparisonReport, tmp_path: pathlib.Path, kind: str
+    pair: models.Report, tmp_path: pathlib.Path, kind: str
 ) -> None:
     """On cached tables each kind either draws or says why it cannot."""
     ctx = context.DataContext(pair)
@@ -1426,7 +1426,7 @@ def test_extended_kinds_on_a_real_report_draw_or_decline(
 
 
 def test_runtime_calls_reach_the_plots_through_the_cache(
-    pair: models.ComparisonReport,
+    pair: models.Report,
 ) -> None:
     ctx = context.DataContext(pair)
     assert "runtime_calls" in ctx.available()

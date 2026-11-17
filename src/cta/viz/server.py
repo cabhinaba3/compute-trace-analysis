@@ -108,7 +108,7 @@ class LiveSession:
 
     def __init__(
         self,
-        report: models.ComparisonReport,
+        report: models.Report,
         specs: list[spec.PlotSpec] | None,
         *,
         theme: str = "light",
@@ -133,12 +133,12 @@ class LiveSession:
             self.base_ctx, specs, theme, palette
         )
         self.choices = dashboard.filter_choices(self.base_ctx)
-        self._report_cache: collections.OrderedDict[
-            Filters, models.ComparisonReport
-        ] = collections.OrderedDict()
+        self._report_cache: collections.OrderedDict[Filters, models.Report] = (
+            collections.OrderedDict()
+        )
         self._lock = threading.Lock()
 
-    def report_for(self, filters: Filters) -> models.ComparisonReport:
+    def report_for(self, filters: Filters) -> models.Report:
         """Returns the report for a filter selection, recomputing if needed.
 
         A selection that covers everything returns the base report.
@@ -153,7 +153,7 @@ class LiveSession:
         Raises:
             ValueError: If no group is selected.
         """
-        config = self.base.config or models.CompareConfig()
+        config = self.base.config or models.AnalysisConfig()
         nsteps = self.choices["nsteps"]
         is_unfiltered = (
             (
@@ -277,7 +277,7 @@ class LiveSession:
 
 
 def make_server(
-    report: models.ComparisonReport,
+    report: models.Report,
     specs: list[spec.PlotSpec] | None,
     *,
     port: int = 0,
@@ -356,7 +356,7 @@ def make_server(
 
 
 def serve(
-    report: models.ComparisonReport,
+    report: models.Report,
     specs: list[spec.PlotSpec] | None,
     *,
     port: int = 0,

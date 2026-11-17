@@ -34,8 +34,8 @@ import polars as pl
 
 from cta import models
 from cta import plugins
+from cta.adapters import common
 from cta.analysis import alignment
-from cta.ingest import discovery
 
 NCU_SCHEMA = pl.Schema(
     {
@@ -659,7 +659,7 @@ class NcuAdapter:
         if suffix in _REPORT_SUFFIXES:
             return True
         if suffix == ".csv":
-            head = discovery.peek_text(path, 65536)
+            head = common.peek_text(path, 65536)
             return any(marker in head for marker in _CSV_MARKERS)
         return False
 
@@ -716,7 +716,7 @@ class NcuAdapter:
         else:
             kernels = pl.DataFrame(schema=NCU_SCHEMA)
         findings = pl.DataFrame(finding_rows, schema=FINDINGS_SCHEMA)
-        return discovery.write_tables(
+        return common.write_tables(
             out_dir,
             {
                 "ncu_kernels": kernels,

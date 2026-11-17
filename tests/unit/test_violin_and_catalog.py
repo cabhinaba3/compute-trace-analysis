@@ -85,7 +85,7 @@ def _kineto_trace(
     return path
 
 
-def _report_fixture(tmp_path: pathlib.Path) -> models.ComparisonReport:
+def _report_fixture(tmp_path: pathlib.Path) -> models.Report:
     """Returns a test comparison report with 6 steps and 2 kernels per step."""
     base_path = _kineto_trace(tmp_path / "a.json")
     cand_path = _kineto_trace(tmp_path / "b.json", slowdown_us=20.0)

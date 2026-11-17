@@ -20,7 +20,7 @@ _POLL_CALL_PATTERN = "sleep|poll|epoll|select|wait"
     title="OS Runtime Lock & Thread Contention",
     required_formats=("nsys",),
 )
-class OsRuntimeAspect(plugins.ComparisonAspect):
+class OsRuntimeAspect(plugins.Aspect):
     """Compares host OS-runtime call time, lock waits and sleeps/polls.
 
     Attributes:
@@ -34,7 +34,7 @@ class OsRuntimeAspect(plugins.ComparisonAspect):
         self,
         groups: tuple[models.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: models.CompareConfig,
+        config: models.AnalysisConfig,
     ) -> models.AspectResult:
         """Compares OS-runtime call time across the trial groups.
 

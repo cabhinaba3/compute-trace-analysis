@@ -74,7 +74,7 @@ class TrialGroup:
 
 
 @dataclasses.dataclass(slots=True)
-class CompareConfig:
+class AnalysisConfig:
     """Options for one analysis or comparison run.
 
     Attributes:
@@ -115,7 +115,7 @@ class CompareConfig:
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
-class RegressionViolation:
+class GateViolation:
     """A regression gate that a comparison failed.
 
     Attributes:
@@ -217,7 +217,7 @@ class AspectResult:
 
 
 @dataclasses.dataclass(slots=True)
-class ComparisonReport:
+class Report:
     """The result of analysing one group or comparing several groups.
 
     Attributes:
@@ -236,13 +236,11 @@ class ComparisonReport:
     groups: tuple[TrialGroup, ...]
     aspects: dict[str, AspectResult]
     diagnoses: list[BottleneckShift] = dataclasses.field(default_factory=list)
-    violations: list[RegressionViolation] = dataclasses.field(
-        default_factory=list
-    )
+    violations: list[GateViolation] = dataclasses.field(default_factory=list)
     sources: dict[str, list[dict[str, pathlib.Path]]] = dataclasses.field(
         default_factory=dict, repr=False
     )
-    config: CompareConfig | None = dataclasses.field(default=None, repr=False)
+    config: AnalysisConfig | None = dataclasses.field(default=None, repr=False)
 
     def aspect(self, name: str) -> AspectResult:
         """Returns the result of one aspect.

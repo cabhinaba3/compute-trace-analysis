@@ -8,23 +8,27 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 import glob
-import gzip
 import json
 import pathlib
-import re
-from typing import Any, TYPE_CHECKING
-import zlib
-
-if TYPE_CHECKING:
-    import polars as pl
+from typing import Any
 
 import yaml
 
 from cta import models
 from cta import plugins
+from cta.adapters import common
 
-_RANK_RE = re.compile(r"(?:rank[_.-]?|\.r?)(\d+)(?:\.[^.]+)+$", re.IGNORECASE)
 _BUNDLE_METADATA_NAMES = ("bundle.yaml", "bundle.yml", "bundle.json")
+
+# What the SDK accepts as one group: a path or glob, a run bundle, a trial
+# group, or several trials (paths or bundles).
+TrialSource = (
+    str
+    | pathlib.Path
+    | models.RunBundle
+    | models.TrialGroup
+    | Iterable[str | pathlib.Path | models.RunBundle]
+)
 
 
 def detect_format(path: pathlib.Path) -> str | None:
@@ -37,7 +41,6 @@ def detect_format(path: pathlib.Path) -> str | None:
         The name of the first registered adapter that accepts the file, or
         None for unknown formats, hidden files and paths that are not files.
     """
-    plugins.load_plugins()
     if not path.is_file() or path.name.startswith("."):
         return None
     for trace_format, adapter in plugins.ADAPTERS.items():
@@ -46,52 +49,11 @@ def detect_format(path: pathlib.Path) -> str | None:
     return None
 
 
-def peek_text(path: pathlib.Path, max_bytes: int = 8192) -> str:
-    """Returns the first decompressed text bytes of a file, or '' on error."""
-    try:
-        if path.suffix.lower() == ".gz":
-            with gzip.open(path, "rb") as gz:
-                return gz.read(max_bytes).decode("utf-8", errors="ignore")
-        with path.open("rb") as fh:
-            return fh.read(max_bytes).decode("utf-8", errors="ignore")
-    except (OSError, EOFError, zlib.error):
-        return ""
-
-
-def write_tables(
-    out_dir: pathlib.Path, tables: dict[str, pl.DataFrame]
-) -> dict[str, pathlib.Path]:
-    """Writes tables as compressed Parquet files in out_dir."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    table_paths: dict[str, pathlib.Path] = {}
-    for table_name, table in tables.items():
-        table_path = out_dir / f"{table_name}.parquet"
-        table.write_parquet(table_path, compression="zstd")
-        table_paths[table_name] = table_path
-    return table_paths
-
-
-def infer_rank(path: pathlib.Path, fallback: int) -> int:
-    """Returns the rank encoded in a per-rank trace file name.
-
-    Recognises names such as ``..._rank3.sqlite`` or ``trace.r3.json``.
-
-    Args:
-        path: The trace file.
-        fallback: Rank to return when the name encodes none.
-
-    Returns:
-        The encoded rank, else ``fallback``.
-    """
-    match = _RANK_RE.search(path.name)
-    return int(match.group(1)) if match else fallback
-
-
 def _infer_world_size(paths: list[pathlib.Path]) -> int:
     """Returns the larger of the file count and the distinct encoded ranks."""
     if len(paths) <= 1:
         return 1
-    ranks = {r for path in paths if (r := infer_rank(path, -1)) >= 0}
+    ranks = {r for path in paths if (r := common.infer_rank(path, -1)) >= 0}
     return max(len(ranks), len(paths))
 
 
@@ -131,7 +93,6 @@ def resolve_bundle(
         ValueError: The file's format is not supported, no file of a
             directory, glob or list is recognised, or the list is empty.
     """
-    plugins.load_plugins()
     bundle_metadata: dict[str, Any] = dict(metadata or {})
 
     if isinstance(source, (str, pathlib.Path)):
@@ -274,11 +235,7 @@ def _bundle_from_files(
 
 
 def resolve_trial_group(
-    source: str
-    | pathlib.Path
-    | models.RunBundle
-    | models.TrialGroup
-    | Iterable[str | pathlib.Path | models.RunBundle],
+    source: TrialSource,
     *,
     label: str | None = None,
     tags: dict[str, Any] | None = None,

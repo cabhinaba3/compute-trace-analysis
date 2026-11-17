@@ -8,6 +8,7 @@ import polars as pl
 
 from cta import models
 from cta import plugins
+from cta import table_schemas
 from cta.analysis import network
 from cta.analysis import stats
 from cta.analysis import step_slicing
@@ -19,7 +20,7 @@ from cta.analysis import step_slicing
     required_formats=("nsys", "kineto"),
     any_of_formats=True,
 )
-class NetworkApiAspect(plugins.ComparisonAspect):
+class NetworkApiAspect(plugins.Aspect):
     """Compares the bandwidth of communication calls per operation and size.
 
     Calls are matched across groups by logical operation and message-size
@@ -36,7 +37,7 @@ class NetworkApiAspect(plugins.ComparisonAspect):
         self,
         groups: tuple[models.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: models.CompareConfig,
+        config: models.AnalysisConfig,
     ) -> models.AspectResult:
         """Compares algorithm and bus bandwidth, time and wait across groups.
 
@@ -62,14 +63,14 @@ class NetworkApiAspect(plugins.ComparisonAspect):
                 ops = _read_ops(table_paths, config)
                 if ops.is_empty():
                     continue
-                per_key = per_operation(ops)
+                per_key = network.per_operation(ops)
                 group_rows.append(per_key)
                 _add_trial_metrics(metrics, ops, per_key)
             trials.append(metrics)
             per_api.append(
                 pl.concat(group_rows)
                 if group_rows
-                else pl.DataFrame(schema=_PER_OPERATION_SCHEMA)
+                else pl.DataFrame(schema=network.PER_OPERATION_SCHEMA)
             )
 
         summary = stats.compare_scalar_metrics(
@@ -102,7 +103,7 @@ class NetworkApiAspect(plugins.ComparisonAspect):
 
 
 def _read_ops(
-    table_paths: dict[str, pathlib.Path], config: models.CompareConfig
+    table_paths: dict[str, pathlib.Path], config: models.AnalysisConfig
 ) -> pl.DataFrame:
     """Reads one trial's network calls, restricted like the other aspects."""
     for trace_format in step_slicing.TIMELINE_FORMATS:
@@ -116,77 +117,7 @@ def _read_ops(
                 pl.read_parquet(table_paths[steps_key]), ops, config
             )
         return ops
-    return pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA)
-
-
-_PER_OPERATION_SCHEMA = pl.Schema(
-    {
-        "api": pl.String,
-        "op": pl.String,
-        "bucket": pl.String,
-        "calls": pl.UInt32,
-        "duration_ms": pl.Float64,
-        "bytes": pl.Int64,
-        "timed_bytes": pl.Int64,
-        "timed_ns": pl.Int64,
-        "weighted_bytes": pl.Float64,
-    }
-)
-
-
-def per_operation(ops: pl.DataFrame) -> pl.DataFrame:
-    """Aggregates calls by API, logical operation and message-size bucket.
-
-    Bandwidth uses only the calls that run for the whole transfer: a call
-    that merely posts it (``posted``) is counted but not timed. The bus
-    bandwidth factor follows the group size, or the number of ranks when the
-    trace does not say.
-
-    Args:
-        ops: A ``network_ops`` table.
-
-    Returns:
-        One row per API, operation and bucket with ``calls``, ``duration_ms``
-        and ``bytes``, the ``timed_bytes`` and ``timed_ns`` of the calls that
-        count towards bandwidth, and ``weighted_bytes`` (``timed_bytes`` times
-        the bus-bandwidth factor).
-    """
-    rank_count = max(1, ops["rank"].n_unique())
-    sized = ops.with_columns(
-        pl.Series(
-            "bucket", network.bucket_bytes(ops["bytes"].to_numpy()), pl.String
-        ),
-        pl.when(pl.col("group_size") > 0)
-        .then(pl.col("group_size"))
-        .otherwise(rank_count)
-        .alias("ranks"),
-    )
-    pairs = sized.select("op", "ranks").unique()
-    factors = pairs.with_columns(
-        pl.Series(
-            "factor",
-            [network.busbw_factor(op, n) for op, n in pairs.iter_rows()],
-            dtype=pl.Float64,
-        )
-    )
-    timed = ~pl.col("posted")
-    return (
-        sized.join(factors, on=["op", "ranks"])
-        .group_by("api", "op", "bucket")
-        .agg(
-            pl.len().alias("calls"),
-            (pl.col("duration_ns").sum() / 1e6).alias("duration_ms"),
-            pl.col("bytes").sum(),
-            pl.col("bytes").filter(timed).sum().alias("timed_bytes"),
-            pl.col("duration_ns").filter(timed).sum().alias("timed_ns"),
-            (pl.col("bytes") * pl.col("factor"))
-            .filter(timed)
-            .sum()
-            .alias("weighted_bytes"),
-        )
-        .select(list(_PER_OPERATION_SCHEMA))
-        .cast(_PER_OPERATION_SCHEMA)
-    )
+    return pl.DataFrame(schema=table_schemas.NETWORK_OPS)
 
 
 def _totals(rows: pl.DataFrame, *parts: str) -> pl.DataFrame:
@@ -221,73 +152,6 @@ def _bandwidth(rows: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def wait_skew_us(ops: pl.DataFrame) -> pl.DataFrame:
-    """Measures how unevenly ranks spend time in the same collective.
-
-    The k-th call of an operation with one message size in one process group
-    is taken to be the same collective on every rank. The rank that arrives
-    last waits least, so the spread of the call durations is the arrival skew.
-    It does not depend on the ranks' clocks. Posted calls are left out.
-
-    Args:
-        ops: A ``network_ops`` table.
-
-    Returns:
-        One row per API and operation with ``skew_us``, the mean spread over
-        collectives seen on more than one rank; none for an operation seen on
-        one rank.
-    """
-    seq = (
-        ops.filter(~pl.col("posted"))
-        .sort("rank", "start_ns")
-        .with_columns(
-            pl.col("start_ns")
-            .cum_count()
-            .over("rank", "api", "group", "op", "bytes")
-            .alias("seq")
-        )
-        .group_by("api", "group", "op", "bytes", "seq")
-        .agg(
-            pl.col("rank").n_unique().alias("n"),
-            (pl.col("duration_ns").max() - pl.col("duration_ns").min()).alias(
-                "spread"
-            ),
-        )
-        .filter(pl.col("n") > 1)
-    )
-    return seq.group_by("api", "op").agg(
-        (pl.col("spread").mean() / 1e3).alias("skew_us")
-    )
-
-
-def launch_gap_us(ops: pl.DataFrame) -> pl.DataFrame:
-    """Measures how long GPU work waits between its launch and its start.
-
-    A long wait means the GPU was busy with earlier work on the stream, or
-    the collective had to wait for the other ranks to arrive.
-
-    Args:
-        ops: A ``network_ops`` table.
-
-    Returns:
-        One row per API and operation with ``gap_us``, the mean wait over the
-        calls whose launch is known; none for the others.
-    """
-    return (
-        ops.filter(
-            ~pl.col("posted"),
-            pl.col("launch_ns") >= 0,
-            pl.col("start_ns") >= pl.col("launch_ns"),
-        )
-        .group_by("api", "op")
-        .agg(
-            ((pl.col("start_ns") - pl.col("launch_ns")).mean() / 1e3).alias(
-                "gap_us"
-            )
-        )
-    )
-
-
 def _add_trial_metrics(
     metrics: dict[str, list[float]], ops: pl.DataFrame, per_key: pl.DataFrame
 ) -> None:
@@ -313,11 +177,11 @@ def _add_trial_metrics(
             busbw = row["weighted_bytes"] / row["timed_ns"]
             metrics.setdefault(f"algbw_GBps|{key}", []).append(algbw)
             metrics.setdefault(f"busbw_GBps|{key}", []).append(busbw)
-    for row in wait_skew_us(ops).iter_rows(named=True):
+    for row in network.wait_skew_us(ops).iter_rows(named=True):
         metrics.setdefault(f"wait_skew_us|{row['api']}|{row['op']}", []).append(
             row["skew_us"]
         )
-    for row in launch_gap_us(ops).iter_rows(named=True):
+    for row in network.launch_gap_us(ops).iter_rows(named=True):
         metrics.setdefault(
             f"launch_gap_us|{row['api']}|{row['op']}", []
         ).append(row["gap_us"])

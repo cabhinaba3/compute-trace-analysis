@@ -15,9 +15,9 @@ import polars as pl
 
 from cta import models
 from cta import plugins
-from cta.adapters.nsys import reader as nsys_reader
+from cta import table_schemas
+from cta.adapters import common
 from cta.analysis import alignment
-from cta.ingest import discovery
 
 TRT_PROFILE_SCHEMA = pl.Schema(
     {
@@ -114,7 +114,7 @@ class TrtTimingAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        head = discovery.peek_text(path)
+        head = common.peek_text(path)
         return "startComputeMs" in head and "endComputeMs" in head
 
     def ingest(
@@ -216,20 +216,20 @@ class TrtTimingAdapter:
                 step_id += 1
 
         if step_rows:
-            steps = nsys_reader.conform(
-                pl.DataFrame(step_rows), nsys_reader.STEPS_SCHEMA
+            steps = table_schemas.conform(
+                pl.DataFrame(step_rows), table_schemas.STEPS
             )
         else:
-            steps = pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA)
+            steps = pl.DataFrame(schema=table_schemas.STEPS)
         if kernel_rows:
-            kernels = nsys_reader.conform(
+            kernels = table_schemas.conform(
                 alignment.enrich_ops_df(pl.DataFrame(kernel_rows), "name"),
-                nsys_reader.KERNELS_SCHEMA,
+                table_schemas.KERNELS,
             )
         else:
-            kernels = pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA)
+            kernels = pl.DataFrame(schema=table_schemas.KERNELS)
 
-        return discovery.write_tables(
+        return common.write_tables(
             out_dir, {"steps": steps, "kernels": kernels}
         )
 
@@ -258,7 +258,7 @@ class TrtLayerProfileAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        head = discovery.peek_text(path)
+        head = common.peek_text(path)
         return (
             "averageMs" in head or "timeMs" in head
         ) and "percentage" in head
@@ -319,7 +319,7 @@ class TrtLayerProfileAdapter:
         else:
             layers = pl.DataFrame(schema=TRT_PROFILE_SCHEMA)
 
-        return discovery.write_tables(out_dir, {"trt_profile": layers})
+        return common.write_tables(out_dir, {"trt_profile": layers})
 
 
 def _extract_trt_precision(layer: dict[str, Any]) -> str:
@@ -381,7 +381,7 @@ class TrtEngineInfoAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        head = discovery.peek_text(path)
+        head = common.peek_text(path)
         return '"Layers"' in head and (
             '"LayerType"' in head
             or '"TacticValue"' in head
@@ -443,4 +443,4 @@ class TrtEngineInfoAdapter:
                     )
 
         layers = pl.DataFrame(layer_rows, schema=TRT_ENGINE_SCHEMA)
-        return discovery.write_tables(out_dir, {"trt_engine": layers})
+        return common.write_tables(out_dir, {"trt_engine": layers})

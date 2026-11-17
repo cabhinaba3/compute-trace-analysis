@@ -49,7 +49,7 @@ def _git_commit() -> str | None:
     return completed.stdout.strip() or None
 
 
-def report_to_dict(report: models.ComparisonReport) -> dict[str, Any]:
+def report_to_dict(report: models.Report) -> dict[str, Any]:
     """Returns a JSON-serialisable view of a report.
 
     ``aspects`` keeps the legacy summary-only shape; ``details`` and
@@ -94,7 +94,7 @@ def report_to_dict(report: models.ComparisonReport) -> dict[str, Any]:
     }
 
 
-def report_to_json(report: models.ComparisonReport) -> str:
+def report_to_json(report: models.Report) -> str:
     """Returns a report as indented JSON (see ``report_to_dict``).
 
     Args:
@@ -108,7 +108,7 @@ def report_to_json(report: models.ComparisonReport) -> str:
 
 
 def export_bundle(
-    report: models.ComparisonReport,
+    report: models.Report,
     out_dir: pathlib.Path,
     *,
     formats: Iterable[str] = ("markdown", "csv", "json"),

@@ -12,7 +12,6 @@ from typing import Any
 import polars as pl
 
 from cta.analysis import network
-from cta.aspects import network as network_aspect
 from cta.viz import context
 from cta.viz import ir
 from cta.viz import spec
@@ -85,7 +84,7 @@ def _bucket_sort(frame: pl.DataFrame) -> pl.DataFrame:
 def _pooled(ops: pl.DataFrame) -> pl.DataFrame:
     """Sums one series over its trials: per API, operation and bucket."""
     return (
-        pl.concat([network_aspect.per_operation(t) for t in _per_trial(ops)])
+        pl.concat([network.per_operation(t) for t in _per_trial(ops)])
         .group_by("api", "op", "bucket")
         .agg(pl.exclude("api", "op", "bucket").sum())
     )
@@ -221,9 +220,7 @@ def network_skew(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     ops = _network_frame(ctx, options)
     wait = options["metric"] == "wait_skew"
     column = "skew_us" if wait else "gap_us"
-    measure = (
-        network_aspect.wait_skew_us if wait else network_aspect.launch_gap_us
-    )
+    measure = network.wait_skew_us if wait else network.launch_gap_us
     values: dict[str, dict[str, float]] = {}
     keys: set[str] = set()
     for name, rows in _series(ops, options["by"]):

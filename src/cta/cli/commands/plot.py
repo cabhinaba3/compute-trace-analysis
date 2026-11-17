@@ -364,6 +364,7 @@ def plot_command(
     Output is static PDF, SVG or PNG, one interactive HTML file per plot, or
     one interactive dashboard (`--html`).
     """
+    from cta import api
     from cta import engine
     from cta.ingest import manifest as ingest_manifest
     from cta.viz import context
@@ -382,14 +383,14 @@ def plot_command(
             report = engine.run_comparison(groups, config)
         elif traces:
             if len(traces) == 1:
-                report = engine.analyze(
+                report = api.analyze(
                     traces[0],
                     warmup_steps=warmup_steps,
                     max_steps=max_steps,
                     cache_dir=cache_dir,
                 )
             else:
-                report = engine.compare(
+                report = api.compare(
                     traces[0],
                     traces[1],
                     *traces[2:],

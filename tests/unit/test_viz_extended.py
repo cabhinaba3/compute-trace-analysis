@@ -29,7 +29,7 @@ LABELS = ("base", "cand")
 def _report(
     aspects: dict[str, models.AspectResult] | None = None,
     labels: tuple[str, ...] = LABELS,
-) -> models.ComparisonReport:
+) -> models.Report:
     """Returns a report of groups with these labels and these aspects."""
     groups = tuple(
         models.TrialGroup(
@@ -51,7 +51,7 @@ def _report(
         )
         for i, label in enumerate(labels)
     )
-    return models.ComparisonReport(
+    return models.Report(
         mode="pair" if len(labels) == 2 else "multi",
         groups=groups,
         aspects=aspects or {},

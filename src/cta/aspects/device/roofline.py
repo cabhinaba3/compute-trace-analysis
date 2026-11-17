@@ -113,7 +113,7 @@ def _findings_table(findings: list[pl.DataFrame]) -> pl.DataFrame:
     title="Nsight Compute Roofline, Utilization & Warp Stalls",
     required_formats=("ncu",),
 )
-class RooflineDiffAspect(plugins.ComparisonAspect):
+class RooflineDiffAspect(plugins.Aspect):
     """Compares Nsight Compute utilisation, roofline position and stalls.
 
     Attributes:
@@ -127,7 +127,7 @@ class RooflineDiffAspect(plugins.ComparisonAspect):
         self,
         groups: tuple[models.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: models.CompareConfig,
+        config: models.AnalysisConfig,
     ) -> models.AspectResult:
         """Compares Nsight Compute kernel metrics across the trial groups.
 

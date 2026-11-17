@@ -13,7 +13,6 @@ def test_aspects_register_in_report_order() -> None:
     # Other tests may register mock aspects, so compare relative order only.
     from cta import plugins
 
-    plugins.load_plugins()
     device_aspects = [
         "latency_throughput",
         "kernel_diff",

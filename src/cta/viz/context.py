@@ -58,7 +58,7 @@ class DataContext:
 
     def __init__(
         self,
-        report: models.ComparisonReport | None = None,
+        report: models.Report | None = None,
         *,
         history: str | None = None,
     ) -> None:
@@ -83,12 +83,12 @@ class DataContext:
         return [group.label for group in self.report.groups]
 
     @property
-    def config(self) -> models.CompareConfig:
+    def config(self) -> models.AnalysisConfig:
         """The report's analysis config, or the default config."""
         report_config = self.report.config if self.report else None
-        return report_config or models.CompareConfig()
+        return report_config or models.AnalysisConfig()
 
-    def require_report(self) -> models.ComparisonReport:
+    def require_report(self) -> models.Report:
         """Returns the report.
 
         Returns:
@@ -374,7 +374,7 @@ class DataContext:
 
 
 def _trial_tables(
-    table_paths: Mapping[str, pathlib.Path], config: models.CompareConfig
+    table_paths: Mapping[str, pathlib.Path], config: models.AnalysisConfig
 ) -> Iterator[tuple[str, pl.DataFrame]]:
     """Yields (source name, frame) for every raw table of one trial.
 
@@ -404,7 +404,7 @@ def _trial_tables(
 def _trace_format_tables(
     table_paths: Mapping[str, pathlib.Path],
     trace_format: str,
-    config: models.CompareConfig,
+    config: models.AnalysisConfig,
 ) -> Iterator[tuple[str, pl.DataFrame]]:
     """Yields the sliced and timed tables of one trace format of one trial.
 

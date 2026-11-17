@@ -88,7 +88,7 @@ def _mean_over_trials(
     required_formats=_KERNEL_FORMATS,
     any_of_formats=True,
 )
-class KernelDiffAspect(plugins.ComparisonAspect):
+class KernelDiffAspect(plugins.Aspect):
     """Compares GPU kernel time by category, kernel, op family and scope.
 
     Attributes:
@@ -102,7 +102,7 @@ class KernelDiffAspect(plugins.ComparisonAspect):
         self,
         groups: tuple[models.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: models.CompareConfig,
+        config: models.AnalysisConfig,
     ) -> models.AspectResult:
         """Compares kernel time across the trial groups.
 

@@ -2,9 +2,7 @@
 
 A ``.nsys-rep`` report is read through its SQLite export. GPU activities are
 attributed to the NVTX step and scope ranges of the thread that launched them,
-matched through the CUDA runtime call's correlation id. This module also
-defines the kernels/steps/runtime table schemas shared by the other trace
-adapters.
+matched through the CUDA runtime call's correlation id.
 """
 
 from __future__ import annotations
@@ -26,95 +24,14 @@ import polars as pl
 from cta import _native as native
 from cta import models
 from cta import plugins
+from cta import table_schemas
+from cta.adapters import common
 from cta.adapters import runtime_calls
 from cta.adapters.nsys import network_ops
 from cta.analysis import alignment
 from cta.analysis import intervals
 from cta.analysis import network
-from cta.ingest import discovery
 
-KERNELS_SCHEMA = pl.Schema(
-    {
-        "step": pl.Int32(),
-        "scope": pl.String(),
-        # Enclosing ranges, "outermost > ... > innermost" (equal to scope for
-        # the last level).
-        "scope_path": pl.String(),
-        "name": pl.String(),
-        "demangled_name": pl.String(),
-        "canonical_name": pl.String(),
-        "op_family": pl.String(),
-        "category": pl.String(),
-        "start_ns": pl.Int64(),
-        "end_ns": pl.Int64(),
-        "duration_ns": pl.Int64(),
-        "bytes": pl.Int64(),
-        "stream": pl.Int32(),
-        # Per-report/process index; 0 for single-report sources.
-        "rank": pl.Int32(),
-        # CUDA device id within the report; 0 for single-GPU sources.
-        "device": pl.Int32(),
-    }
-)
-
-STEPS_SCHEMA = pl.Schema(
-    {
-        "step": pl.Int32(),
-        "start_ns": pl.Int64(),
-        "end_ns": pl.Int64(),
-        "duration_ns": pl.Int64(),
-        "rank": pl.Int32(),
-    }
-)
-
-_SCHEMA_DEFAULTS: dict[str, object] = {"rank": 0, "device": 0, "scope_path": ""}
-
-
-def conform(df: pl.DataFrame, schema: pl.Schema) -> pl.DataFrame:
-    """Selects and casts a frame to a schema, filling defaultable columns.
-
-    Missing ``rank`` and ``device`` columns are filled with 0 and a missing
-    ``scope_path`` column with "".
-
-    Args:
-        df: The frame to conform.
-        schema: The target schema.
-
-    Returns:
-        The frame with exactly the columns of ``schema``, in its order and
-        with its types.
-
-    Raises:
-        KeyError: ``df`` lacks a column of ``schema`` that has no default.
-    """
-    missing = [column for column in schema if column not in df.columns]
-    if missing:
-        df = df.with_columns(
-            [
-                pl.lit(_SCHEMA_DEFAULTS[column]).alias(column)
-                for column in missing
-            ]
-        )
-    return df.select(list(schema.keys())).cast(schema)
-
-
-RUNTIME_SCHEMA = pl.Schema(
-    {"name": pl.String(), "duration_ns": pl.Int64(), "calls": pl.Int64()}
-)
-OSRT_SCHEMA = pl.Schema(
-    {"name": pl.String(), "duration_ns": pl.Int64(), "calls": pl.Int64()}
-)
-GPU_METRICS_SCHEMA = pl.Schema(
-    {
-        "metric_name": pl.String(),
-        "timestamp_ns": pl.Int64(),
-        "value": pl.Float64(),
-        "rank": pl.Int32(),
-    }
-)
-
-# The category codes the native readers give GPU activities.
-GPU_CATEGORY_NAMES = {0: "compute", 1: "comm", 2: "memcpy"}
 # Step ranges of one report, before duration and rank are added.
 _STEP_RANGES_SCHEMA = {
     "step": pl.Int32,
@@ -399,7 +316,7 @@ def _text_gpu_metrics(
         tables: The names of the export's tables.
 
     Returns:
-        A frame with GPU_METRICS_SCHEMA and ``rank`` 0.
+        A frame with table_schemas.GPU_METRICS and ``rank`` 0.
     """
     samples: list[dict[str, object]] = []
 
@@ -445,8 +362,8 @@ def _text_gpu_metrics(
         for row_index, (raw_value,) in enumerate(rows):
             add_metric_dict(raw_value, row_index)
     if samples:
-        return pl.DataFrame(samples, schema=GPU_METRICS_SCHEMA)
-    return pl.DataFrame(schema=GPU_METRICS_SCHEMA)
+        return pl.DataFrame(samples, schema=table_schemas.GPU_METRICS)
+    return pl.DataFrame(schema=table_schemas.GPU_METRICS)
 
 
 def _summary_frame(summary: dict[str, Any], schema: pl.Schema) -> pl.DataFrame:
@@ -486,7 +403,9 @@ def _gpu_events_frame(
             "name": distinct["name"].gather(name_rows),
             "category": pl.Series(
                 columns["gpu_category"][order]
-            ).replace_strict(GPU_CATEGORY_NAMES, return_dtype=pl.String),
+            ).replace_strict(
+                table_schemas.GPU_CATEGORIES, return_dtype=pl.String
+            ),
             "start_ns": columns["gpu_start"][order],
             "end_ns": columns["gpu_end"][order],
             "bytes": columns["gpu_bytes"][order],
@@ -512,7 +431,7 @@ def _table_gpu_metrics(columns: dict[str, Any]) -> pl.DataFrame:
             "value": columns["metric_value"],
             "rank": np.zeros(len(columns["metric_name"]), dtype=np.int32),
         },
-        schema=GPU_METRICS_SCHEMA,
+        schema=table_schemas.GPU_METRICS,
     )
 
 
@@ -534,8 +453,8 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         tables = _list_tables(conn)
-        runtime = _summary_frame(columns["runtime"], RUNTIME_SCHEMA)
-        osrt = _summary_frame(columns["osrt"], OSRT_SCHEMA)
+        runtime = _summary_frame(columns["runtime"], table_schemas.RUNTIME)
+        osrt = _summary_frame(columns["osrt"], table_schemas.OSRT)
         gpu_metrics = (
             _table_gpu_metrics(columns)
             if columns["has_metrics"]
@@ -562,9 +481,9 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
                 event_scopes.alias("scope"),
                 pl.Series("scope_path", event_scope_paths, dtype=pl.String),
             )
-        kernels = conform(events, KERNELS_SCHEMA)
+        kernels = table_schemas.conform(events, table_schemas.KERNELS)
     else:
-        kernels = pl.DataFrame(schema=KERNELS_SCHEMA)
+        kernels = pl.DataFrame(schema=table_schemas.KERNELS)
 
     if steps.is_empty() and kernels.height:
         warnings.warn(
@@ -582,12 +501,12 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
             },
             schema=_STEP_RANGES_SCHEMA,
         )
-    steps = conform(
+    steps = table_schemas.conform(
         steps.with_columns(
             (pl.col("end_ns") - pl.col("start_ns")).alias("duration_ns"),
             pl.lit(rank).alias("rank"),
         ),
-        STEPS_SCHEMA,
+        table_schemas.STEPS,
     )
     with contextlib.closing(
         sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -678,7 +597,7 @@ class NsysAdapter:
         per_report: list[dict[str, pl.DataFrame]] = []
         for report_index, path in enumerate(sorted(artifact.paths)):
             db_path = _resolve_sqlite(path, out_dir)
-            rank = discovery.infer_rank(path, report_index)
+            rank = common.infer_rank(path, report_index)
             per_report.append(_ingest_report(db_path, rank))
 
         def concat_reports(key: str, schema: pl.Schema) -> pl.DataFrame:
@@ -700,20 +619,22 @@ class NsysAdapter:
             )
 
         merged_tables = {
-            "kernels": concat_reports("kernels", KERNELS_SCHEMA).sort(
+            "kernels": concat_reports("kernels", table_schemas.KERNELS).sort(
                 ["rank", "start_ns"]
             ),
             "network_ops": concat_reports(
-                "network_ops", network.NETWORK_OPS_SCHEMA
+                "network_ops", table_schemas.NETWORK_OPS
             ).sort(["rank", "start_ns"]),
-            "steps": concat_reports("steps", STEPS_SCHEMA).sort(
+            "steps": concat_reports("steps", table_schemas.STEPS).sort(
                 ["rank", "start_ns"]
             ),
-            "runtime": merge_summaries("runtime", RUNTIME_SCHEMA),
-            "osrt": merge_summaries("osrt", OSRT_SCHEMA),
-            "gpu_metrics": concat_reports("gpu_metrics", GPU_METRICS_SCHEMA),
+            "runtime": merge_summaries("runtime", table_schemas.RUNTIME),
+            "osrt": merge_summaries("osrt", table_schemas.OSRT),
+            "gpu_metrics": concat_reports(
+                "gpu_metrics", table_schemas.GPU_METRICS
+            ),
             "runtime_calls": concat_reports(
-                "runtime_calls", runtime_calls.RUNTIME_CALLS_SCHEMA
+                "runtime_calls", table_schemas.RUNTIME_CALLS
             ).sort(["rank", "start_ns"]),
         }
-        return discovery.write_tables(out_dir, merged_tables)
+        return common.write_tables(out_dir, merged_tables)

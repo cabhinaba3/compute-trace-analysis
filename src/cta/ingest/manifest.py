@@ -33,7 +33,7 @@ def _trial_path(base_dir: pathlib.Path, trial_spec: Any) -> pathlib.Path:
 
 def load_manifest(
     path: str | pathlib.Path,
-) -> tuple[tuple[models.TrialGroup, ...], models.CompareConfig]:
+) -> tuple[tuple[models.TrialGroup, ...], models.AnalysisConfig]:
     """Loads a manifest that lists the groups to compare and the options.
 
     The file is TOML when its suffix is ``.toml``, else YAML. Each entry of
@@ -104,7 +104,7 @@ def load_manifest(
     }
     cache_dir = base_dir / config_section.get("cache_dir", ".cta_cache")
 
-    config = models.CompareConfig(
+    config = models.AnalysisConfig(
         aspects=aspects,
         warmup_steps=int(config_section.get("warmup_steps", 0)),
         max_steps=_optional_int(config_section, "max_steps"),

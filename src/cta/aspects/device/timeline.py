@@ -84,7 +84,7 @@ def _overlap_per_device(
     required_formats=step_slicing.TIMELINE_FORMATS,
     any_of_formats=True,
 )
-class TimelineOverlapAspect(plugins.ComparisonAspect):
+class TimelineOverlapAspect(plugins.Aspect):
     """Compares GPU busy/idle time, comm overlap and sampled GPU metrics.
 
     Attributes:
@@ -98,7 +98,7 @@ class TimelineOverlapAspect(plugins.ComparisonAspect):
         self,
         groups: tuple[models.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: models.CompareConfig,
+        config: models.AnalysisConfig,
     ) -> models.AspectResult:
         """Compares timeline utilisation across the trial groups.
 

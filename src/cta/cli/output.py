@@ -66,7 +66,7 @@ def split_comma_separated(value: str | None) -> list[str] | None:
 
 
 def emit_report(
-    report: models.ComparisonReport,
+    report: models.Report,
     output_format: str,
     out_dir: pathlib.Path | None,
     export: str,

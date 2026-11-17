@@ -22,7 +22,7 @@ import pytest
 
 from cta import _native
 from cta import models
-from cta.adapters import runtime_calls
+from cta import table_schemas
 from cta.adapters.kineto import reader
 from cta.synth import kineto as synth_kineto
 
@@ -619,6 +619,6 @@ def test_runtime_calls_table_is_written(tmp_path: pathlib.Path) -> None:
     )
     written = reader.KinetoAdapter().ingest(artifact, out_dir)
     table = pl.read_parquet(written["runtime_calls"])
-    assert table.schema == runtime_calls.RUNTIME_CALLS_SCHEMA
+    assert table.schema == table_schemas.RUNTIME_CALLS
     assert table.height > 0
     assert table["start_ns"].is_sorted()

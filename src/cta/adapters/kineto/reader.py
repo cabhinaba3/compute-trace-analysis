@@ -17,12 +17,12 @@ import polars as pl
 from cta import _native as native
 from cta import models
 from cta import plugins
+from cta import table_schemas
+from cta.adapters import common
 from cta.adapters import runtime_calls
-from cta.adapters.nsys import reader as nsys_reader
 from cta.analysis import alignment
 from cta.analysis import intervals
 from cta.analysis import network
-from cta.ingest import discovery
 
 _XPROF_HEAD_RE = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
 
@@ -55,7 +55,7 @@ class KinetoAdapter:
             lower_name.endswith(".json") or lower_name.endswith(".json.gz")
         ):
             return False
-        head = discovery.peek_text(path)
+        head = common.peek_text(path)
         if _XPROF_HEAD_RE.match(head.lstrip()):
             return False
         return '"traceEvents"' in head
@@ -99,28 +99,28 @@ class KinetoAdapter:
         if kernel_frames:
             kernels = pl.concat(kernel_frames).sort("rank", "start_ns")
         else:
-            kernels = pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA)
+            kernels = pl.DataFrame(schema=table_schemas.KERNELS)
         if step_frames:
             steps = pl.concat(step_frames).sort("rank", "start_ns")
         else:
-            steps = pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA)
+            steps = pl.DataFrame(schema=table_schemas.STEPS)
         network_ops = (
             pl.concat(op_frames).sort("rank", "start_ns")
             if op_frames
-            else pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA)
+            else pl.DataFrame(schema=table_schemas.NETWORK_OPS)
         )
         calls = (
             pl.concat(call_frames).sort("rank", "start_ns")
             if call_frames
-            else pl.DataFrame(schema=runtime_calls.RUNTIME_CALLS_SCHEMA)
+            else pl.DataFrame(schema=table_schemas.RUNTIME_CALLS)
         )
         runtime_rows = [
             {"name": name, "duration_ns": duration_ns, "calls": calls}
             for name, (duration_ns, calls) in runtime_totals.items()
         ]
-        runtime = pl.DataFrame(runtime_rows, schema=nsys_reader.RUNTIME_SCHEMA)
+        runtime = pl.DataFrame(runtime_rows, schema=table_schemas.RUNTIME)
 
-        return discovery.write_tables(
+        return common.write_tables(
             out_dir,
             {
                 "kernels": kernels,
@@ -140,7 +140,7 @@ def _shard_rank(columns: dict[str, Any], path: pathlib.Path, index: int) -> int:
     """
     if columns["rank"] is not None:
         return int(columns["rank"])
-    return discovery.infer_rank(path, index)
+    return common.infer_rank(path, index)
 
 
 def _ingest_shard(
@@ -174,10 +174,10 @@ def _ingest_shard(
 
     if not len(columns["gpu_name"]):
         return (
-            pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA),
-            pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA),
-            pl.DataFrame(schema=network.NETWORK_OPS_SCHEMA),
-            pl.DataFrame(schema=runtime_calls.RUNTIME_CALLS_SCHEMA),
+            pl.DataFrame(schema=table_schemas.KERNELS),
+            pl.DataFrame(schema=table_schemas.STEPS),
+            pl.DataFrame(schema=table_schemas.NETWORK_OPS),
+            pl.DataFrame(schema=table_schemas.RUNTIME_CALLS),
         )
 
     # Sort by GPU start time; the launch arrays are permuted alongside so
@@ -204,7 +204,7 @@ def _ingest_shard(
             "category": pl.Series(
                 columns["gpu_category"][order]
             ).replace_strict(
-                nsys_reader.GPU_CATEGORY_NAMES, return_dtype=pl.String
+                table_schemas.GPU_CATEGORIES, return_dtype=pl.String
             ),
             "start_ns": gpu_start_ns,
             "end_ns": gpu_end_ns,
@@ -297,13 +297,13 @@ def _ingest_shard(
             "end_ns": [trace_end_ns],
             "duration_ns": [trace_end_ns - trace_start_ns],
         }
-    steps = nsys_reader.conform(
+    steps = table_schemas.conform(
         pl.DataFrame(step_columns).with_columns(pl.lit(rank).alias("rank")),
-        nsys_reader.STEPS_SCHEMA,
+        table_schemas.STEPS,
     )
-    kernels = nsys_reader.conform(
+    kernels = table_schemas.conform(
         kernels.with_columns(pl.Series("step", kernel_steps, dtype=pl.Int32)),
-        nsys_reader.KERNELS_SCHEMA,
+        table_schemas.KERNELS,
     )
     calls = runtime_calls.runtime_calls_frame(
         names,

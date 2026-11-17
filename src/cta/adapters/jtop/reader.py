@@ -18,7 +18,7 @@ import polars as pl
 
 from cta import models
 from cta import plugins
-from cta.ingest import discovery
+from cta.adapters import common
 
 JTOP_SAMPLES_SCHEMA = pl.Schema(
     {
@@ -206,7 +206,7 @@ class JtopAdapter:
         """
         if path.suffix.lower() != ".json":
             return False
-        head = discovery.peek_text(path)
+        head = common.peek_text(path)
         has_power_rail = "Power TOT" in head or "VDD_IN" in head
         has_usage_keys = "CPU1" in head and '"GPU"' in head and '"RAM"' in head
         return has_power_rail or has_usage_keys
@@ -238,4 +238,4 @@ class JtopAdapter:
             if frames
             else pl.DataFrame(schema=JTOP_SAMPLES_SCHEMA)
         )
-        return discovery.write_tables(out_dir, {"samples": samples})
+        return common.write_tables(out_dir, {"samples": samples})

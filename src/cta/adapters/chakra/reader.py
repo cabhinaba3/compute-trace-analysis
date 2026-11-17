@@ -19,7 +19,7 @@ import polars as pl
 from cta import _native as native
 from cta import models
 from cta import plugins
-from cta.ingest import discovery
+from cta.adapters import common
 
 NODES_SCHEMA = pl.Schema(
     {
@@ -228,7 +228,7 @@ def _write_tables(
     world_size = max(artifact.world_size, ranks_seen)
     traffic = _build_traffic_df(nodes, world_size)
 
-    return discovery.write_tables(
+    return common.write_tables(
         out_dir,
         {
             "nodes": nodes,
@@ -298,8 +298,7 @@ class ChakraEtAdapter:
         """
         paths = sorted(artifact.paths)
         ranks = [
-            discovery.infer_rank(path, index)
-            for index, path in enumerate(paths)
+            common.infer_rank(path, index) for index, path in enumerate(paths)
         ]
         columns = native.read_chakra_et(
             [str(path) for path in paths],
@@ -409,7 +408,7 @@ class ChakraHostEtAdapter:
             or "execution_trace" in lower_name
         ):
             return True
-        head = discovery.peek_text(path, 4096)
+        head = common.peek_text(path, 4096)
         return (
             '"ctrl_deps"' in head and '"nodes"' in head and '"schema"' in head
         )
@@ -433,7 +432,7 @@ class ChakraHostEtAdapter:
         node_rows: list[dict[str, object]] = []
         edge_rows: list[dict[str, object]] = []
         for file_index, path in enumerate(sorted(artifact.paths)):
-            rank = discovery.infer_rank(path, file_index)
+            rank = common.infer_rank(path, file_index)
             trace = json.loads(path.read_text())
             for node in trace.get("nodes", []):
                 node_id = int(node["id"])

@@ -18,8 +18,8 @@ import pyarrow as pa
 from cta import _native as native
 from cta import models
 from cta import plugins
+from cta.adapters import common
 from cta.adapters.chakra import reader
-from cta.ingest import discovery
 
 GOAL_MAGIC_COOKIE = 4223
 GOAL_MAGIC_INVALID = 2342
@@ -403,7 +403,7 @@ class GoalAdapter:
         )
         traffic = _p2p_traffic(all_nodes)
 
-        return discovery.write_tables(
+        return common.write_tables(
             out_dir,
             {
                 "nodes": all_nodes,

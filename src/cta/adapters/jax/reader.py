@@ -32,9 +32,9 @@ import polars as pl
 
 from cta import models
 from cta import plugins
-from cta.adapters.nsys import reader as nsys_reader
+from cta import table_schemas
+from cta.adapters import common
 from cta.analysis import alignment
-from cta.ingest import discovery
 
 _XPLANE_SUFFIX = ".xplane.pb"
 _HOST_TRACE_SUFFIX = ".trace.json.gz"
@@ -167,7 +167,7 @@ class JaxAdapter:
         )
         if not is_json:
             return False
-        head = discovery.peek_text(path).lstrip()
+        head = common.peek_text(path).lstrip()
         # XProf and jax's Perfetto export both start with displayTimeUnit
         # "ns"; PyTorch/Kineto traces start with schemaVersion.
         return re.match(r'\{\s*"displayTimeUnit"\s*:\s*"ns"', head) is not None
@@ -203,21 +203,21 @@ class JaxAdapter:
         kernels = (
             pl.concat(kernel_frames).sort("rank", "start_ns")
             if kernel_frames
-            else pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA)
+            else pl.DataFrame(schema=table_schemas.KERNELS)
         )
         steps = (
             pl.concat(step_frames).sort("rank", "start_ns")
             if step_frames
-            else pl.DataFrame(schema=nsys_reader.STEPS_SCHEMA)
+            else pl.DataFrame(schema=table_schemas.STEPS)
         )
         runtime = pl.DataFrame(
             [
                 {"name": name, "duration_ns": totals[0], "calls": totals[1]}
                 for name, totals in runtime_by_name.items()
             ],
-            schema=nsys_reader.RUNTIME_SCHEMA,
+            schema=table_schemas.RUNTIME,
         )
-        return discovery.write_tables(
+        return common.write_tables(
             out_dir,
             {
                 "kernels": kernels,
@@ -486,8 +486,8 @@ def _ingest_shard(
     runtime_by_name = {} if runtime_by_name is None else runtime_by_name
     scan = _scan_events(events, rank)
     if not scan.op_rows:
-        return pl.DataFrame(schema=nsys_reader.KERNELS_SCHEMA), pl.DataFrame(
-            schema=nsys_reader.STEPS_SCHEMA
+        return pl.DataFrame(schema=table_schemas.KERNELS), pl.DataFrame(
+            schema=table_schemas.STEPS
         )
 
     start_times_ns = np.asarray([row["start_ns"] for row in scan.op_rows])
@@ -535,9 +535,9 @@ def _ingest_shard(
             "end_ns": [last_end_ns],
             "duration_ns": [last_end_ns - first_start_ns],
         }
-    steps = nsys_reader.conform(
+    steps = table_schemas.conform(
         pl.DataFrame(step_columns).with_columns(pl.lit(rank).alias("rank")),
-        nsys_reader.STEPS_SCHEMA,
+        table_schemas.STEPS,
     )
     kernels = kernels.with_columns(
         pl.Series("step", step_of_op, dtype=pl.Int32)
@@ -555,7 +555,7 @@ def _ingest_shard(
         # Compile/autotune work and transfers outside every step are not
         # step work.
         kernels = kernels.filter(pl.col("step") >= 0)
-    return nsys_reader.conform(kernels, nsys_reader.KERNELS_SCHEMA), steps
+    return table_schemas.conform(kernels, table_schemas.KERNELS), steps
 
 
 def _infer_module_steps(

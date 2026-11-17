@@ -19,7 +19,7 @@ from cta.synth import trtexec
 
 
 def _summary_by_metric(
-    report: models.ComparisonReport, aspect_name: str
+    report: models.Report, aspect_name: str
 ) -> dict[str, dict[str, Any]]:
     """Returns the summary rows of one aspect, keyed by metric name.
 

@@ -1,10 +1,15 @@
-"""Step-window slicing shared by the device aspects and the plot data layer."""
+"""Step windows: which steps to keep, and which step each event falls in.
+
+Shared by the adapters, the device aspects and the plot data layer, so every
+view of a trace slices warm-up and step limits the same way.
+"""
 
 from __future__ import annotations
 
 import pathlib
 import warnings
 
+import numpy as np
 import polars as pl
 
 from cta import models
@@ -45,7 +50,7 @@ def _kernels_in_steps(
 def slice_steps_and_kernels(
     steps: pl.DataFrame,
     kernels: pl.DataFrame,
-    config: models.CompareConfig,
+    config: models.AnalysisConfig,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Restricts steps and kernels to the requested ranks, devices and steps.
 
@@ -175,3 +180,26 @@ def pick_timeline_tables(
             runtime = _read_if_present(table_paths, f"{trace_format}.runtime")
             return steps, kernels, runtime
     raise KeyError("No timeline steps table found in bundle")
+
+
+def step_of(start_ns: np.ndarray, steps: pl.DataFrame) -> np.ndarray:
+    """Returns the step each start time falls in, or -1.
+
+    Args:
+        start_ns: Start times.
+        steps: Step ranges with ``step``, ``start_ns`` and ``end_ns``.
+
+    Returns:
+        One step number per start time; -1 outside every step.
+    """
+    if steps.is_empty():
+        return np.full(len(start_ns), -1, dtype=np.int32)
+    ordered = steps.sort("start_ns")
+    begin = ordered["start_ns"].to_numpy()
+    index = np.searchsorted(begin, start_ns, side="right") - 1
+    inside = (index >= 0) & (
+        start_ns <= ordered["end_ns"].to_numpy()[np.maximum(index, 0)]
+    )
+    return np.where(
+        inside, ordered["step"].to_numpy()[np.maximum(index, 0)], -1
+    ).astype(np.int32)

@@ -15,7 +15,7 @@ import polars as pl
 import pytest
 
 import cta
-from cta import diagnosis
+from cta import gating
 from cta.analysis import alignment
 from cta.analysis import stats
 from cta.ingest import cache
@@ -90,7 +90,7 @@ class _MockAspect:
         self,
         groups: tuple[cta.TrialGroup, ...],
         tables: dict[str, list[dict[str, pathlib.Path]]],
-        config: cta.CompareConfig,
+        config: cta.AnalysisConfig,
     ) -> cta.AspectResult:
         """Compares summed latency and reports compute and comm shares.
 
@@ -272,7 +272,7 @@ def test_alignment_and_entity_comparison() -> None:
         "NCCL_AllReduce",
         "FlashAttention",
     }
-    gates = diagnosis.parse_gate_spec("p99:+5%, throughput:-10%")
+    gates = gating.parse_gate_spec("p99:+5%, throughput:-10%")
     assert gates == {"p99": 5.0, "throughput": -10.0}
 
 

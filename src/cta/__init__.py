@@ -16,24 +16,27 @@ __version__ = "1.0.0"
 
 # Public name -> (module, attribute in that module).
 _LAZY: dict[str, tuple[str, str]] = {
-    "EquivalenceVerdict": ("cta.aspects.distributed", "EquivalenceVerdict"),
+    "EquivalenceVerdict": (
+        "cta.aspects.distributed.equivalence",
+        "EquivalenceVerdict",
+    ),
     "verify_chakra_goal_equivalence": (
-        "cta.aspects.distributed",
+        "cta.aspects.distributed.equivalence",
         "verify_chakra_goal_equivalence",
     ),
     "detect_format": ("cta.ingest.discovery", "detect_format"),
     "resolve_bundle": ("cta.ingest.discovery", "resolve_bundle"),
     "resolve_trial_group": ("cta.ingest.discovery", "resolve_trial_group"),
-    "analyze": ("cta.engine", "analyze"),
-    "compare": ("cta.engine", "compare"),
-    "inspect_trace": ("cta.engine", "inspect_trace"),
+    "analyze": ("cta.api", "analyze"),
+    "compare": ("cta.api", "compare"),
+    "inspect_trace": ("cta.api", "inspect_trace"),
     "run_comparison": ("cta.engine", "run_comparison"),
     "load_manifest": ("cta.ingest.manifest", "load_manifest"),
     "AspectResult": ("cta.models", "AspectResult"),
     "BottleneckShift": ("cta.models", "BottleneckShift"),
-    "CompareConfig": ("cta.models", "CompareConfig"),
-    "ComparisonReport": ("cta.models", "ComparisonReport"),
-    "RegressionViolation": ("cta.models", "RegressionViolation"),
+    "AnalysisConfig": ("cta.models", "AnalysisConfig"),
+    "Report": ("cta.models", "Report"),
+    "GateViolation": ("cta.models", "GateViolation"),
     "RunBundle": ("cta.models", "RunBundle"),
     "TraceArtifact": ("cta.models", "TraceArtifact"),
     "TrialGroup": ("cta.models", "TrialGroup"),
@@ -45,10 +48,10 @@ __all__ = [
     "__version__",
     "AspectResult",
     "BottleneckShift",
-    "CompareConfig",
-    "ComparisonReport",
+    "AnalysisConfig",
+    "Report",
     "EquivalenceVerdict",
-    "RegressionViolation",
+    "GateViolation",
     "RunBundle",
     "TraceArtifact",
     "TrialGroup",
@@ -66,21 +69,23 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from cta.aspects.distributed import EquivalenceVerdict
-    from cta.aspects.distributed import verify_chakra_goal_equivalence
-    from cta.engine import analyze
-    from cta.engine import compare
-    from cta.engine import inspect_trace
+    from cta.api import analyze
+    from cta.api import compare
+    from cta.api import inspect_trace
+    from cta.aspects.distributed.equivalence import EquivalenceVerdict
+    from cta.aspects.distributed.equivalence import (
+        verify_chakra_goal_equivalence,
+    )
     from cta.engine import run_comparison
     from cta.ingest.discovery import detect_format
     from cta.ingest.discovery import resolve_bundle
     from cta.ingest.discovery import resolve_trial_group
     from cta.ingest.manifest import load_manifest
+    from cta.models import AnalysisConfig
     from cta.models import AspectResult
     from cta.models import BottleneckShift
-    from cta.models import CompareConfig
-    from cta.models import ComparisonReport
-    from cta.models import RegressionViolation
+    from cta.models import GateViolation
+    from cta.models import Report
     from cta.models import RunBundle
     from cta.models import TraceArtifact
     from cta.models import TrialGroup

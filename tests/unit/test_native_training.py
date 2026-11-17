@@ -39,7 +39,6 @@ def _solve(nodes: pl.DataFrame, edges: pl.DataFrame) -> dag.DagStats:
 def _read_chakra(
     directory: pathlib.Path, cache_dir: pathlib.Path
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    plugins.load_plugins()
     run = discovery.resolve_bundle(directory)
     tables = cache.CacheStore(cache_dir).get_or_ingest(
         run.artifacts["chakra_et"], plugins.ADAPTERS["chakra_et"]

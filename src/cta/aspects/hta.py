@@ -148,7 +148,7 @@ if _HTA_AVAILABLE:
         required_formats=("kineto",),
         default_enabled=False,
     )
-    class HtaKinetoAspect(plugins.ComparisonAspect):
+    class HtaKinetoAspect(plugins.Aspect):
         """Compares HTA's idle-time, launch-delay and queue-length metrics.
 
         Registered only when HTA is installed.
@@ -165,7 +165,7 @@ if _HTA_AVAILABLE:
             self,
             groups: tuple[models.TrialGroup, ...],
             tables: dict[str, list[dict[str, pathlib.Path]]],
-            config: models.CompareConfig,
+            config: models.AnalysisConfig,
         ) -> models.AspectResult:
             """Runs HTA on every trial and compares its metrics.
 

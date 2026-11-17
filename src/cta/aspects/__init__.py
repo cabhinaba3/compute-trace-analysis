@@ -1,7 +1,5 @@
-"""Comparison aspect plugins."""
+"""Comparison aspects: each computes one family of metrics across groups.
 
-from cta.aspects import device as device
-from cta.aspects import distributed as distributed
-from cta.aspects import edge as edge
-from cta.aspects import hta as hta
-from cta.aspects import network as network
+``cta.plugins.ASPECTS`` lists the built-in aspects, in report order, and
+imports them on first use.
+"""

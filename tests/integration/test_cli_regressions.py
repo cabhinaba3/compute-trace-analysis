@@ -16,7 +16,7 @@ import pytest
 from typer import testing
 
 import cta
-from cta import diagnosis
+from cta import gating
 from cta.cli import app as cli_app
 from cta.synth import chakra
 
@@ -55,7 +55,7 @@ def chakra_pair(tmp_path_factory: pytest.TempPathFactory) -> ChakraPair:
 
 def test_parse_gate_spec_rejects_non_numeric() -> None:
     with pytest.raises(ValueError, match="not a number"):
-        diagnosis.parse_gate_spec("p99:abc%")
+        gating.parse_gate_spec("p99:abc%")
 
 
 def test_unknown_gate_metric_fails_unless_allowed(

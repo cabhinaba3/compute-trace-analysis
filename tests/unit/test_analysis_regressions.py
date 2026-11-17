@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 
 from cta import diagnosis
+from cta import gating
 from cta.analysis import alignment
 from cta.analysis import dag
 from cta.export import latex
@@ -28,9 +29,9 @@ def test_rgba_passes_named_colors_through() -> None:
 
 
 def test_gate_direction_detection() -> None:
-    assert diagnosis._higher_is_better("throughput_per_s")
-    assert diagnosis._higher_is_better("queries_per_joule")
-    assert not diagnosis._higher_is_better("latency_ms")
+    assert gating._higher_is_better("throughput_per_s")
+    assert gating._higher_is_better("queries_per_joule")
+    assert not gating._higher_is_better("latency_ms")
 
 
 def test_regime_memory_bound_still_reported() -> None:

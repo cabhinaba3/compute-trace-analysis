@@ -47,7 +47,7 @@ def _format_cell(column: str, value: Any, row: dict[str, Any]) -> str:
 
 
 def render_terminal_report(
-    report: models.ComparisonReport, console: rich_console.Console | None = None
+    report: models.Report, console: rich_console.Console | None = None
 ) -> None:
     """Prints a report to the terminal.
 

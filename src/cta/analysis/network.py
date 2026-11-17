@@ -13,41 +13,7 @@ import re
 import numpy as np
 import polars as pl
 
-NETWORK_OPS_SCHEMA = pl.Schema(
-    {
-        "rank": pl.Int32(),
-        "device": pl.Int32(),
-        "stream": pl.Int32(),
-        "step": pl.Int32(),
-        # Communication library that issued the call, e.g. "nccl".
-        "api": pl.String(),
-        # Logical operation, lower case without separators: "allreduce".
-        "op": pl.String(),
-        # Algorithm and protocol NCCL picked ("RING", "LL"); "" if unknown.
-        "algo": pl.String(),
-        "proto": pl.String(),
-        "dtype": pl.String(),
-        # Process group the call ran in; "" if unknown.
-        "group": pl.String(),
-        "group_size": pl.Int32(),
-        # Rank on the other end of a point-to-point call, as the communicator
-        # numbers it; -1 for collectives and when the trace does not say.
-        "peer": pl.Int32(),
-        # Message size in bytes as nccl-tests counts it; 0 when the trace does
-        # not record it.
-        "bytes": pl.Int64(),
-        # True when the call only posts the transfer (MPI_Isend, a UCX
-        # submit): its duration says nothing about bandwidth.
-        "posted": pl.Boolean(),
-        # When the host issued the call (the CUDA launch of the kernel or
-        # copy); -1 when the trace does not say. start_ns - launch_ns is how
-        # long the GPU work waited before it began.
-        "launch_ns": pl.Int64(),
-        "start_ns": pl.Int64(),
-        "end_ns": pl.Int64(),
-        "duration_ns": pl.Int64(),
-    }
-)
+from cta import table_schemas
 
 # Collective name as PyTorch or a kernel spells it -> logical operation.
 _OP_ALIASES = {
@@ -162,7 +128,7 @@ def ops_from_kernels(
             launch is unknown.
 
     Returns:
-        A frame conforming to ``NETWORK_OPS_SCHEMA``.
+        A frame conforming to ``table_schemas.NETWORK_OPS``.
     """
     launches = (
         np.full(kernels.height, -1, dtype=np.int64)
@@ -227,7 +193,7 @@ def ops_from_kernels(
         "start_ns",
         "end_ns",
         "duration_ns",
-    ).cast(NETWORK_OPS_SCHEMA)
+    ).cast(table_schemas.NETWORK_OPS)
     return pl.concat([nccl, peer_copies(kernels)])
 
 
@@ -264,7 +230,142 @@ def peer_copies(kernels: pl.DataFrame) -> pl.DataFrame:
         "start_ns",
         "end_ns",
         "duration_ns",
-    ).cast(NETWORK_OPS_SCHEMA)
+    ).cast(table_schemas.NETWORK_OPS)
+
+
+PER_OPERATION_SCHEMA = pl.Schema(
+    {
+        "api": pl.String,
+        "op": pl.String,
+        "bucket": pl.String,
+        "calls": pl.UInt32,
+        "duration_ms": pl.Float64,
+        "bytes": pl.Int64,
+        "timed_bytes": pl.Int64,
+        "timed_ns": pl.Int64,
+        "weighted_bytes": pl.Float64,
+    }
+)
+
+
+def per_operation(ops: pl.DataFrame) -> pl.DataFrame:
+    """Aggregates calls by API, logical operation and message-size bucket.
+
+    Bandwidth uses only the calls that run for the whole transfer: a call
+    that merely posts it (``posted``) is counted but not timed. The bus
+    bandwidth factor follows the group size, or the number of ranks when the
+    trace does not say.
+
+    Args:
+        ops: A ``network_ops`` table.
+
+    Returns:
+        One row per API, operation and bucket with ``calls``, ``duration_ms``
+        and ``bytes``, the ``timed_bytes`` and ``timed_ns`` of the calls that
+        count towards bandwidth, and ``weighted_bytes`` (``timed_bytes`` times
+        the bus-bandwidth factor).
+    """
+    rank_count = max(1, ops["rank"].n_unique())
+    sized = ops.with_columns(
+        pl.Series("bucket", bucket_bytes(ops["bytes"].to_numpy()), pl.String),
+        pl.when(pl.col("group_size") > 0)
+        .then(pl.col("group_size"))
+        .otherwise(rank_count)
+        .alias("ranks"),
+    )
+    pairs = sized.select("op", "ranks").unique()
+    factors = pairs.with_columns(
+        pl.Series(
+            "factor",
+            [busbw_factor(op, n) for op, n in pairs.iter_rows()],
+            dtype=pl.Float64,
+        )
+    )
+    timed = ~pl.col("posted")
+    return (
+        sized.join(factors, on=["op", "ranks"])
+        .group_by("api", "op", "bucket")
+        .agg(
+            pl.len().alias("calls"),
+            (pl.col("duration_ns").sum() / 1e6).alias("duration_ms"),
+            pl.col("bytes").sum(),
+            pl.col("bytes").filter(timed).sum().alias("timed_bytes"),
+            pl.col("duration_ns").filter(timed).sum().alias("timed_ns"),
+            (pl.col("bytes") * pl.col("factor"))
+            .filter(timed)
+            .sum()
+            .alias("weighted_bytes"),
+        )
+        .select(list(PER_OPERATION_SCHEMA))
+        .cast(PER_OPERATION_SCHEMA)
+    )
+
+
+def wait_skew_us(ops: pl.DataFrame) -> pl.DataFrame:
+    """Measures how unevenly ranks spend time in the same collective.
+
+    The k-th call of an operation with one message size in one process group
+    is taken to be the same collective on every rank. The rank that arrives
+    last waits least, so the spread of the call durations is the arrival skew.
+    It does not depend on the ranks' clocks. Posted calls are left out.
+
+    Args:
+        ops: A ``network_ops`` table.
+
+    Returns:
+        One row per API and operation with ``skew_us``, the mean spread over
+        collectives seen on more than one rank; none for an operation seen on
+        one rank.
+    """
+    seq = (
+        ops.filter(~pl.col("posted"))
+        .sort("rank", "start_ns")
+        .with_columns(
+            pl.col("start_ns")
+            .cum_count()
+            .over("rank", "api", "group", "op", "bytes")
+            .alias("seq")
+        )
+        .group_by("api", "group", "op", "bytes", "seq")
+        .agg(
+            pl.col("rank").n_unique().alias("n"),
+            (pl.col("duration_ns").max() - pl.col("duration_ns").min()).alias(
+                "spread"
+            ),
+        )
+        .filter(pl.col("n") > 1)
+    )
+    return seq.group_by("api", "op").agg(
+        (pl.col("spread").mean() / 1e3).alias("skew_us")
+    )
+
+
+def launch_gap_us(ops: pl.DataFrame) -> pl.DataFrame:
+    """Measures how long GPU work waits between its launch and its start.
+
+    A long wait means the GPU was busy with earlier work on the stream, or
+    the collective had to wait for the other ranks to arrive.
+
+    Args:
+        ops: A ``network_ops`` table.
+
+    Returns:
+        One row per API and operation with ``gap_us``, the mean wait over the
+        calls whose launch is known; none for the others.
+    """
+    return (
+        ops.filter(
+            ~pl.col("posted"),
+            pl.col("launch_ns") >= 0,
+            pl.col("start_ns") >= pl.col("launch_ns"),
+        )
+        .group_by("api", "op")
+        .agg(
+            ((pl.col("start_ns") - pl.col("launch_ns")).mean() / 1e3).alias(
+                "gap_us"
+            )
+        )
+    )
 
 
 _MPI_OPS = {
