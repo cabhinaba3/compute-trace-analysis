@@ -17,7 +17,7 @@ from cta.adapters.nsys import network_ops
 from cta.analysis import network
 
 REAL_DDP_KINETO_DIR = (
-    pathlib.Path(__file__).resolve().parents[1] / "data_real" / "e" / "kineto"
+    pathlib.Path(__file__).resolve().parents[2] / "data_real" / "e" / "kineto"
 )
 
 

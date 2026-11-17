@@ -17,7 +17,7 @@ import pytest
 from cta import models
 from cta.adapters.nsys import reader
 
-REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real"
+REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[2] / "data_real"
 
 
 def _ingest(

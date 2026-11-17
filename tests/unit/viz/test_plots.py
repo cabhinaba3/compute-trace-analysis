@@ -24,7 +24,7 @@ from cta.viz import context
 from cta.viz import registry as viz_registry
 from cta.viz import spec as viz_spec
 
-REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real"
+REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[2] / "data_real"
 
 
 def _kineto_trace(

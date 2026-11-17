@@ -156,4 +156,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Test modules are found by path, so two directories may hold files of the
+# same name and tests never import the source tree by accident.
+addopts = "-q --import-mode=importlib"

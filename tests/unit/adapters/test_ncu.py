@@ -18,7 +18,7 @@ import cta
 from cta import models
 from cta.adapters.ncu import reader
 
-REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real"
+REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[2] / "data_real"
 NCU_RUN_DIR = REAL_DATA_DIR / "a"
 NSIGHT_PYTHON_RUN_DIR = REAL_DATA_DIR / "c"
 needs_real_fixtures = pytest.mark.skipif(

@@ -21,7 +21,7 @@ from cta.adapters.jax import reader as jax_reader
 from cta.adapters.kineto import reader as kineto_reader
 from cta.ingest import discovery
 
-REAL_JAX_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real" / "f"
+REAL_JAX_DIR = pathlib.Path(__file__).resolve().parents[2] / "data_real" / "f"
 
 
 def _process_name_events(devices: int) -> list[dict[str, Any]]:

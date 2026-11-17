@@ -21,7 +21,7 @@ from cta import models
 from cta.adapters.kineto import reader
 
 REAL_DDP_KINETO_DIR = (
-    pathlib.Path(__file__).resolve().parents[1] / "data_real" / "e" / "kineto"
+    pathlib.Path(__file__).resolve().parents[2] / "data_real" / "e" / "kineto"
 )
 
 
