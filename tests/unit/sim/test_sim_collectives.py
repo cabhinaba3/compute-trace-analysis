@@ -210,6 +210,21 @@ def test_lowered_and_analytical_agree_without_contention(
     )
 
 
+@pytest.mark.parametrize("algorithm", ["direct", "ring"])
+def test_all_to_all_sizes_can_be_per_peer(algorithm: str) -> None:
+    actions = collectives.schedule(
+        "ALL_TO_ALL", algorithm, 4, 1000, all_to_all_per_peer=True
+    )
+    sends = actions.filter(pl.col("kind") == "send")
+    assert sends.height == 12
+    assert (sends["bytes"] == 1000).all()
+    total = config_lib.SimConfig(model="alpha_beta")
+    per_peer = total.with_overrides({"collectives.all_to_all_size": "per_peer"})
+    assert max(collectives.times("ALL_TO_ALL", 4000, 4, per_peer)) > max(
+        collectives.times("ALL_TO_ALL", 4000, 4, total)
+    )
+
+
 @pytest.mark.parametrize("size", SIZES)
 def test_binomial_gather_brings_every_chunk_to_the_root_once(size: int) -> None:
     actions = collectives.schedule("GATHER", "binomial_tree", size, B)

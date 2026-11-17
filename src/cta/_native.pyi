@@ -99,6 +99,7 @@ def collective_schedule(
     node_size: int = 1,
     chunks: int = 1,
     reduce: bool = False,
+    all_to_all_per_peer: bool = False,
 ) -> dict[str, np.ndarray]:
     """Returns every member's actions of one collective."""
     ...

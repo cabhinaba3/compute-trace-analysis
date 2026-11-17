@@ -7,7 +7,8 @@
 // the group. `bytes` is the buffer size as Chakra's comm_size gives it: the
 // whole buffer of an all-reduce, broadcast or reduce, the whole output of an
 // all-gather or gather, the whole input of a reduce-scatter or scatter, and
-// the whole send buffer of an all-to-all (B/P to each peer). A buffer split
+// the whole send buffer of an all-to-all (B/P to each peer, or B with
+// CollSpec::all_to_all_per_peer). A buffer split
 // into P chunks gives chunk c B/P bytes plus one if c < B % P, so no byte is
 // lost or invented.
 #pragma once
@@ -78,6 +79,9 @@ struct CollSpec {
   std::uint32_t node_size = 1;
   std::uint32_t chunks = 1;     // pipeline chunks (ring broadcast/reduce, double binary tree)
   bool reduce = false;          // add a reduction action after each received partial result
+  // ALL_TO_ALL only: `bytes` is what each member sends to each peer, not the
+  // whole send buffer (B/P per peer).
+  bool all_to_all_per_peer = false;
 };
 
 bool supports(CollType type, Algorithm algorithm, std::uint32_t size, std::uint32_t node_size);

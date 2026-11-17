@@ -56,12 +56,14 @@ def schedule(
     node_size: int = 1,
     chunks: int = 1,
     reduce: bool = False,
+    all_to_all_per_peer: bool = False,
 ) -> pl.DataFrame:
     """Returns every member's actions, one row each.
 
     Columns: ``member``, ``action``, ``kind`` (send, recv, reduce), ``peer``,
     ``bytes``, ``seq``, ``output`` and ``deps`` (the member's actions this
-    one waits for).
+    one waits for). With ``all_to_all_per_peer``, an all-to-all's size is
+    what each member sends to each peer rather than its whole buffer.
 
     Raises:
         ValueError: The algorithm does not support the collective.
@@ -75,6 +77,7 @@ def schedule(
         node_size,
         chunks,
         reduce,
+        all_to_all_per_peer,
     )
     actions = pl.DataFrame(
         {
@@ -168,7 +171,13 @@ def compare_algorithms(
             rows.append(row)
             continue
         actions = schedule(
-            type_name, algorithm, size, nbytes, node_size=node_size
+            type_name,
+            algorithm,
+            size,
+            nbytes,
+            node_size=node_size,
+            all_to_all_per_peer=settings.collectives.all_to_all_size
+            == "per_peer",
         )
         sends = actions.filter(pl.col("kind") == "send")
         row["supported"] = True

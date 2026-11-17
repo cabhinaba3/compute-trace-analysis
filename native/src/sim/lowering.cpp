@@ -115,6 +115,7 @@ GraphColumns lower_collectives(const GraphView& g, const Groups& groups, const C
     spec.node_size = node_size == 0 ? 1 : node_size;
     spec.chunks = params.chunks;
     spec.reduce = params.reduce_ns_per_byte > 0;
+    spec.all_to_all_per_peer = params.all_to_all_per_peer;
     build_schedule(spec, me, schedule);
     ++stats.collectives;
     stats.fallbacks += fell_back ? 1 : 0;

@@ -48,13 +48,14 @@ def test_lowered_chakra_matches_goal_exactly(
     )
 
 
-def test_lowered_matches_goal_under_contention(
+def test_completion_semantics_under_contention(
     training_traces: dict[str, pathlib.Path],
 ) -> None:
     # A thin fat tree makes flows contend, and the ring chunks are above the
-    # eager limit; with the default completion (a collective is done with
-    # its last recv, as the GOAL schedule chains) the runs still agree.
-    settings = config_lib.load_config(
+    # eager limit. A collective that is done with its last recv (outputs, as
+    # the GOAL schedule chains) still matches GOAL exactly; the default also
+    # waits for the last rendezvous sends, as MPI and NCCL do.
+    contended = config_lib.load_config(
         model="flow",
         overrides={
             "topology.kind": "fat_tree",
@@ -62,16 +63,17 @@ def test_lowered_matches_goal_under_contention(
             "topology.spines": "1",
         },
     )
-    goal = engine.run_graph(load(training_traces, "goal"), settings)
-    chakra = engine.run_graph(
-        load(training_traces, "chakra"), settings, level="lowered"
+    goal = engine.run_graph(load(training_traces, "goal"), contended)
+    chakra = load(training_traces, "chakra")
+    like_goal = engine.run_graph(
+        chakra,
+        contended.with_overrides({"collectives.completion": "outputs"}),
+        level="lowered",
     )
-    assert chakra.makespan_ns == goal.makespan_ns
-    assert chakra.breakdown()["ns"][5] > 0  # contention on the critical path
-    waiting = settings.with_overrides({"collectives.completion": "all"})
-    assert engine.run_graph(
-        load(training_traces, "chakra"), waiting, level="lowered"
-    ).completed
+    assert like_goal.makespan_ns == goal.makespan_ns
+    assert like_goal.breakdown()["ns"][5] > 0  # contention on the path
+    waiting = engine.run_graph(chakra, contended, level="lowered")
+    assert waiting.completed
 
 
 def test_goal_text_and_binary_simulate_alike(
@@ -197,7 +199,8 @@ def test_cross_comparison_finds_the_all_to_all_size_convention(
     training_traces: dict[str, pathlib.Path],
 ) -> None:
     # The GOAL generator sends the whole buffer to every peer of an
-    # all-to-all; Chakra's comm_size convention (and the lowering) sends B/P.
+    # all-to-all; Chakra's comm_size convention (and the lowering's default)
+    # sends B/P. Reading the sizes as per-peer makes the traffic agree.
     comparison = compare.compare(
         [training_traces["moe_goal"], training_traces["moe_chakra"]],
         labels=["goal", "chakra"],
@@ -210,6 +213,18 @@ def test_cross_comparison_finds_the_all_to_all_size_convention(
     )
     assert moe_phases.height > 0
     assert (moe_phases["bytes_delta"] < 0).all()
+
+    per_peer = compare.compare(
+        [training_traces["moe_goal"], training_traces["moe_chakra"]],
+        config_lib.SimConfig().with_overrides(
+            {"collectives.all_to_all_size": "per_peer"}
+        ),
+        labels=["goal", "chakra"],
+        levels="lowered",
+        cache_dir=training_traces["cache"],
+    )
+    assert compare.traffic_mismatch(per_peer)["chakra [lowered]"] == 0.0
+    assert (per_peer.phases["bytes_delta"] == 0).all()
 
 
 def test_comparison_exports_and_plots(

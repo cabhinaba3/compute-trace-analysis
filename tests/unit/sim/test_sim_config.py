@@ -102,6 +102,22 @@ def test_presets_describe_one_machine_in_every_model() -> None:
         presets.apply(config_lib.SimConfig(), "ib-xdr")
 
 
+def test_collective_defaults() -> None:
+    params = config_lib.SimConfig().to_native(4)
+    # A collective waits for its last sends, as MPI and NCCL do; all-to-all
+    # sizes are whole buffers, as in Chakra.
+    assert params["data_completion"] is False
+    assert params["all_to_all_per_peer"] is False
+    other = config_lib.SimConfig().with_overrides(
+        {
+            "collectives.completion": "outputs",
+            "collectives.all_to_all_size": "per_peer",
+        }
+    )
+    assert other.to_native(4)["data_completion"] is True
+    assert other.to_native(4)["all_to_all_per_peer"] is True
+
+
 def test_nic_scale_becomes_a_per_rank_list() -> None:
     params = (
         config_lib.SimConfig()

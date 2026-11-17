@@ -136,6 +136,7 @@ sim::SimParams params_of(const nb::dict& d) {
     } else if (key == "reduce_ns_per_byte") p.collectives.reduce_ns_per_byte = num();
     else if (key == "chunks") p.collectives.chunks = static_cast<std::uint32_t>(std::max<std::uint64_t>(1, count()));
     else if (key == "data_completion") p.collectives.data_completion = nb::cast<bool>(v);
+    else if (key == "all_to_all_per_peer") p.collectives.all_to_all_per_peer = nb::cast<bool>(v);
     else if (key == "collective_cost") {
       const std::string c = text();
       if (c == "model") p.collectives.cost = sim::CollectiveCost::kModel;
@@ -230,7 +231,7 @@ void bind_sim(nb::module_& m) {
   m.def(
       "collective_schedule",
       [](int coll_type, const std::string& algorithm, std::uint32_t size, std::uint64_t bytes, std::uint32_t root,
-         std::uint32_t node_size, std::uint32_t chunks, bool reduce) {
+         std::uint32_t node_size, std::uint32_t chunks, bool reduce, bool all_to_all_per_peer) {
         sim::CollSpec spec;
         spec.type = coll_type_of(coll_type);
         spec.algorithm = sim::parse_algorithm(algorithm);
@@ -240,6 +241,7 @@ void bind_sim(nb::module_& m) {
         spec.node_size = node_size;
         spec.chunks = chunks;
         spec.reduce = reduce;
+        spec.all_to_all_per_peer = all_to_all_per_peer;
         ScheduleColumns out;
         sim::Schedule s;
         for (std::uint32_t member = 0; member < size; ++member) {
@@ -265,7 +267,7 @@ void bind_sim(nb::module_& m) {
         return to_dict(std::move(out));
       },
       "coll_type"_a, "algorithm"_a, "size"_a, "bytes"_a, "root"_a = 0, "node_size"_a = 1, "chunks"_a = 1,
-      "reduce"_a = false);
+      "reduce"_a = false, "all_to_all_per_peer"_a = false);
 
   m.def(
       "collective_times",

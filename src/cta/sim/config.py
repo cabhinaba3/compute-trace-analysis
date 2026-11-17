@@ -238,10 +238,17 @@ class CollectiveConfig:
         "analytical: from the model, or the trace's recorded duration.",
     )
     completion: str = _field(
-        "outputs",
-        _choice("outputs", "all"),
-        "A member is done once it has its result (outputs, as GOAL "
-        "schedules chain on the last recv) or after all its sends too (all).",
+        "all",
+        _choice("all", "outputs"),
+        "A member is done after all its actions, last sends included (all, "
+        "as MPI and NCCL), or once it has its result (outputs, as GOAL "
+        "schedules that chain on the last recv).",
+    )
+    all_to_all_size: str = _field(
+        "total",
+        _choice("total", "per_peer"),
+        "ALL_TO_ALL comm_size: the whole send buffer, B/P to each peer "
+        "(total, Chakra's convention), or what each peer gets (per_peer).",
     )
     reduce_ns_per_byte: float = _field(
         0.0, units.ns_per_byte, "Reduction cost per byte (0 = free)."
@@ -381,6 +388,8 @@ class SimConfig:
             "reduce_ns_per_byte": self.collectives.reduce_ns_per_byte,
             "chunks": max(1, self.collectives.chunks),
             "data_completion": self.collectives.completion == "outputs",
+            "all_to_all_per_peer": self.collectives.all_to_all_size
+            == "per_peer",
             "collective_cost": self.collectives.cost,
             "noise_frequency": self.noise.frequency / 1e9,
             "noise_duration": self.noise.duration,

@@ -143,8 +143,8 @@ void ring_algorithm(const CollSpec& s, u32 me, Steps& st) {
     case CollType::kAllToAll:  // pairwise exchange, one peer per step
       for (u32 k = 1; k < p; ++k) {
         const u32 to = (me + k) % p;
-        st.send(to, chunk(s.bytes, p, to));
-        st.recv(mod_sub(me, k, p), chunk(s.bytes, p, me));
+        st.send(to, s.all_to_all_per_peer ? s.bytes : chunk(s.bytes, p, to));
+        st.recv(mod_sub(me, k, p), s.all_to_all_per_peer ? s.bytes : chunk(s.bytes, p, me));
         st.end();
       }
       break;
@@ -450,8 +450,8 @@ void direct(const CollSpec& s, u32 me, Steps& st) {
       break;
     case CollType::kAllToAll:
       each_peer([&](u32 to, u32 from) {
-        st.send(to, chunk(b, p, to));
-        st.recv(from, chunk(b, p, me));
+        st.send(to, s.all_to_all_per_peer ? b : chunk(b, p, to));
+        st.recv(from, s.all_to_all_per_peer ? b : chunk(b, p, me));
       });
       break;
     case CollType::kBarrier:

@@ -208,6 +208,7 @@ std::vector<Time> evaluate(const CollSpec& wanted, std::span<const u32> members,
   spec.node_size = node_size == 0 ? 1 : node_size;
   spec.chunks = p.collectives.chunks;
   spec.reduce = p.collectives.reduce_ns_per_byte > 0;
+  spec.all_to_all_per_peer = p.collectives.all_to_all_per_peer;
   return evaluate_collective(spec, members, cost, p.collectives.data_completion);
 }
 

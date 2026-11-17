@@ -35,10 +35,12 @@ struct CollectiveParams {
       Algorithm::kRing,         Algorithm::kRecursiveDoubling};
   double reduce_ns_per_byte = 0;  // > 0 adds reduction calcs (lowered) or time (analytical)
   std::uint32_t chunks = 1;
-  // A member is done once it has its result (its outputs), as GOAL schedules
-  // chain on a collective's last recv; false waits for every action, its
-  // last (rendezvous) sends included, as MPI and NCCL collectives do.
-  bool data_completion = true;
+  // false: a member is done after every action of its schedule, its last
+  // (rendezvous) sends included, as MPI and NCCL collectives are. true: once
+  // it has its result (its outputs), as GOAL schedules that chain on a
+  // collective's last recv behave.
+  bool data_completion = false;
+  bool all_to_all_per_peer = false;  // see CollSpec
   CollectiveCost cost = CollectiveCost::kModel;
 };
 
