@@ -8,9 +8,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "common/format.hpp"
+#include "util/format.hpp"
 
-namespace cta {
+namespace cta::synth {
 namespace {
 
 class Db {
@@ -154,4 +154,4 @@ void write_nsys_sqlite(const std::string& path, int steps, int gemm_us, int comm
   db.exec("COMMIT");
 }
 
-}  // namespace cta
+}  // namespace cta::synth

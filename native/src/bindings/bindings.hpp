@@ -9,6 +9,6 @@ namespace cta::bindings {
 
 void bind_synth(nanobind::module_& m);    // synthetic trace generators
 void bind_readers(nanobind::module_& m);  // trace readers
-void bind_core(nanobind::module_& m);     // interval helpers
+void bind_analysis(nanobind::module_& m);  // DAG solver and interval helpers
 
 }  // namespace cta::bindings

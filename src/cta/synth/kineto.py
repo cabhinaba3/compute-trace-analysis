@@ -7,7 +7,7 @@ import pathlib
 from cta import _native as native
 
 
-def write_kineto_trace(
+def write_trace(
     path: pathlib.Path,
     *,
     steps: int = 3,
@@ -43,7 +43,7 @@ def write_kineto_trace(
     return path
 
 
-def write_kineto_trace_large(
+def write_large_trace(
     path: pathlib.Path,
     *,
     target_bytes: int = 200 << 20,

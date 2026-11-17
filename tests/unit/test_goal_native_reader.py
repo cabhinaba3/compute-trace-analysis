@@ -1,4 +1,4 @@
-"""Tests of the C++ GOAL text reader (`cta._native.read_goal_text`).
+"""Tests of the C++ GOAL text reader (`cta._native.read_goal`).
 
 The tables the adapter builds from each fixture were hashed with the Python
 parser this code replaced, so a mismatch means the adapter no longer produces
@@ -106,10 +106,10 @@ def _fixtures(tmp_path: pathlib.Path) -> dict[str, pathlib.Path]:
         "comments_only": _write(
             tmp_path / "g.goal", "// nothing\n/* at all\n*/\n# here\n"
         ),
-        "ring": synth_goal.write_goal_allreduce(
+        "ring": synth_goal.write_allreduce(
             tmp_path / "ring.goal", world_size=5, steps=3
         ),
-        "direct": synth_goal.write_goal_allreduce(
+        "direct": synth_goal.write_allreduce(
             tmp_path / "direct.goal", world_size=4, steps=2, algorithm="direct"
         ),
     }
@@ -123,7 +123,7 @@ def _fixtures(tmp_path: pathlib.Path) -> dict[str, pathlib.Path]:
         moe_every=2,
         ep_size=3,
     )
-    training.write_goal_training(tmp_path / "train.goal", spec)
+    training.write_goal(tmp_path / "train.goal", spec)
     out["training"] = tmp_path / "train.goal"
     return out
 
@@ -261,9 +261,9 @@ def test_result_does_not_depend_on_the_thread_count_or_the_cut(
     tmp_path: pathlib.Path,
 ) -> None:
     for name, path in _fixtures(tmp_path).items():
-        whole = _native.read_goal_text(str(path), 1, 1 << 40)
+        whole = _native.read_goal(str(path), 1, 1 << 40)
         for threads, chunk in ((1, 1), (3, 100), (8, 1000), (4, 1 << 20)):
-            split = _native.read_goal_text(str(path), threads, chunk)
+            split = _native.read_goal(str(path), threads, chunk)
             assert _same(whole, split), (name, threads, chunk)
 
 
@@ -293,16 +293,16 @@ def test_numbers_that_do_not_fit_are_rejected(
 ) -> None:
     path = _write(tmp_path / "n.goal", text.replace(" \n", "\n"))
     with pytest.raises(ValueError, match=message):
-        _native.read_goal_text(str(path), 2, 4)
+        _native.read_goal(str(path), 2, 4)
 
 
 def test_text_that_is_not_utf8_is_rejected(tmp_path: pathlib.Path) -> None:
     path = tmp_path / "bad.goal"
     path.write_bytes(b"rank 0 {\nl\xff: calc 1\n}\n")
     with pytest.raises(ValueError, match="UTF-8"):
-        _native.read_goal_text(str(path), 1, 1 << 20)
+        _native.read_goal(str(path), 1, 1 << 20)
 
 
 def test_a_missing_file_is_an_error(tmp_path: pathlib.Path) -> None:
     with pytest.raises(RuntimeError, match="cannot open"):
-        _native.read_goal_text(str(tmp_path / "none.goal"), 1, 100)
+        _native.read_goal(str(tmp_path / "none.goal"), 1, 100)

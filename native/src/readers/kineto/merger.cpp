@@ -2,7 +2,7 @@
 
 #include <limits>
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 
 void Merger::add(ChunkOut& c) {
   std::vector<int32_t> name_map;
@@ -102,4 +102,4 @@ std::string Merger::encode(const Tag& tag, const Interner& tags) {
   return s;
 }
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

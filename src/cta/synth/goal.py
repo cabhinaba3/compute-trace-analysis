@@ -21,7 +21,7 @@ _NO_REQUIRES_APPENDIX = 999
 _NO_IREQUIRES_APPENDIX = 0xFFFFFFFF
 
 
-def write_goal_allreduce(
+def write_allreduce(
     path: pathlib.Path,
     *,
     world_size: int = 4,
@@ -61,7 +61,7 @@ def write_goal_allreduce(
     return path
 
 
-def write_goal_allreduce_bin(
+def write_allreduce_bin(
     path: pathlib.Path,
     *,
     world_size: int = 4,
@@ -70,10 +70,10 @@ def write_goal_allreduce_bin(
     steps: int = 2,
     algorithm: str = "ring",
 ) -> pathlib.Path:
-    """Writes the same schedule as ``write_goal_allreduce`` as a `.bin` file.
+    """Writes the same schedule as ``write_allreduce`` as a `.bin` file.
 
     The binary is written directly, without parsing the text form, so it is
-    byte-identical to ``compile_goal_to_bin`` of the text schedule but much
+    byte-identical to ``compile_to_bin`` of the text schedule but much
     faster for large rank counts.
 
     Args:
@@ -100,7 +100,7 @@ def write_goal_allreduce_bin(
     return path
 
 
-def compile_goal_to_bin(
+def compile_to_bin(
     goal_path: pathlib.Path, bin_path: pathlib.Path
 ) -> pathlib.Path:
     """Compiles a `.goal` text file into a SPCL LogGOPSim `.bin` schedule.

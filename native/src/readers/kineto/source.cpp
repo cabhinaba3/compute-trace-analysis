@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <stdexcept>
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 namespace {
 
 class PlainSource : public Source {
@@ -56,4 +56,4 @@ std::unique_ptr<Source> open_source(const std::string& path) {
   return std::make_unique<PlainSource>(path);
 }
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

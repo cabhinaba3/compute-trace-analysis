@@ -7,7 +7,7 @@ import pathlib
 from cta import _native as native
 
 
-def write_jtop_trace(
+def write_trace(
     path: pathlib.Path,
     *,
     duration_s: int = 5,

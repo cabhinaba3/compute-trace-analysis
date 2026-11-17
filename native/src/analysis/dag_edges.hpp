@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace cta {
+namespace cta::analysis {
 
 struct EdgeList {
   std::vector<std::uint32_t> src, dst;  // vertex ids; an edge may repeat
@@ -31,4 +31,4 @@ EdgeList build_dag_edges(std::size_t n, const std::uint64_t* rank, const std::ui
                          const std::uint64_t* e_rank, const std::uint64_t* e_src, const std::uint64_t* e_dst,
                          int threads);
 
-}  // namespace cta
+}  // namespace cta::analysis

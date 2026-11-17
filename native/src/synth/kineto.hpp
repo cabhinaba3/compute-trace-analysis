@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-namespace cta {
+namespace cta::synth {
 
 // Same trace as the original Python generator (byte-identical JSON).
 void write_kineto_trace(const std::string& path, int steps, double attn_us,
@@ -27,4 +27,4 @@ struct KinetoLargeSpec {
 std::uint64_t write_kineto_trace_large(const std::string& path,
                                        const KinetoLargeSpec& spec);
 
-}  // namespace cta
+}  // namespace cta::synth

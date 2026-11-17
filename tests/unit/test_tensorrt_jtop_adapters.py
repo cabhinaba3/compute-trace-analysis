@@ -39,7 +39,7 @@ def test_trtexec_timing_and_layer_fusion(tmp_path: pathlib.Path) -> None:
     fp32_dir = tmp_path / "trt_fp32"
     int8_dir = tmp_path / "trt_int8"
 
-    trtexec.write_trtexec_timing(
+    trtexec.write_timing(
         fp32_dir / "times.json",
         queries=25,
         compute_ms=4.0,
@@ -47,14 +47,14 @@ def test_trtexec_timing_and_layer_fusion(tmp_path: pathlib.Path) -> None:
         d2h_ms=0.4,
         overlap_ms=0.05,
     )
-    trtexec.write_trtexec_layers(
+    trtexec.write_layers(
         fp32_dir / "profile.json",
         fp32_dir / "engine.json",
         fused=False,
         precision="FP32",
     )
 
-    trtexec.write_trtexec_timing(
+    trtexec.write_timing(
         int8_dir / "times.json",
         queries=25,
         compute_ms=1.2,
@@ -62,7 +62,7 @@ def test_trtexec_timing_and_layer_fusion(tmp_path: pathlib.Path) -> None:
         d2h_ms=0.4,
         overlap_ms=0.4,
     )
-    trtexec.write_trtexec_layers(
+    trtexec.write_layers(
         int8_dir / "profile.json",
         int8_dir / "engine.json",
         fused=True,
@@ -100,27 +100,25 @@ def test_jtop_multicore_nano_fallback_and_bundle_joules_per_query(
 
     # Baseline: 5 s at 20 W = 100 J over 100 queries, so 1000 mJ per query,
     # and a thermal throttle at 88 C.
-    jtop.write_jtop_trace(
+    jtop.write_trace(
         max_n_dir / "jtop.json",
         duration_s=5,
         num_cores=12,
         power_mw=20_000.0,
         temp_c=88.0,
     )
-    trtexec.write_trtexec_timing(
-        max_n_dir / "times.json", queries=100, compute_ms=2.0
-    )
+    trtexec.write_timing(max_n_dir / "times.json", queries=100, compute_ms=2.0)
 
     # Candidate: 5 s at 10 W = 50 J over 100 queries, so 500 mJ per query (50%
     # less energy per query), and no temperature sensor (as on a Jetson Nano).
-    jtop.write_jtop_trace(
+    jtop.write_trace(
         efficient_dir / "jtop.json",
         duration_s=5,
         num_cores=4,
         power_mw=10_000.0,
         temp_c=None,
     )
-    trtexec.write_trtexec_timing(
+    trtexec.write_timing(
         efficient_dir / "times.json", queries=100, compute_ms=1.5
     )
 

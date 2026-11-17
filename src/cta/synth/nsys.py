@@ -7,7 +7,7 @@ import pathlib
 from cta import _native as native
 
 
-def write_nsys_sqlite(
+def write_sqlite(
     path: pathlib.Path,
     *,
     steps: int = 4,

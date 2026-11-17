@@ -160,7 +160,7 @@ def test_flops_use_achieved_counts_not_peak_derived_metrics(
 def test_legacy_aliases_still_work(tmp_path: pathlib.Path) -> None:
     from cta.synth import ncu
 
-    csv_path = ncu.write_ncu_csv(
+    csv_path = ncu.write_csv(
         tmp_path / "legacy.csv", flops=2e10, dram_bytes=1e9, dram_pct=82.0
     )
     kernel = _ingest(csv_path).row(0, named=True)

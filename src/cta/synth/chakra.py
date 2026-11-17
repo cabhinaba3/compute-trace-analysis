@@ -7,7 +7,7 @@ import pathlib
 from cta import _native as native
 
 
-def write_chakra_et_run(
+def write_run(
     out_dir: pathlib.Path,
     *,
     world_size: int = 4,
@@ -36,7 +36,7 @@ def write_chakra_et_run(
     Returns:
         The shard paths (``trace.rank<N>.et``), in rank order.
     """
-    shard_paths = native.write_chakra_et_run(
+    shard_paths = native.write_chakra_run(
         str(out_dir),
         world_size=world_size,
         compute_us=compute_us,
@@ -48,7 +48,7 @@ def write_chakra_et_run(
     return [pathlib.Path(shard) for shard in shard_paths]
 
 
-def write_chakra_host_et(
+def write_host_trace(
     path: pathlib.Path,
     *,
     steps: int = 2,
@@ -72,7 +72,7 @@ def write_chakra_host_et(
         ``path``.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    native.write_chakra_host_et(
+    native.write_chakra_host(
         str(path), steps=steps, compute_us=compute_us, comm_bytes=comm_bytes
     )
     return path

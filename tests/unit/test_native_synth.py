@@ -59,20 +59,18 @@ def test_small_outputs_match_the_python_generators_they_replaced(
     }
     actual = {
         "kineto steps=3": _sha256(
-            kineto.write_kineto_trace(tmp_path / "k.json", steps=3)
+            kineto.write_trace(tmp_path / "k.json", steps=3)
         ),
         "kineto fp8 steps=7": _sha256(
-            kineto.write_kineto_trace(
+            kineto.write_trace(
                 tmp_path / "k8.json", steps=7, kernel_variant="fp8"
             )
         ),
         "goal ring 4x2": _sha256(
-            goal.write_goal_allreduce(
-                tmp_path / "g.goal", world_size=4, steps=2
-            )
+            goal.write_allreduce(tmp_path / "g.goal", world_size=4, steps=2)
         ),
         "goal direct 3x2": _sha256(
-            goal.write_goal_allreduce(
+            goal.write_allreduce(
                 tmp_path / "gd.goal",
                 world_size=3,
                 steps=2,
@@ -80,7 +78,7 @@ def test_small_outputs_match_the_python_generators_they_replaced(
             )
         ),
         "chakra rank1": _sha256(
-            chakra.write_chakra_et_run(
+            chakra.write_run(
                 tmp_path / "et",
                 world_size=3,
                 steps=2,
@@ -89,13 +87,11 @@ def test_small_outputs_match_the_python_generators_they_replaced(
             )[1]
         ),
         "chakra host-et": _sha256(
-            chakra.write_chakra_host_et(tmp_path / "h.json", steps=2)
+            chakra.write_host_trace(tmp_path / "h.json", steps=2)
         ),
-        "ncu default": _sha256(ncu.write_ncu_csv(tmp_path / "n.csv")),
-        "jtop default": _sha256(jtop.write_jtop_trace(tmp_path / "j.json")),
-        "trtexec timing": _sha256(
-            trtexec.write_trtexec_timing(tmp_path / "t.json")
-        ),
+        "ncu default": _sha256(ncu.write_csv(tmp_path / "n.csv")),
+        "jtop default": _sha256(jtop.write_trace(tmp_path / "j.json")),
+        "trtexec timing": _sha256(trtexec.write_timing(tmp_path / "t.json")),
     }
     assert actual == golden
 
@@ -107,14 +103,14 @@ def test_small_outputs_match_the_python_generators_they_replaced(
 def test_goal_binary_equals_compiled_text(
     tmp_path: pathlib.Path, world_size: int, steps: int, algorithm: str
 ) -> None:
-    text = goal.write_goal_allreduce(
+    text = goal.write_allreduce(
         tmp_path / "s.goal",
         world_size=world_size,
         steps=steps,
         algorithm=algorithm,
     )
-    compiled = goal.compile_goal_to_bin(text, tmp_path / "compiled.bin")
-    direct = goal.write_goal_allreduce_bin(
+    compiled = goal.compile_to_bin(text, tmp_path / "compiled.bin")
+    direct = goal.write_allreduce_bin(
         tmp_path / "direct.bin",
         world_size=world_size,
         steps=steps,
@@ -127,11 +123,11 @@ def test_large_kineto_trace_is_well_formed_and_deterministic(
     tmp_path: pathlib.Path,
 ) -> None:
     first = tmp_path / "a.json"
-    event_count = kineto.write_kineto_trace_large(
+    event_count = kineto.write_large_trace(
         first, target_bytes=2 << 20, seed=7, rank=3, world_size=8
     )
     second = tmp_path / "b.json"
-    kineto.write_kineto_trace_large(
+    kineto.write_large_trace(
         second, target_bytes=2 << 20, seed=7, rank=3, world_size=8
     )
     assert first.read_bytes() == second.read_bytes()
@@ -162,7 +158,7 @@ def test_large_kineto_events_on_a_thread_nest_or_are_disjoint(
     tmp_path: pathlib.Path,
 ) -> None:
     path = tmp_path / "t.json"
-    kineto.write_kineto_trace_large(path, target_bytes=1 << 20, seed=2)
+    kineto.write_large_trace(path, target_bytes=1 << 20, seed=2)
     events = [
         event
         for event in json.loads(path.read_text())["traceEvents"]
@@ -186,7 +182,7 @@ def test_generators_reject_arguments_of_the_wrong_type(
     tmp_path: pathlib.Path,
 ) -> None:
     with pytest.raises(TypeError):
-        jtop.write_jtop_trace(
+        jtop.write_trace(
             tmp_path / "j.json",
             duration_s=cast(Any, 2.5),
         )

@@ -191,7 +191,7 @@ def _label_events(
     launching thread at launch time (see intervals.assign_ranges).
 
     Args:
-        columns: The report as read by ``native.read_nsys_sqlite``.
+        columns: The report as read by ``native.read_nsys``.
         order: The order of the activities, as indices into the columns.
 
     Returns:
@@ -449,7 +449,7 @@ def _ingest_report(db_path: pathlib.Path, rank: int) -> dict[str, pl.DataFrame]:
         The ``kernels``, ``steps``, ``runtime``, ``osrt``, ``gpu_metrics``,
         ``network_ops`` and ``runtime_calls`` frames, by table name.
     """
-    columns = native.read_nsys_sqlite(str(db_path))
+    columns = native.read_nsys(str(db_path))
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         tables = _list_tables(conn)

@@ -8,5 +8,5 @@ NB_MODULE(_native, m) {
   m.doc() = "Native code for compute-trace-analysis: trace readers and synthetic trace generators.";
   cta::bindings::bind_synth(m);
   cta::bindings::bind_readers(m);
-  cta::bindings::bind_core(m);
+  cta::bindings::bind_analysis(m);
 }

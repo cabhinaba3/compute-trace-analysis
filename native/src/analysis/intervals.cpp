@@ -1,6 +1,6 @@
-#include "core/intervals.hpp"
+#include "analysis/intervals.hpp"
 
-namespace cta {
+namespace cta::analysis {
 
 std::vector<std::int64_t> nesting_parents(const std::int64_t* starts, const std::int64_t* ends,
                                           std::size_t n) {
@@ -14,4 +14,4 @@ std::vector<std::int64_t> nesting_parents(const std::int64_t* starts, const std:
   return parent;
 }
 
-}  // namespace cta
+}  // namespace cta::analysis

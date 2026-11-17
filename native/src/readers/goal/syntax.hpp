@@ -12,7 +12,7 @@
 #include <string>
 #include <string_view>
 
-namespace cta::goal_text {
+namespace cta::readers::goal {
 
 // Python's \s and str.strip() for ASCII: space, \t \n \v \f \r, \x1c..\x1f.
 inline bool is_space(char c) { return c == ' ' || (c >= '\t' && c <= '\r') || (c >= '\x1c' && c <= '\x1f'); }
@@ -79,4 +79,4 @@ struct Op {
 // Throws std::invalid_argument for a number that does not fit in 64 bits.
 bool parse_op(std::string_view code, Op& op);
 
-}  // namespace cta::goal_text
+}  // namespace cta::readers::goal

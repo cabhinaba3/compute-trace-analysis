@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 
 // A byte stream: a plain file, or a gzip file decompressed as it is read.
 class Source {
@@ -18,4 +18,4 @@ class Source {
 // Opens `path`; a ".gz" suffix means gzip.
 std::unique_ptr<Source> open_source(const std::string& path);
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

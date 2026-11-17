@@ -44,14 +44,14 @@ def test_chakra_et_multirank_comparison(tmp_path: pathlib.Path) -> None:
     balanced_dir = tmp_path / "chakra_balanced"
     straggler_dir = tmp_path / "chakra_straggler"
 
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         balanced_dir,
         world_size=4,
         compute_us=1000,
         allreduce_bytes=400_000,
         steps=2,
     )
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         straggler_dir,
         world_size=4,
         compute_us=1000,
@@ -82,10 +82,10 @@ def test_chakra_et_multirank_comparison(tmp_path: pathlib.Path) -> None:
 
 
 def test_chakra_host_et_comparison(tmp_path: pathlib.Path) -> None:
-    slow_host_et_path = chakra.write_chakra_host_et(
+    slow_host_et_path = chakra.write_host_trace(
         tmp_path / "chakra_host_a.json", compute_us=600.0, comm_bytes=100_000
     )
-    fast_host_et_path = chakra.write_chakra_host_et(
+    fast_host_et_path = chakra.write_host_trace(
         tmp_path / "chakra_host_b.json", compute_us=300.0, comm_bytes=100_000
     )
     report = cta.compare(
@@ -99,15 +99,15 @@ def test_goal_text_and_mmap_bin_exact_parity_and_algo_diff(
     tmp_path: pathlib.Path,
 ) -> None:
     cache_dir = tmp_path / ".cache"
-    ring_goal = goal.write_goal_allreduce(
+    ring_goal = goal.write_allreduce(
         tmp_path / "ring.goal",
         world_size=4,
         compute_ns=500_000,
         allreduce_bytes=400_000,
         algorithm="ring",
     )
-    ring_bin = goal.compile_goal_to_bin(ring_goal, tmp_path / "ring.bin")
-    direct_goal = goal.write_goal_allreduce(
+    ring_bin = goal.compile_to_bin(ring_goal, tmp_path / "ring.bin")
+    direct_goal = goal.write_allreduce(
         tmp_path / "direct.goal",
         world_size=4,
         compute_ns=500_000,
@@ -139,11 +139,11 @@ def test_goal_text_and_mmap_bin_exact_parity_and_algo_diff(
 def test_chakra_to_goal_equivalence_and_cli(tmp_path: pathlib.Path) -> None:
     cache_dir = tmp_path / ".cache"
     et_dir = tmp_path / "et_run"
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         et_dir, world_size=4, compute_us=1000, allreduce_bytes=400_000, steps=2
     )
 
-    good_goal = goal.write_goal_allreduce(
+    good_goal = goal.write_allreduce(
         tmp_path / "good.goal",
         world_size=4,
         compute_ns=1_000_000,
@@ -151,8 +151,8 @@ def test_chakra_to_goal_equivalence_and_cli(tmp_path: pathlib.Path) -> None:
         steps=2,
         algorithm="ring",
     )
-    good_bin = goal.compile_goal_to_bin(good_goal, tmp_path / "good.bin")
-    bad_goal = goal.write_goal_allreduce(
+    good_bin = goal.compile_to_bin(good_goal, tmp_path / "good.bin")
+    bad_goal = goal.write_allreduce(
         tmp_path / "bad.goal",
         world_size=4,
         compute_ns=1_000_000,

@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "common/util.hpp"
+#include "util/util.hpp"
 
 namespace cta {
 

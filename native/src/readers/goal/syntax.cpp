@@ -1,9 +1,9 @@
-#include "readers/goal/goal_text.hpp"
+#include "readers/goal/syntax.hpp"
 
 #include <stdexcept>
 #include <vector>
 
-namespace cta::goal_text {
+namespace cta::readers::goal {
 
 std::string_view code_of_slow(std::string_view raw, bool& in_block, std::string& scratch) {
   std::string line(strip(raw));
@@ -184,4 +184,4 @@ bool parse_op(std::string_view code, Op& op) {
   return false;
 }
 
-}  // namespace cta::goal_text
+}  // namespace cta::readers::goal

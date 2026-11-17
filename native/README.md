@@ -1,23 +1,27 @@
 # native/
 
 The C++ behind `cta._native`. `pip install .` builds it (a hatch hook in
-`hatch_build.py` runs CMake with nanobind) and puts `cta/_native*.so` next to
-the Python code. Linux x86_64 only; a C++20 compiler plus zlib, SQLite,
+`hatch_build.py` runs CMake with nanobind) and puts `src/cta/_native*.so` next
+to the Python code. Linux x86_64 only; a C++20 compiler plus zlib, SQLite,
 Protobuf and simdjson development packages are needed.
 
 Every `#include` names its file from `src/`, for example
-`#include "common/sink.hpp"`. Sources are listed by area in `CMakeLists.txt`;
-there is no globbing, so a new `.cpp` file has to be added there.
+`#include "util/sink.hpp"`. Each directory under `src/` lists its sources in
+its own `CMakeLists.txt` (there is no globbing), so a new `.cpp` file is added
+there. `cmake/ChakraProto.cmake` generates the C++ for Chakra's protobuf
+schema from the submodule.
 
 ```
+CMakeLists.txt            dependencies and the one module target
+cmake/ChakraProto.cmake   protobuf, and C++ generated from Chakra's schema
 src/
   module.cpp              the NB_MODULE; calls the three bind_* functions
   bindings/               what Python sees: names, arguments and defaults
-    synth.cpp               synthetic trace generators
     readers.cpp             trace readers
-    core.cpp                the DAG solver and interval helpers
-    numpy.hpp               hands std::vector to NumPy without a copy
-  common/                 header-only helpers shared by the areas below
+    synth.cpp               synthetic trace generators
+    analysis.cpp            the DAG solver and interval helpers
+    convert.hpp             column structs to dicts of NumPy arrays, no copies
+  util/                   header-only helpers shared by the areas below
     sink.hpp                buffered file or gzip output
     format.hpp              numbers and strings formatted like json.dumps
     rng.hpp                 deterministic random numbers
@@ -27,22 +31,31 @@ src/
     launch_map.hpp          correlation id -> launching CUDA runtime call
     sqlite.hpp              RAII wrappers for reading with SQLite
     ordered_pool.hpp        worker threads whose results are merged in task order
-  synth/                  synthetic trace generators (kineto, goal, nsys,
-                          chakra, training, profilers = ncu/jtop/trtexec)
-  readers/chakra/         the Chakra .et reader (see below)
-  readers/goal/           the GOAL text reader (see below)
-  readers/nsys/           the Nsight Systems SQLite reader (see below)
-  readers/kineto/         the Kineto trace reader (see below)
-  core/                   dag (critical path and slack), dag_edges (the graph's
-                          edge list), intervals (nesting_parents)
+  analysis/               namespace cta::analysis: dag (critical path and
+                          slack), dag_edges (the graph's edge list), intervals
+                          (nesting_parents)
+  readers/<format>/       namespace cta::readers: one reader per format, with
+                          reader.hpp declaring read_<format>() and its columns
+  synth/                  namespace cta::synth: one generator per format
+                          (kineto, goal, nsys, chakra, ncu, jtop, trtexec) and
+                          the 3D-parallel training graphs
 ```
 
-Changing a Python-visible name or default means changing `cta/_native.pyi`,
+The helpers in `util/` stay in namespace `cta`, so code in the nested
+namespaces uses them unqualified.
+
+A reader returns a struct of columns. The struct lists its columns once, in
+`for_each_column(visit)`, under the names Python sees; `bindings/convert.hpp`
+turns any such struct into a dict (vectors become NumPy arrays without a copy,
+string tables lists, nested structs dicts). Adding a column means adding the
+member and one `visit` line.
+
+Changing a Python-visible name or default means changing `src/cta/_native.pyi`,
 the `cta.synth` wrappers and the tests too.
 
 ## readers/chakra
 
-One `.et` file is one task. `read_chakra_files` gives each file to an
+One `.et` file is one task. `read_chakra` gives each file to an
 `OrderedPool` worker, which streams the length-prefixed protobuf messages
 (`ParseDelimitedFromZeroCopyStream`, one `Node` object reused with `Clear()`)
 into columns, and the merge step appends the files in the order given. Strings
@@ -57,10 +70,10 @@ in Python from the file name and passed in.
 
 ## readers/goal
 
-`goal_text.*` holds the rules for one line of GOAL text: where a line ends
+`syntax.*` holds the rules for one line of GOAL text: where a line ends
 (`\n`, `\r\n` or a lone `\r`), how comments come off, and which lines are rank
 headers, dependencies or ops. The rank-boundary scan and the parser both call
-it, so they agree on every line. `goal_read.cpp` maps the file, walks it once
+it, so they agree on every line. `reader.cpp` maps the file, walks it once
 to find rank headers (a header reached while a `/* */` comment is open is not
 one), cuts it into pieces of about 32 MiB at headers, and parses the pieces on
 an `OrderedPool`. A piece starts in the state a rank header leaves behind, which
@@ -70,7 +83,7 @@ String column from that through Arrow.
 
 ## readers/nsys
 
-`read_nsys_sqlite` opens the export once per part, on separate read-only
+`read_nsys` opens the export once per part, on separate read-only
 connections, and reads the GPU activities (kernels, then memcpys, then
 memsets), the CUDA runtime launches, the NVTX ranges, the GPU metrics and the
 two API summaries at the same time. It builds the same SQL as the Python reader
@@ -83,7 +96,7 @@ interval helpers rather than a loop over events.
 ## readers/kineto
 
 A trace is read in three stages that run at the same time (the worker pool is
-`common/ordered_pool.hpp`, shared with the Chakra and GOAL readers):
+`util/ordered_pool.hpp`, shared with the Chakra and GOAL readers):
 
 ```
 Source -> Splitter -> OrderedPool { ChunkParser x N threads } -> Merger
@@ -94,16 +107,16 @@ blocks      array into chunks                                match launches to G
 
 | File | Role |
 | --- | --- |
-| `kineto_read.hpp/.cpp` | the public entry point, `read_kineto_columns` |
+| `reader.hpp/.cpp` | the public entry point, `read_kineto` |
 | `source.*` | reads a plain or gzip file in blocks |
 | `splitter.*` | finds event boundaries while reading; keeps `distributedInfo` |
 | `chunk.hpp` | what a chunk and its parsed columns look like |
 | `chunk_parser.*` | simdjson parsing of one chunk; the only file that includes simdjson besides the CMake link |
-| `merger.*` | renumbers names and threads in file order; resolves CUDA launches (`common/launch_map.hpp`) |
+| `merger.*` | renumbers names and threads in file order; resolves CUDA launches (`util/launch_map.hpp`) |
 
 Two rules keep the output independent of thread count, chunk size and block
 size: chunks are merged in file order, and ids are assigned at the merge, not
-while parsing. `tests/unit/test_kineto_native_reader.py` checks this by cutting
+while parsing. `tests/unit/native/test_kineto_reader.py` checks this by cutting
 the same file at many sizes, down to one byte.
 
 The splitter's inner loop (`Splitter::feed` and `skip_event`) and the event

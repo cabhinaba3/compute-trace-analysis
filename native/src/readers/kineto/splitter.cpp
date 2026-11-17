@@ -5,7 +5,7 @@
 
 #include "readers/kineto/chunk.hpp"
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 namespace {
 
 constexpr std::size_t kInfoLimit = 4u << 20;  // largest distributedInfo kept
@@ -218,4 +218,4 @@ void Splitter::feed(const char* base, std::size_t n) {
   if (seg) buf_.append(seg, static_cast<std::size_t>(end - seg));
 }
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

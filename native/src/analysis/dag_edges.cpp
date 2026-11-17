@@ -1,4 +1,4 @@
-#include "core/dag_edges.hpp"
+#include "analysis/dag_edges.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -6,11 +6,11 @@
 #include <stdexcept>
 #include <thread>
 
-#include "common/cpus.hpp"
-#include "common/scoped_join.hpp"
-#include "common/util.hpp"
+#include "util/cpus.hpp"
+#include "util/scoped_join.hpp"
+#include "util/util.hpp"
 
-namespace cta {
+namespace cta::analysis {
 namespace {
 
 // Finds the vertices of a (rank, node id). In a table where each rank is one
@@ -247,4 +247,4 @@ EdgeList build_dag_edges(std::size_t n, const std::uint64_t* rank, const std::ui
   return out;
 }
 
-}  // namespace cta
+}  // namespace cta::analysis

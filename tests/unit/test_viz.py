@@ -575,7 +575,7 @@ def test_steps_only_bundle_gets_the_same_warmup_slicing_as_the_aspects(
     from cta.synth import trtexec
 
     timing_path = tmp_path / "timing.json"
-    trtexec.write_trtexec_timing(timing_path, queries=12)
+    trtexec.write_timing(timing_path, queries=12)
     report = cta.analyze(
         timing_path, label="trt", warmup_steps=2, cache_dir=tmp_path / "c"
     )
@@ -626,8 +626,8 @@ def test_ncu_plots_do_not_pool_groups(tmp_path: pathlib.Path) -> None:
 
     base_path = tmp_path / "a.csv"
     cand_path = tmp_path / "b.csv"
-    ncu.write_ncu_csv(base_path)
-    ncu.write_ncu_csv(cand_path, gemm_dur_ns=250_000.0)
+    ncu.write_csv(base_path)
+    ncu.write_csv(cand_path, gemm_dur_ns=250_000.0)
     report = cta.compare(
         base_path, cand_path, labels=["base", "cand"], cache_dir=tmp_path / "c"
     )

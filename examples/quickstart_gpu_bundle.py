@@ -35,23 +35,21 @@ def _populate_bundle(
     Returns:
         ``bundle_dir``.
     """
-    nsys.write_nsys_sqlite(
+    nsys.write_sqlite(
         bundle_dir / "profile.sqlite",
         gemm_us=int(compute_ms * 300),
         comm_us=240,
     )
-    trtexec.write_trtexec_timing(
+    trtexec.write_timing(
         bundle_dir / "times.json", queries=40, compute_ms=compute_ms
     )
-    trtexec.write_trtexec_layers(
+    trtexec.write_layers(
         bundle_dir / "profile.json",
         bundle_dir / "engine.json",
         fused=is_fused,
         precision=precision,
     )
-    jtop.write_jtop_trace(
-        bundle_dir / "jtop.json", duration_s=4, power_mw=power_mw
-    )
+    jtop.write_trace(bundle_dir / "jtop.json", duration_s=4, power_mw=power_mw)
     return bundle_dir
 
 

@@ -1,4 +1,4 @@
-#include "readers/chakra/chakra_read.hpp"
+#include "readers/chakra/reader.hpp"
 
 #include <fcntl.h>
 #include <google/protobuf/io/zero_copy_stream_impl.h>
@@ -12,13 +12,13 @@
 #include <memory>
 #include <stdexcept>
 
-#include "common/cpus.hpp"
-#include "common/util.hpp"
-#include "common/interner.hpp"
-#include "common/ordered_pool.hpp"
+#include "util/cpus.hpp"
+#include "util/util.hpp"
+#include "util/interner.hpp"
+#include "util/ordered_pool.hpp"
 #include "et_def.pb.h"
 
-namespace cta {
+namespace cta::readers {
 namespace {
 
 namespace pb = ChakraProtoMsg;
@@ -332,7 +332,7 @@ class Merger {
 
 }  // namespace
 
-ChakraColumns read_chakra_files(const std::vector<std::string>& paths,
+ChakraColumns read_chakra(const std::vector<std::string>& paths,
                                 const std::vector<std::uint32_t>& ranks, int threads) {
   if (paths.size() != ranks.size()) throw std::invalid_argument("paths and ranks must have the same length");
   if (threads < 0) throw std::invalid_argument("threads must be >= 0");
@@ -351,4 +351,4 @@ ChakraColumns read_chakra_files(const std::vector<std::string>& paths,
   return merger.finish();
 }
 
-}  // namespace cta
+}  // namespace cta::readers

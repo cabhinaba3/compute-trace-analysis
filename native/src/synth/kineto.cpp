@@ -5,11 +5,11 @@
 #include <string>
 #include <string_view>
 
-#include "common/format.hpp"
-#include "common/rng.hpp"
-#include "common/sink.hpp"
+#include "util/format.hpp"
+#include "util/rng.hpp"
+#include "util/sink.hpp"
 
-namespace cta {
+namespace cta::synth {
 namespace {
 
 // One complete-event ("ph": "X") object in json.dumps formatting.
@@ -299,4 +299,4 @@ std::uint64_t write_kineto_trace_large(const std::string& path, const KinetoLarg
   return events;
 }
 
-}  // namespace cta
+}  // namespace cta::synth

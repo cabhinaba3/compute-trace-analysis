@@ -1,4 +1,4 @@
-"""Tests of the C++ Kineto reader (`cta._native.read_kineto_trace`).
+"""Tests of the C++ Kineto reader (`cta._native.read_kineto`).
 
 The tables the adapter builds from each fixture were hashed with the Python
 reader this code replaced, so a mismatch means the adapter no longer produces
@@ -267,18 +267,18 @@ def _fixtures(tmp_path: pathlib.Path) -> dict[str, pathlib.Path]:
         base_us=_BASES_US["small"],
         ensure_ascii=False,
     )
-    out["compat_3"] = synth_kineto.write_kineto_trace(
+    out["compat_3"] = synth_kineto.write_trace(
         tmp_path / "compat_3.json", steps=3
     )
-    out["compat_fp8"] = synth_kineto.write_kineto_trace(
+    out["compat_fp8"] = synth_kineto.write_trace(
         tmp_path / "compat_fp8.json.gz", steps=7, kernel_variant="fp8"
     )
     out["large"] = pathlib.Path(tmp_path / "large.json")
-    synth_kineto.write_kineto_trace_large(
+    synth_kineto.write_large_trace(
         out["large"], target_bytes=3 << 20, seed=5, rank=2, world_size=4
     )
     out["large_info_first"] = pathlib.Path(tmp_path / "large_first.json")
-    synth_kineto.write_kineto_trace_large(
+    synth_kineto.write_large_trace(
         out["large_info_first"],
         target_bytes=1 << 20,
         seed=6,
@@ -390,7 +390,7 @@ def test_result_does_not_depend_on_threads_chunk_or_block_size(
     tmp_path: pathlib.Path,
 ) -> None:
     for name, path in _fixtures(tmp_path).items():
-        whole = _native.read_kineto_trace(str(path), 1, 1 << 40, 1 << 30)
+        whole = _native.read_kineto(str(path), 1, 1 << 40, 1 << 30)
         # Tiny blocks cut the text at every kind of position: inside strings,
         # after a backslash, between a key and its value.
         tiny = 1 if path.stat().st_size < 100_000 else 3
@@ -400,7 +400,7 @@ def test_result_does_not_depend_on_threads_chunk_or_block_size(
             (8, 257, 64),
             (4, 5000, 4099),
         ):
-            split = _native.read_kineto_trace(str(path), threads, chunk, block)
+            split = _native.read_kineto(str(path), threads, chunk, block)
             assert _same(whole, split), (name, threads, chunk, block)
 
 
@@ -425,7 +425,7 @@ def test_distributed_info_rank_is_read_wherever_it_sits(
     tmp_path: pathlib.Path,
 ) -> None:
     ranks = {
-        layout: _native.read_kineto_trace(
+        layout: _native.read_kineto(
             str(
                 adversarial_trace(
                     tmp_path / f"{layout}.json",
@@ -451,7 +451,7 @@ def test_late_launches_and_repeated_correlation_ids(
     tmp_path: pathlib.Path,
 ) -> None:
     path = adversarial_trace(tmp_path / "a.json", base_us=1_000_000.0)
-    cols = _native.read_kineto_trace(str(path), 2, 300)
+    cols = _native.read_kineto(str(path), 2, 300)
     names = cols["names"]
     gemm = next(
         i
@@ -474,7 +474,7 @@ def test_gpu_rows_follow_the_rules_of_the_python_reader(
     tmp_path: pathlib.Path,
 ) -> None:
     path = adversarial_trace(tmp_path / "a.json", base_us=1_000_000.0)
-    cols = _native.read_kineto_trace(str(path), 2, 300)
+    cols = _native.read_kineto(str(path), 2, 300)
     names = cols["names"]
     rows = {names[code]: i for i, code in enumerate(cols["gpu_name"].tolist())}
     # A missing, zero or negative duration drops the event.
@@ -510,7 +510,7 @@ def test_half_nanoseconds_round_to_even(tmp_path: pathlib.Path) -> None:
     events = [_x("a", "kernel", 0.0625, 1.0), _x("b", "kernel", 0.1875, 1.0)]
     path = tmp_path / "half.json"
     path.write_text(json.dumps({"traceEvents": events}))
-    cols = _native.read_kineto_trace(str(path), 1, 1 << 20)
+    cols = _native.read_kineto(str(path), 1, 1 << 20)
     assert cols["gpu_start"].tolist() == [62, 188]
     assert cols["gpu_end"].tolist() == [1062, 1188]
 
@@ -530,7 +530,7 @@ def test_broken_json_is_rejected(tmp_path: pathlib.Path, text: str) -> None:
     path = tmp_path / "bad.json"
     path.write_text(text)
     with pytest.raises(ValueError, match="."):
-        _native.read_kineto_trace(str(path), 2, 100)
+        _native.read_kineto(str(path), 2, 100)
 
 
 def test_bad_event_is_rejected_and_the_reader_stops(
@@ -541,12 +541,12 @@ def test_bad_event_is_rejected_and_the_reader_stops(
     path = tmp_path / "bad_event.json"
     path.write_text(json.dumps({"traceEvents": events}))
     with pytest.raises(ValueError, match="numbers"):
-        _native.read_kineto_trace(str(path), 4, 200)
+        _native.read_kineto(str(path), 4, 200)
 
 
 def test_a_missing_file_is_an_error(tmp_path: pathlib.Path) -> None:
     with pytest.raises(RuntimeError, match="cannot open"):
-        _native.read_kineto_trace(str(tmp_path / "missing.json"), 1, 100)
+        _native.read_kineto(str(tmp_path / "missing.json"), 1, 100)
 
 
 def test_a_trace_without_events_gives_empty_tables(
@@ -562,7 +562,7 @@ def test_a_trace_without_events_gives_empty_tables(
 
 def test_every_runtime_call_is_listed(tmp_path: pathlib.Path) -> None:
     path = adversarial_trace(tmp_path / "a.json", base_us=1_000_000.0)
-    cols = _native.read_kineto_trace(str(path), 2, 300)
+    cols = _native.read_kineto(str(path), 2, 300)
     calls = len(cols["rcall_name"])
     assert calls > 0
     for key in (
@@ -597,8 +597,8 @@ def test_runtime_calls_do_not_depend_on_threads_or_chunks(
     tmp_path: pathlib.Path,
 ) -> None:
     path = adversarial_trace(tmp_path / "a.json", base_us=1_000_000.0)
-    one = _native.read_kineto_trace(str(path), 1, 1 << 30)
-    many = _native.read_kineto_trace(str(path), 3, 200, 64)
+    one = _native.read_kineto(str(path), 1, 1 << 30)
+    many = _native.read_kineto(str(path), 3, 200, 64)
     assert one["names"] == many["names"]
     for key in (
         "rcall_name",

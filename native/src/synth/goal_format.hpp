@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-namespace cta {
+namespace cta::synth {
 
 enum class Op : std::int8_t { kSend = 1, kRecv = 2, kCalc = 3 };
 
@@ -136,4 +136,4 @@ std::uint64_t write_file(const std::string& path, int num_ranks, FillRank&& fill
 }
 
 }  // namespace goal_bin
-}  // namespace cta
+}  // namespace cta::synth

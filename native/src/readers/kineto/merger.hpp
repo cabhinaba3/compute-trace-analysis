@@ -5,13 +5,13 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common/interner.hpp"
-#include "common/launch_map.hpp"
-#include "common/util.hpp"
+#include "util/interner.hpp"
+#include "util/launch_map.hpp"
+#include "util/util.hpp"
 #include "readers/kineto/chunk.hpp"
-#include "readers/kineto/kineto_read.hpp"
+#include "readers/kineto/reader.hpp"
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 
 // Folds parsed chunks, in file order, into one set of columns. Strings and
 // thread keys are renumbered here, so ids follow first appearance in the file.
@@ -34,4 +34,4 @@ class Merger {
   LaunchMap launches_;
 };
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

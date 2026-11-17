@@ -8,7 +8,7 @@
 
 #include "readers/kineto/chunk.hpp"
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 
 // Owns the JSON parser, which is reused from chunk to chunk; one per thread.
 class ChunkParser {
@@ -31,4 +31,4 @@ class ChunkParser {
 // The integer "rank" in the text of a distributedInfo object, if there is one.
 std::optional<std::int64_t> parse_rank(const std::string& distributed_info);
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

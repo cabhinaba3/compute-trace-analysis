@@ -82,9 +82,7 @@ class TrainingSpec:
         return spec
 
 
-def write_goal_training(
-    path: pathlib.Path, spec: TrainingSpec | None = None
-) -> int:
+def write_goal(path: pathlib.Path, spec: TrainingSpec | None = None) -> int:
     """Writes the schedule as a `.goal` text file.
 
     Collectives are spelled out as send/recv (ring all-reduce and pairwise
@@ -107,10 +105,8 @@ def write_goal_training(
     )
 
 
-def write_goal_training_bin(
-    path: pathlib.Path, spec: TrainingSpec | None = None
-) -> int:
-    """Writes the schedule of ``write_goal_training`` as a `.bin` file.
+def write_goal_bin(path: pathlib.Path, spec: TrainingSpec | None = None) -> int:
+    """Writes the schedule of ``write_goal`` as a `.bin` file.
 
     Args:
         path: Output file; its parent directory is created if missing.
@@ -128,7 +124,7 @@ def write_goal_training_bin(
     )
 
 
-def write_chakra_training(
+def write_chakra(
     out_dir: pathlib.Path,
     spec: TrainingSpec | None = None,
     *,

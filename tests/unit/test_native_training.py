@@ -70,10 +70,10 @@ def _assert_p2p_matched(nodes: pl.DataFrame) -> None:
 
 def test_goal_binary_equals_compiled_text(tmp_path: pathlib.Path) -> None:
     text = tmp_path / "t.goal"
-    node_count = training.write_goal_training(text, _SMALL)
+    node_count = training.write_goal(text, _SMALL)
     binary = tmp_path / "t.bin"
-    assert training.write_goal_training_bin(binary, _SMALL) == node_count
-    compiled = goal.compile_goal_to_bin(text, tmp_path / "compiled.bin")
+    assert training.write_goal_bin(binary, _SMALL) == node_count
+    compiled = goal.compile_to_bin(text, tmp_path / "compiled.bin")
     assert binary.read_bytes() == compiled.read_bytes()
 
 
@@ -81,7 +81,7 @@ def test_goal_graph_is_acyclic_and_every_message_is_matched(
     tmp_path: pathlib.Path,
 ) -> None:
     path = tmp_path / "t.goal"
-    node_count = training.write_goal_training(path, _SMALL)
+    node_count = training.write_goal(path, _SMALL)
     nodes, edges = goal_reader.parse_goal_text(path)
     assert nodes.height == node_count
     assert nodes["rank"].n_unique() == _SMALL.ranks
@@ -97,7 +97,7 @@ def test_single_rank_has_only_compute_nodes(tmp_path: pathlib.Path) -> None:
         dp=1, pp=1, tp=1, microbatches=3, layers_per_stage=4, steps=2
     )
     path = tmp_path / "one.goal"
-    node_count = training.write_goal_training(path, spec)
+    node_count = training.write_goal(path, spec)
     # Per step: forward and backward calcs for every layer and microbatch, and
     # one optimizer node.
     assert node_count == spec.steps * (2 * 3 * 4 + 1)
@@ -106,11 +106,11 @@ def test_single_rank_has_only_compute_nodes(tmp_path: pathlib.Path) -> None:
 
 
 def test_goal_moe_adds_all_to_all_traffic(tmp_path: pathlib.Path) -> None:
-    dense = training.write_goal_training(
+    dense = training.write_goal(
         tmp_path / "dense.goal",
         training.TrainingSpec(dp=2, pp=1, tp=1, moe_every=0),
     )
-    moe = training.write_goal_training(
+    moe = training.write_goal(
         tmp_path / "moe.goal",
         training.TrainingSpec(dp=2, pp=1, tp=1, moe_every=2, ep_size=2),
     )
@@ -120,9 +120,7 @@ def test_goal_moe_adds_all_to_all_traffic(tmp_path: pathlib.Path) -> None:
 def test_chakra_collectives_are_single_nodes_and_pipeline_is_p2p(
     tmp_path: pathlib.Path,
 ) -> None:
-    node_count = training.write_chakra_training(
-        tmp_path / "et", _SMALL, threads=2
-    )
+    node_count = training.write_chakra(tmp_path / "et", _SMALL, threads=2)
     nodes, edges = _read_chakra(tmp_path / "et", tmp_path / "cache")
     assert nodes.height == node_count
     assert nodes["rank"].n_unique() == _SMALL.ranks
@@ -143,8 +141,8 @@ def test_chakra_collectives_are_single_nodes_and_pipeline_is_p2p(
 def test_chakra_output_is_independent_of_the_thread_count(
     tmp_path: pathlib.Path,
 ) -> None:
-    training.write_chakra_training(tmp_path / "a", _SMALL, threads=1)
-    training.write_chakra_training(tmp_path / "b", _SMALL, threads=4)
+    training.write_chakra(tmp_path / "a", _SMALL, threads=1)
+    training.write_chakra(tmp_path / "b", _SMALL, threads=4)
     for rank in range(_SMALL.ranks):
         name = f"trace.rank{rank}.et"
         assert (tmp_path / "a" / name).read_bytes() == (
@@ -160,8 +158,8 @@ def test_a_hundred_million_nodes_fit_in_the_tag_space() -> None:
 
 
 def test_goal_output_is_deterministic(tmp_path: pathlib.Path) -> None:
-    training.write_goal_training(tmp_path / "a.goal", _SMALL)
-    training.write_goal_training(tmp_path / "b.goal", _SMALL)
+    training.write_goal(tmp_path / "a.goal", _SMALL)
+    training.write_goal(tmp_path / "b.goal", _SMALL)
     assert (tmp_path / "a.goal").read_bytes() == (
         tmp_path / "b.goal"
     ).read_bytes()
@@ -180,4 +178,4 @@ def test_invalid_specs_are_rejected(
     tmp_path: pathlib.Path, spec: training.TrainingSpec
 ) -> None:
     with pytest.raises(ValueError, match="."):
-        training.write_goal_training(tmp_path / "x.goal", spec)
+        training.write_goal(tmp_path / "x.goal", spec)

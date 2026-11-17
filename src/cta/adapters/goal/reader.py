@@ -279,7 +279,7 @@ def parse_goal_text(path: pathlib.Path) -> tuple[pl.DataFrame, pl.DataFrame]:
         ValueError: If the text is not UTF-8, or holds a number too large for
             its column.
     """
-    columns = native.read_goal_text(str(path))
+    columns = native.read_goal(str(path))
     op_class = pl.Series(columns["op_class"])
     nodes = pl.DataFrame(
         {

@@ -300,7 +300,7 @@ class ChakraAdapter:
         ranks = [
             common.infer_rank(path, index) for index, path in enumerate(paths)
         ]
-        columns = native.read_chakra_et(
+        columns = native.read_chakra(
             [str(path) for path in paths],
             ranks,
         )

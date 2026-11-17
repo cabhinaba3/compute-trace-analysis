@@ -1,6 +1,6 @@
 """Chakra execution trace schema access, for writing .et files in tests.
 
-Reading is done by the native reader (``cta._native.read_chakra_et``).
+Reading is done by the native reader (``cta._native.read_chakra``).
 
 The official MLCommons Chakra schema comes from the pinned third_party/chakra
 submodule (PyPI's mlc-chakra 1.0.0 predates STORAGE_NODE and DATA_OP_NODE).

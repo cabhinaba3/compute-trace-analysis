@@ -7,7 +7,7 @@ import pathlib
 from cta import _native as native
 
 
-def write_trtexec_timing(
+def write_timing(
     path: pathlib.Path,
     *,
     queries: int = 20,
@@ -49,7 +49,7 @@ def write_trtexec_timing(
     return path
 
 
-def write_trtexec_layers(
+def write_layers(
     profile_path: pathlib.Path,
     engine_path: pathlib.Path,
     *,

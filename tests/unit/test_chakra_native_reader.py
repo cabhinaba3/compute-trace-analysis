@@ -1,4 +1,4 @@
-"""Tests of the C++ Chakra .et reader (`cta._native.read_chakra_et`).
+"""Tests of the C++ Chakra .et reader (`cta._native.read_chakra`).
 
 The tables the adapter builds from each fixture were hashed with the Python
 reader this code replaced, so a mismatch means the adapter no longer produces
@@ -240,7 +240,7 @@ def _fixtures(tmp_path: pathlib.Path) -> dict[str, list[pathlib.Path]]:
         adv / "t.rank4.et",
     ]
     files[3].write_bytes(b"")
-    compat = synth_chakra.write_chakra_et_run(
+    compat = synth_chakra.write_run(
         tmp_path / "compat",
         world_size=3,
         steps=4,
@@ -257,7 +257,7 @@ def _fixtures(tmp_path: pathlib.Path) -> dict[str, list[pathlib.Path]]:
         moe_every=2,
         ep_size=3,
     )
-    training.write_chakra_training(tmp_path / "train", spec)
+    training.write_chakra(tmp_path / "train", spec)
     return {
         "adversarial": files,
         "compat": compat,
@@ -402,16 +402,16 @@ def test_result_does_not_depend_on_the_thread_count(
     for name, files in _fixtures(tmp_path).items():
         paths = [str(p) for p in files]
         ranks = list(range(len(paths)))
-        one = _native.read_chakra_et(paths, ranks, 1)
+        one = _native.read_chakra(paths, ranks, 1)
         for threads in (2, 5, 16):
-            assert _same(one, _native.read_chakra_et(paths, ranks, threads)), (
+            assert _same(one, _native.read_chakra(paths, ranks, threads)), (
                 name,
                 threads,
             )
 
 
 def test_an_empty_list_of_files_gives_no_rows() -> None:
-    columns = _native.read_chakra_et([], [], 4)
+    columns = _native.read_chakra([], [], 4)
     assert len(columns["node_id"]) == 0
     assert columns["names"] == []
 
@@ -432,17 +432,17 @@ def test_truncated_or_corrupt_files_are_rejected(
     bad = tmp_path / "bad.et"
     bad.write_bytes(damage(good.read_bytes()))
     with pytest.raises(ValueError, match="bad.et"):
-        _native.read_chakra_et([str(good), str(bad)], [0, 1], 2)
+        _native.read_chakra([str(good), str(bad)], [0, 1], 2)
 
 
 def test_a_missing_file_is_an_error(tmp_path: pathlib.Path) -> None:
     with pytest.raises(RuntimeError, match="cannot open"):
-        _native.read_chakra_et([str(tmp_path / "none.et")], [0], 1)
+        _native.read_chakra([str(tmp_path / "none.et")], [0], 1)
 
 
 def test_paths_and_ranks_must_match(tmp_path: pathlib.Path) -> None:
     with pytest.raises(ValueError, match="same length"):
-        _native.read_chakra_et([str(tmp_path / "a.et")], [], 1)
+        _native.read_chakra([str(tmp_path / "a.et")], [], 1)
 
 
 def test_collective_traffic_is_the_sum_over_collectives(

@@ -7,7 +7,7 @@ import pathlib
 from cta import _native as native
 
 
-def write_ncu_csv(
+def write_csv(
     path: pathlib.Path,
     *,
     gemm_dur_ns: float = 500_000.0,

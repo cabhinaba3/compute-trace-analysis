@@ -47,13 +47,13 @@ def synth_command(
     from cta.synth import nsys
     from cta.synth import trtexec
 
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         out_dir / "chakra_ring",
         world_size=4,
         compute_us=900,
         allreduce_bytes=400_000,
     )
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         out_dir / "chakra_skewed",
         world_size=4,
         compute_us=900,
@@ -62,15 +62,15 @@ def synth_command(
         straggler_factor=1.8,
     )
 
-    ring_goal_path = goal.write_goal_allreduce(
+    ring_goal_path = goal.write_allreduce(
         out_dir / "goal" / "ring.goal",
         world_size=4,
         compute_ns=900_000,
         allreduce_bytes=400_000,
         algorithm="ring",
     )
-    goal.compile_goal_to_bin(ring_goal_path, out_dir / "goal" / "ring.bin")
-    goal.write_goal_allreduce(
+    goal.compile_to_bin(ring_goal_path, out_dir / "goal" / "ring.bin")
+    goal.write_allreduce(
         out_dir / "goal" / "direct.goal",
         world_size=4,
         compute_ns=900_000,
@@ -83,40 +83,38 @@ def synth_command(
         ("int8", 1.3, 14_000.0, "INT8", True),
     ):
         bundle_dir = out_dir / f"gpu_bundle_{mode}"
-        nsys.write_nsys_sqlite(
+        nsys.write_sqlite(
             bundle_dir / "profile.sqlite",
             gemm_us=int(compute_ms * 300),
             comm_us=250,
         )
-        trtexec.write_trtexec_timing(
+        trtexec.write_timing(
             bundle_dir / "times.json", queries=40, compute_ms=compute_ms
         )
-        trtexec.write_trtexec_layers(
+        trtexec.write_layers(
             bundle_dir / "profile.json",
             bundle_dir / "engine.json",
             fused=is_fused,
             precision=precision,
         )
-        jtop.write_jtop_trace(
+        jtop.write_trace(
             bundle_dir / "jtop.json", duration_s=4, power_mw=power_mw
         )
 
-    kineto.write_kineto_trace(
+    kineto.write_trace(
         out_dir / "kineto" / "eager.json.gz",
         attn_us=450.0,
         gemm_us=600.0,
         kernel_variant="fp16",
     )
-    kineto.write_kineto_trace(
+    kineto.write_trace(
         out_dir / "kineto" / "compiled_fp8.json.gz",
         attn_us=210.0,
         gemm_us=280.0,
         kernel_variant="fp8",
     )
-    ncu.write_ncu_csv(
-        out_dir / "ncu" / "baseline.csv", sm_pct=35.0, dram_pct=84.0
-    )
-    ncu.write_ncu_csv(
+    ncu.write_csv(out_dir / "ncu" / "baseline.csv", sm_pct=35.0, dram_pct=84.0)
+    ncu.write_csv(
         out_dir / "ncu" / "optimized.csv",
         gemm_dur_ns=260_000.0,
         sm_pct=82.0,

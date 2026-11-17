@@ -7,11 +7,11 @@
 #include <utility>
 #include <vector>
 
-#include "common/format.hpp"
-#include "common/sink.hpp"
-#include "synth/goal_common.hpp"
+#include "util/format.hpp"
+#include "util/sink.hpp"
+#include "synth/goal_format.hpp"
 
-namespace cta {
+namespace cta::synth {
 namespace {
 
 // Walks the schedule of one rank and reports it to an emitter. The order of the
@@ -131,4 +131,4 @@ std::uint64_t write_goal_allreduce_bin(const std::string& path, int world_size,
   });
 }
 
-}  // namespace cta
+}  // namespace cta::synth

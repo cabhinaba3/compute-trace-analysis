@@ -9,9 +9,9 @@
 #include <stdexcept>
 #include <string_view>
 
-#include "common/util.hpp"
+#include "util/util.hpp"
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 namespace od = simdjson::ondemand;
 
 static_assert(kChunkPadding >= simdjson::SIMDJSON_PADDING, "chunk padding is below what simdjson reads past the end");
@@ -402,4 +402,4 @@ std::optional<std::int64_t> parse_rank(const std::string& info) {
   return std::nullopt;
 }
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

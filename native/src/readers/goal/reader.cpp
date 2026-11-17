@@ -1,4 +1,4 @@
-#include "readers/goal/goal_read.hpp"
+#include "readers/goal/reader.hpp"
 
 #include <fcntl.h>
 #include <simdjson.h>
@@ -14,16 +14,16 @@
 #include <unordered_map>
 #include <utility>
 
-#include "common/cpus.hpp"
-#include "common/util.hpp"
-#include "common/ordered_pool.hpp"
-#include "readers/goal/goal_text.hpp"
+#include "util/cpus.hpp"
+#include "util/util.hpp"
+#include "util/ordered_pool.hpp"
+#include "readers/goal/syntax.hpp"
 
-namespace cta {
+namespace cta::readers {
 namespace {
 
-using goal_text::Op;
-using goal_text::OpKind;
+using goal::Op;
+using goal::OpKind;
 
 // A read-only view of a file in memory.
 class MappedFile {
@@ -110,13 +110,13 @@ struct Piece {
 
 // Parses a piece into rows. The state at its start is the state after a rank
 // header (or the start of the file), which is why pieces are independent.
-std::unique_ptr<GoalTextColumns> parse_piece(const MappedFile& file, const Piece& piece) {
+std::unique_ptr<GoalColumns> parse_piece(const MappedFile& file, const Piece& piece) {
   const char* text = file.data();
   if (!simdjson::validate_utf8(text + piece.begin, piece.end - piece.begin))
     throw std::invalid_argument("GOAL text is not valid UTF-8");
 
-  auto out = std::make_unique<GoalTextColumns>();
-  GoalTextColumns& rows = *out;
+  auto out = std::make_unique<GoalColumns>();
+  GoalColumns& rows = *out;
   std::unordered_map<std::string_view, std::uint64_t> labels;
   Arena arena;
   std::string scratch;
@@ -130,15 +130,15 @@ std::unique_ptr<GoalTextColumns> parse_piece(const MappedFile& file, const Piece
 
   std::size_t pos = piece.begin;
   while (pos < piece.end) {
-    const std::string_view raw = goal_text::next_line(text, piece.end, pos);
-    const std::string_view code = goal_text::code_of(raw, in_block, scratch);
+    const std::string_view raw = goal::next_line(text, piece.end, pos);
+    const std::string_view code = goal::code_of(raw, in_block, scratch);
     if (code.empty() || code == "{" || code.starts_with("num_ranks")) continue;
     if (code == "}") {
       forget_labels();
       continue;
     }
     std::uint64_t header_rank = 0;
-    if (goal_text::parse_rank_header(code, header_rank)) {
+    if (goal::parse_rank_header(code, header_rank)) {
       rank = header_rank;
       next_id = 0;
       forget_labels();
@@ -146,7 +146,7 @@ std::unique_ptr<GoalTextColumns> parse_piece(const MappedFile& file, const Piece
     }
     std::string_view dst, src;
     bool irequires = false;
-    if (goal_text::parse_dependency(code, dst, src, irequires)) {
+    if (goal::parse_dependency(code, dst, src, irequires)) {
       const auto s = labels.find(src);
       const auto d = labels.find(dst);
       if (s != labels.end() && d != labels.end()) {
@@ -158,7 +158,7 @@ std::unique_ptr<GoalTextColumns> parse_piece(const MappedFile& file, const Piece
       continue;
     }
     Op op;
-    if (!goal_text::parse_op(code, op)) continue;
+    if (!goal::parse_op(code, op)) continue;
 
     if (!op.label.empty()) labels[arena.copy(op.label)] = next_id;
     const std::string_view name = !op.label.empty() ? op.label
@@ -190,8 +190,8 @@ std::unique_ptr<GoalTextColumns> parse_piece(const MappedFile& file, const Piece
 // Appends pieces' rows to the columns in the order they arrive.
 class Merger {
  public:
-  void add(std::unique_ptr<GoalTextColumns> piece) {
-    GoalTextColumns& p = *piece;
+  void add(std::unique_ptr<GoalColumns> piece) {
+    GoalColumns& p = *piece;
     const std::uint64_t base = out_.name_bytes.size();
     for (std::uint64_t end : p.name_end) out_.name_end.push_back(base + end);
     append_vector(out_.name_bytes, p.name_bytes);
@@ -208,15 +208,15 @@ class Merger {
     append_vector(out_.edge_dst, p.edge_dst);
     append_vector(out_.edge_kind, p.edge_kind);
   }
-  GoalTextColumns finish() { return std::move(out_); }
+  GoalColumns finish() { return std::move(out_); }
 
  private:
-  GoalTextColumns out_;
+  GoalColumns out_;
 };
 
 }  // namespace
 
-GoalTextColumns read_goal_text(const std::string& path, int threads, std::uint64_t chunk_bytes) {
+GoalColumns read_goal(const std::string& path, int threads, std::uint64_t chunk_bytes) {
   if (threads < 0) throw std::invalid_argument("threads must be >= 0");
   if (chunk_bytes < 1) throw std::invalid_argument("chunk_bytes must be at least 1");
   if (threads == 0) threads = usable_cpus();
@@ -229,12 +229,12 @@ GoalTextColumns read_goal_text(const std::string& path, int threads, std::uint64
   double finish_seconds = 0;
 
   Merger merger;
-  OrderedPool<Piece, std::unique_ptr<GoalTextColumns>> pool(
+  OrderedPool<Piece, std::unique_ptr<GoalColumns>> pool(
       threads,
-      [&]() -> OrderedPool<Piece, std::unique_ptr<GoalTextColumns>>::Work {
+      [&]() -> OrderedPool<Piece, std::unique_ptr<GoalColumns>>::Work {
         return [&](Piece& piece) { return parse_piece(file, piece); };
       },
-      [&](std::unique_ptr<GoalTextColumns>&& rows) { merger.add(std::move(rows)); },
+      [&](std::unique_ptr<GoalColumns>&& rows) { merger.add(std::move(rows)); },
       static_cast<std::size_t>(threads) + 2);
 
   // Find the rank headers and cut before the first one past each chunk size.
@@ -247,9 +247,9 @@ GoalTextColumns read_goal_text(const std::string& path, int threads, std::uint64
   while (pos < size) {
     const std::size_t line_begin = pos;
     const bool block_before = in_block;
-    const std::string_view code = goal_text::code_of(goal_text::next_line(text, size, pos), in_block, scratch);
+    const std::string_view code = goal::code_of(goal::next_line(text, size, pos), in_block, scratch);
     std::uint64_t rank = 0;
-    if (!block_before && line_begin - piece_begin >= chunk_bytes && goal_text::parse_rank_header(code, rank)) {
+    if (!block_before && line_begin - piece_begin >= chunk_bytes && goal::parse_rank_header(code, rank)) {
       pool.submit(Piece{piece_begin, line_begin});
       piece_begin = line_begin;
     }
@@ -259,10 +259,10 @@ GoalTextColumns read_goal_text(const std::string& path, int threads, std::uint64
   pool.finish();
   finish_seconds = duration_seconds(Clock::now() - scanned);
 
-  GoalTextColumns columns = merger.finish();
-  columns.scan_seconds = duration_seconds(scanned - start);
-  columns.finish_seconds = finish_seconds;
+  GoalColumns columns = merger.finish();
+  columns.timing.scan = duration_seconds(scanned - start);
+  columns.timing.finish = finish_seconds;
   return columns;
 }
 
-}  // namespace cta
+}  // namespace cta::readers

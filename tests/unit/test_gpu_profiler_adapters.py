@@ -71,7 +71,7 @@ def test_nsys_sqlite_warmup_slicing_and_legacy_schema(
     tmp_path: pathlib.Path,
 ) -> None:
     cache_dir = tmp_path / ".cache"
-    baseline_db_path = nsys.write_nsys_sqlite(
+    baseline_db_path = nsys.write_sqlite(
         tmp_path / "base.sqlite",
         steps=4,
         gemm_us=800,
@@ -82,7 +82,7 @@ def test_nsys_sqlite_warmup_slicing_and_legacy_schema(
         tensor_active_pct=45.0,
         legacy_gpu_metrics=True,
     )
-    candidate_db_path = nsys.write_nsys_sqlite(
+    candidate_db_path = nsys.write_sqlite(
         tmp_path / "cand.sqlite",
         steps=4,
         gemm_us=400,
@@ -125,14 +125,14 @@ def test_kineto_gz_family_and_cpu_op_scope_matching(
     tmp_path: pathlib.Path,
 ) -> None:
     cache_dir = tmp_path / ".cache"
-    fp16_trace_path = kineto.write_kineto_trace(
+    fp16_trace_path = kineto.write_trace(
         tmp_path / "fp16.json.gz",
         steps=3,
         attn_us=400.0,
         gemm_us=600.0,
         kernel_variant="fp16",
     )
-    fp8_trace_path = kineto.write_kineto_trace(
+    fp8_trace_path = kineto.write_trace(
         tmp_path / "fp8.json.gz",
         steps=3,
         attn_us=200.0,
@@ -164,7 +164,7 @@ def test_kineto_gz_family_and_cpu_op_scope_matching(
 
 def test_ncu_roofline_and_regime_shift(tmp_path: pathlib.Path) -> None:
     cache_dir = tmp_path / ".cache"
-    memory_bound_csv_path = ncu.write_ncu_csv(
+    memory_bound_csv_path = ncu.write_csv(
         tmp_path / "mem.csv",
         gemm_dur_ns=600_000.0,
         sm_pct=25.0,
@@ -172,7 +172,7 @@ def test_ncu_roofline_and_regime_shift(tmp_path: pathlib.Path) -> None:
         flops=1e10,
         dram_bytes=1e9,
     )
-    compute_bound_csv_path = ncu.write_ncu_csv(
+    compute_bound_csv_path = ncu.write_csv(
         tmp_path / "comp.csv",
         gemm_dur_ns=300_000.0,
         sm_pct=85.0,

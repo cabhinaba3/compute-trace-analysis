@@ -7,7 +7,22 @@
 #include <string>
 #include <vector>
 
-namespace cta {
+namespace cta::readers {
+
+// Where the time of one read went, in seconds: reading (and gunzipping) the
+// file, splitting it into chunks, waiting for room to hand a chunk to a
+// parser, and waiting for the parsers and the merge after the last chunk.
+struct KinetoTiming {
+  double read = 0, split = 0, submit_wait = 0, finish = 0;
+
+  template <typename Visit>
+  void for_each_column(Visit&& visit) {
+    visit("read", read);
+    visit("split", split);
+    visit("submit_wait", submit_wait);
+    visit("finish", finish);
+  }
+};
 
 // What the reader extracts from one rank's trace. Names are dictionary-coded:
 // every `*_name` array holds indices into `names`, which lists each distinct
@@ -50,10 +65,46 @@ struct KinetoColumns {
   std::vector<std::int32_t> rcall_name;
   std::vector<std::int64_t> rcall_start, rcall_end, rcall_thread, rcall_correlation;
 
-  // Where the time went, in seconds: reading (and gunzipping) the file,
-  // splitting it into chunks, waiting for room to hand a chunk to a parser,
-  // and waiting for the parsers and the merge to finish after the last chunk.
-  double read_seconds = 0, split_seconds = 0, submit_wait_seconds = 0, finish_seconds = 0;
+  KinetoTiming timing;
+
+  // Calls visit(name, member) for every column, under the names Python sees.
+  template <typename Visit>
+  void for_each_column(Visit&& visit) {
+    visit("rank", rank);
+    visit("names", names);
+    visit("gpu_name", gpu_name);
+    visit("gpu_category", gpu_category);
+    visit("gpu_start", gpu_start);
+    visit("gpu_end", gpu_end);
+    visit("gpu_bytes", gpu_bytes);
+    visit("gpu_stream", gpu_stream);
+    visit("gpu_device", gpu_device);
+    visit("gpu_launch_ns", gpu_launch_ns);
+    visit("gpu_launch_thread", gpu_launch_thread);
+    visit("comm_row", comm_row);
+    visit("comm_op", comm_op);
+    visit("comm_dtype", comm_dtype);
+    visit("comm_group", comm_group);
+    visit("comm_in", comm_in);
+    visit("comm_out", comm_out);
+    visit("comm_size", comm_size);
+    visit("op_start", op_start);
+    visit("op_end", op_end);
+    visit("op_name", op_name);
+    visit("op_thread", op_thread);
+    visit("step_id", step_id);
+    visit("step_start", step_start);
+    visit("step_end", step_end);
+    visit("runtime_name", runtime_name);
+    visit("runtime_duration", runtime_duration);
+    visit("runtime_calls", runtime_calls);
+    visit("rcall_name", rcall_name);
+    visit("rcall_start", rcall_start);
+    visit("rcall_end", rcall_end);
+    visit("rcall_thread", rcall_thread);
+    visit("rcall_correlation", rcall_correlation);
+    visit("timing", timing);
+  }
 };
 
 // Reads a trace with `threads` parser threads (0 = all usable CPUs). The file
@@ -63,7 +114,7 @@ struct KinetoColumns {
 // std::runtime_error when the file cannot be read. The file is read in blocks
 // of `block_bytes`; the result does not depend on that either (tests use tiny
 // blocks to cut the text at every kind of position).
-KinetoColumns read_kineto_columns(const std::string& path, int threads, std::uint64_t chunk_bytes,
+KinetoColumns read_kineto(const std::string& path, int threads, std::uint64_t chunk_bytes,
                                   std::uint64_t block_bytes = 8u << 20);
 
-}  // namespace cta
+}  // namespace cta::readers

@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 
 // Walks the JSON text block by block and cuts the trace-event array into
 // chunks at the commas between events. It tracks string and escape state, so
@@ -56,4 +56,4 @@ class Splitter {
   std::string key_, info_;
 };
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

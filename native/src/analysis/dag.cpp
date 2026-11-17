@@ -1,4 +1,4 @@
-#include "core/dag.hpp"
+#include "analysis/dag.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace cta {
+namespace cta::analysis {
 
 DagResult solve_dag(const double* weights, const bool* is_comm, const bool* is_compute,
                     const std::int64_t* size_bytes, std::size_t n, const std::uint32_t* edge_src,
@@ -138,4 +138,4 @@ DagResult solve_dag(const double* weights, const bool* is_comm, const bool* is_c
   return result;
 }
 
-}  // namespace cta
+}  // namespace cta::analysis

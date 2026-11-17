@@ -13,14 +13,14 @@
 #include <thread>
 #include <vector>
 
-#include "common/cpus.hpp"
-#include "common/format.hpp"
-#include "common/scoped_join.hpp"
-#include "common/sink.hpp"
+#include "util/cpus.hpp"
+#include "util/format.hpp"
+#include "util/scoped_join.hpp"
+#include "util/sink.hpp"
 #include "et_def.pb.h"
-#include "synth/goal_common.hpp"
+#include "synth/goal_format.hpp"
 
-namespace cta {
+namespace cta::synth {
 namespace {
 
 // Dependencies of the next node: none (-1) or one earlier node.
@@ -340,4 +340,4 @@ std::uint64_t write_chakra_training(const std::string& out_dir, const TrainingSp
   return total;
 }
 
-}  // namespace cta
+}  // namespace cta::synth

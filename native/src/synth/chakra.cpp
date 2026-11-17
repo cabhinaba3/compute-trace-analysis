@@ -7,10 +7,10 @@
 #include <fstream>
 #include <stdexcept>
 
-#include "common/json_value.hpp"
+#include "util/json_value.hpp"
 #include "et_def.pb.h"
 
-namespace cta {
+namespace cta::synth {
 namespace {
 
 void add_int_attr(ChakraProtoMsg::Node& node, const char* name, std::int64_t value) {
@@ -21,7 +21,7 @@ void add_int_attr(ChakraProtoMsg::Node& node, const char* name, std::int64_t val
 
 }  // namespace
 
-std::vector<std::string> write_chakra_et_run(const std::string& out_dir, int world_size,
+std::vector<std::string> write_chakra_run(const std::string& out_dir, int world_size,
                                              std::int64_t compute_us, std::int64_t allreduce_bytes,
                                              int steps, int straggler_rank,
                                              double straggler_factor) {
@@ -75,7 +75,7 @@ std::vector<std::string> write_chakra_et_run(const std::string& out_dir, int wor
   return paths;
 }
 
-void write_chakra_host_et(const std::string& path, int steps, double compute_us,
+void write_chakra_host(const std::string& path, int steps, double compute_us,
                           std::int64_t comm_bytes) {
   JsonArray nodes;
   std::int64_t node_id = 1;
@@ -102,4 +102,4 @@ void write_chakra_host_et(const std::string& path, int steps, double compute_us,
                   -1);
 }
 
-}  // namespace cta
+}  // namespace cta::synth

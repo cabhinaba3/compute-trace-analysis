@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-namespace cta {
+namespace cta::synth {
 
 // One training job on dp x pp x tp ranks (rank = (d * pp + p) * tp + t), written as
 // a GPipe-style schedule: all microbatch forwards, then all backwards (reversed),
@@ -44,4 +44,4 @@ std::uint64_t write_goal_training_bin(const std::string& path, const TrainingSpe
 std::uint64_t write_chakra_training(const std::string& out_dir, const TrainingSpec& spec,
                                     int threads);
 
-}  // namespace cta
+}  // namespace cta::synth

@@ -1,4 +1,4 @@
-#include "readers/nsys/nsys_read.hpp"
+#include "readers/nsys/reader.hpp"
 
 #include <exception>
 #include <limits>
@@ -6,13 +6,13 @@
 #include <string>
 #include <thread>
 
-#include "common/util.hpp"
-#include "common/interner.hpp"
-#include "common/launch_map.hpp"
-#include "common/scoped_join.hpp"
-#include "common/sqlite.hpp"
+#include "util/util.hpp"
+#include "util/interner.hpp"
+#include "util/launch_map.hpp"
+#include "util/scoped_join.hpp"
+#include "util/sqlite.hpp"
 
-namespace cta {
+namespace cta::readers {
 namespace {
 
 using std::int64_t;
@@ -215,7 +215,7 @@ void read_summary(const std::string& path, const std::set<std::string>& tables, 
 
 }  // namespace
 
-NsysColumns read_nsys_sqlite(const std::string& path) {
+NsysColumns read_nsys(const std::string& path) {
   std::set<std::string> tables;
   {
     SqliteReader db(path);
@@ -287,4 +287,4 @@ NsysColumns read_nsys_sqlite(const std::string& path) {
   return out;
 }
 
-}  // namespace cta
+}  // namespace cta::readers

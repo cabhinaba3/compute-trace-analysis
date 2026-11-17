@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace cta {
+namespace cta::readers {
 
 // The nodes and dependencies of a set of .et files, one row per node or edge,
 // files in the order given. Strings are dictionary-coded: `name` and
@@ -31,6 +31,28 @@ struct ChakraColumns {
   std::vector<std::uint32_t> edge_rank;
   std::vector<std::uint64_t> edge_src, edge_dst;
   std::vector<std::uint8_t> edge_kind;  // 0 data, 1 control
+
+  // Calls visit(name, member) for every column, under the names Python sees.
+  template <typename Visit>
+  void for_each_column(Visit&& visit) {
+    visit("names", names);
+    visit("comm_types", comm_types);
+    visit("rank", rank);
+    visit("node_id", node_id);
+    visit("name", name);
+    visit("op_class", op_class);
+    visit("comm_type", comm_type);
+    visit("duration_ns", duration_ns);
+    visit("size_bytes", size_bytes);
+    visit("num_ops", num_ops);
+    visit("src_rank", src_rank);
+    visit("dst_rank", dst_rank);
+    visit("message_tag", message_tag);
+    visit("edge_rank", edge_rank);
+    visit("edge_src", edge_src);
+    visit("edge_dst", edge_dst);
+    visit("edge_kind", edge_kind);
+  }
 };
 
 // Reads the files on `threads` threads (0 = all usable CPUs), one task per
@@ -39,7 +61,7 @@ struct ChakraColumns {
 //
 // Throws std::invalid_argument for a truncated or corrupt file and
 // std::runtime_error when a file cannot be read.
-ChakraColumns read_chakra_files(const std::vector<std::string>& paths,
+ChakraColumns read_chakra(const std::vector<std::string>& paths,
                                 const std::vector<std::uint32_t>& ranks, int threads);
 
-}  // namespace cta
+}  // namespace cta::readers

@@ -39,10 +39,10 @@ def chakra_pair(tmp_path_factory: pytest.TempPathFactory) -> ChakraPair:
     """
     root = tmp_path_factory.mktemp("review")
     baseline_dir, candidate_dir = root / "a", root / "b"
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         baseline_dir, world_size=4, compute_us=800, allreduce_bytes=400_000
     )
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         candidate_dir,
         world_size=4,
         compute_us=800,
@@ -169,10 +169,10 @@ def test_export_writes_every_applicable_plot_kind(
 
 def test_manifest_mode_honors_cli_overrides(tmp_path: pathlib.Path) -> None:
     run_a_dir, run_b_dir = tmp_path / "a", tmp_path / "b"
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         run_a_dir, world_size=2, compute_us=500, allreduce_bytes=100_000
     )
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         run_b_dir, world_size=2, compute_us=500, allreduce_bytes=200_000
     )
     manifest_path = tmp_path / "m.yaml"
@@ -263,8 +263,8 @@ def test_hta_aspect_is_opt_in_and_wraps_hta(tmp_path: pathlib.Path) -> None:
 
     baseline_trace_path = tmp_path / "a.json.gz"
     candidate_trace_path = tmp_path / "b.json.gz"
-    kineto.write_kineto_trace(baseline_trace_path, attn_us=450.0, gemm_us=600.0)
-    kineto.write_kineto_trace(
+    kineto.write_trace(baseline_trace_path, attn_us=450.0, gemm_us=600.0)
+    kineto.write_trace(
         candidate_trace_path, attn_us=210.0, gemm_us=280.0, kernel_variant="fp8"
     )
     cache_dir = tmp_path / "cache"

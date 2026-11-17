@@ -84,7 +84,7 @@ class KinetoAdapter:
         runtime_totals: dict[str, list[int]] = {}
 
         for shard_index, path in enumerate(sorted(artifact.paths)):
-            columns = native.read_kineto_trace(str(path))
+            columns = native.read_kineto(str(path))
             rank = _shard_rank(columns, path, shard_index)
             shard_kernels, shard_steps, shard_ops, shard_calls = _ingest_shard(
                 columns, rank, runtime_totals
@@ -152,7 +152,7 @@ def _ingest_shard(
     and counts are added to ``runtime_totals`` as a side effect.
 
     Args:
-        columns: The shard as read by ``native.read_kineto_trace``.
+        columns: The shard as read by ``native.read_kineto``.
         rank: The rank written to every row.
         runtime_totals: Runtime API name -> [total duration in ns, calls];
             updated in place.
@@ -324,7 +324,7 @@ def _network_ops(
     """Builds the network-ops table of one rank from its kernels.
 
     Args:
-        columns: The shard as read by ``native.read_kineto_trace``.
+        columns: The shard as read by ``native.read_kineto``.
         kernels: The shard's kernels table, sorted by start time.
         order: The permutation that sorted the shard's GPU rows.
 

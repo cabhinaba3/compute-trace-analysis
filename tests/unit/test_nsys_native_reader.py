@@ -1,4 +1,4 @@
-"""Tests of the C++ Nsight Systems reader (`cta._native.read_nsys_sqlite`).
+"""Tests of the C++ Nsight Systems reader (`cta._native.read_nsys`).
 
 The tables the adapter builds from each export were hashed with the Python
 reader this code replaced, so a mismatch means the adapter no longer produces
@@ -245,7 +245,7 @@ def _fixtures(tmp_path: pathlib.Path) -> dict[str, pathlib.Path]:
         ("generated_legacy_metrics", True),
     ):
         path = tmp_path / f"{name}.sqlite"
-        synth_nsys.write_nsys_sqlite(path, steps=40, legacy_gpu_metrics=legacy)
+        synth_nsys.write_sqlite(path, steps=40, legacy_gpu_metrics=legacy)
         out[name] = path
     return out
 
@@ -326,7 +326,7 @@ def test_tables_match_the_python_reader_they_replaced(
 def test_activities_come_in_table_order_with_launches_resolved(
     tmp_path: pathlib.Path,
 ) -> None:
-    cols = _native.read_nsys_sqlite(str(_fixtures(tmp_path)["labels"]))
+    cols = _native.read_nsys(str(_fixtures(tmp_path)["labels"]))
     names = [cols["names"][c] for c in cols["gpu_name"].tolist()]
     # Kernels (those that end after they start), then copies, then sets.
     assert names[:2] == [
@@ -350,7 +350,7 @@ def test_activities_come_in_table_order_with_launches_resolved(
 
 
 def test_ranges_keep_their_text_and_thread(tmp_path: pathlib.Path) -> None:
-    cols = _native.read_nsys_sqlite(str(_fixtures(tmp_path)["labels"]))
+    cols = _native.read_nsys(str(_fixtures(tmp_path)["labels"]))
     texts = [cols["nvtx_texts"][c] for c in cols["nvtx_text"].tolist()]
     assert "ProfilerStep#4" in texts  # text taken from StringIds
     assert "block" in texts
@@ -412,15 +412,15 @@ def test_gpu_metrics_come_from_both_table_forms(tmp_path: pathlib.Path) -> None:
         "gpu_metrics"
     ]
     assert legacy.height == 6  # two samples of three metrics, as text
-    assert _native.read_nsys_sqlite(str(files["metrics"]))["has_metrics"]
-    assert not _native.read_nsys_sqlite(str(files["generated_legacy_metrics"]))[
+    assert _native.read_nsys(str(files["metrics"]))["has_metrics"]
+    assert not _native.read_nsys(str(files["generated_legacy_metrics"]))[
         "has_metrics"
     ]
 
 
 def test_a_missing_file_is_an_error(tmp_path: pathlib.Path) -> None:
     with pytest.raises(RuntimeError, match="cannot open"):
-        _native.read_nsys_sqlite(str(tmp_path / "none.sqlite"))
+        _native.read_nsys(str(tmp_path / "none.sqlite"))
 
 
 def test_a_file_that_is_not_a_database_is_an_error(
@@ -429,7 +429,7 @@ def test_a_file_that_is_not_a_database_is_an_error(
     path = tmp_path / "junk.sqlite"
     path.write_bytes(b"this is not a database" * 100)
     with pytest.raises(RuntimeError, match="sqlite"):
-        _native.read_nsys_sqlite(str(path))
+        _native.read_nsys(str(path))
 
 
 def test_chains_of_coded_names_equal_chains_of_a_list() -> None:
@@ -463,7 +463,7 @@ def test_chains_of_coded_names_equal_chains_of_a_list() -> None:
 def test_runtime_calls_are_listed_and_add_up_to_the_summary(
     tmp_path: pathlib.Path,
 ) -> None:
-    cols = _native.read_nsys_sqlite(str(_fixtures(tmp_path)["labels"]))
+    cols = _native.read_nsys(str(_fixtures(tmp_path)["labels"]))
     calls = cols["runtime_calls"]
     assert len(calls["name"]) > 0
     names = [calls["names"][code] for code in calls["name"].tolist()]

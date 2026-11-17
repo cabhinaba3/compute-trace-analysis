@@ -28,10 +28,10 @@ def main(work_dir: pathlib.Path | None = None) -> None:
 
         balanced_dir = root_dir / "chakra_ring"
         straggler_dir = root_dir / "chakra_straggler"
-        chakra.write_chakra_et_run(
+        chakra.write_run(
             balanced_dir, world_size=4, compute_us=800, allreduce_bytes=512_000
         )
-        chakra.write_chakra_et_run(
+        chakra.write_run(
             straggler_dir,
             world_size=4,
             compute_us=800,
@@ -40,14 +40,14 @@ def main(work_dir: pathlib.Path | None = None) -> None:
             straggler_factor=1.75,
         )
 
-        goal_text_path = goal.write_goal_allreduce(
+        goal_text_path = goal.write_allreduce(
             root_dir / "ring.goal",
             world_size=4,
             compute_ns=800_000,
             allreduce_bytes=512_000,
             algorithm="ring",
         )
-        goal_bin_path = goal.compile_goal_to_bin(
+        goal_bin_path = goal.compile_to_bin(
             goal_text_path, root_dir / "ring.bin"
         )
 

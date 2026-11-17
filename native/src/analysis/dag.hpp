@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace cta {
+namespace cta::analysis {
 
 // What the solver found. All times are in the units of the weights.
 struct DagResult {
@@ -38,4 +38,4 @@ DagResult solve_dag(const double* weights, const bool* is_comm, const bool* is_c
                     const std::int64_t* size_bytes, std::size_t n, const std::uint32_t* edge_src,
                     const std::uint32_t* edge_dst, std::size_t m);
 
-}  // namespace cta
+}  // namespace cta::analysis

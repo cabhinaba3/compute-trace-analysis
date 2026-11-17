@@ -8,9 +8,9 @@
 #include <unordered_map>
 #include <vector>
 
-#include "common/interner.hpp"
+#include "util/interner.hpp"
 
-namespace cta::kineto_reader {
+namespace cta::readers::kineto {
 
 using std::int32_t;
 using std::int64_t;
@@ -75,4 +75,4 @@ struct ChunkOut {
   int32_t thread_code(const Tag& pid, const Tag& tid);
 };
 
-}  // namespace cta::kineto_reader
+}  // namespace cta::readers::kineto

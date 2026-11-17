@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace cta {
+namespace cta::analysis {
 
 // For ranges sorted by start (longer first on equal starts), returns the index
 // of each range's enclosing range: the latest earlier range that has not ended
@@ -13,4 +13,4 @@ namespace cta {
 std::vector<std::int64_t> nesting_parents(const std::int64_t* starts, const std::int64_t* ends,
                                           std::size_t n);
 
-}  // namespace cta
+}  // namespace cta::analysis

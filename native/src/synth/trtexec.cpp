@@ -1,21 +1,12 @@
-#include "synth/profilers.hpp"
+#include "synth/trtexec.hpp"
 
 #include <algorithm>
 #include <string>
-#include <vector>
 
-#include "common/format.hpp"
-#include "common/json_value.hpp"
-#include "common/sink.hpp"
+#include "util/json_value.hpp"
 
-namespace cta {
+namespace cta::synth {
 namespace {
-
-std::string num(double v) {
-  std::string s;
-  append_double(s, v);
-  return s;
-}
 
 Json layer_profile(const char* name, double time_ms, double avg, double median, double pct) {
   return Json(JsonObject{{"name", name}, {"timeMs", time_ms}, {"averageMs", avg},
@@ -28,54 +19,6 @@ Json layer_info(const char* name, const char* type, const std::string& precision
 }
 
 }  // namespace
-
-void write_ncu_csv(const std::string& path, double gemm_dur_ns, double sm_pct, double dram_pct,
-                   double tensor_pct, double flops, double dram_bytes) {
-  const std::string gemm_row = "\"0\",\"ampere_fp16_s16816gemm\",\"" + num(gemm_dur_ns) + "\",\"" +
-                               num(sm_pct) + "\",\"" + num(dram_pct) + "\",\"" + num(tensor_pct) +
-                               "\",\"62.5\",\"" + num(flops) + "\",\"" + num(dram_bytes) + "\",\"" +
-                               num(dram_pct * 0.5) + "\",\"" + num(sm_pct * 0.4) + "\"";
-  const std::vector<std::string> lines = {
-      "==PROF== Connected to process 12345",
-      "\"ID\",\"Kernel Name\",\"gpu__time_duration.sum\","
-      "\"sm__throughput.avg.pct_of_peak_sustained_elapsed\","
-      "\"gpu__compute_memory_throughput.avg.pct_of_peak_sustained_elapsed\","
-      "\"sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_active\","
-      "\"sm__warps_active.avg.pct_of_peak_sustained_active\","
-      "\"FLOPs\",\"dram__bytes.sum\","
-      "\"smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct\","
-      "\"smsp__warp_issue_stalled_math_pipe_throttle_per_warp_active.pct\"",
-      "\"\",\"\",\"nsecond\",\"%\",\"%\",\"%\",\"%\",\"\",\"byte\",\"%\",\"%\"",
-      gemm_row,
-      "\"1\",\"vectorized_elementwise_relu\",\"100000.0\",\"20.0\",\"88.0\",\"0.0\","
-      "\"55.0\",\"1e8\",\"2e8\",\"48.0\",\"5.0\""};
-  Sink sink(path);
-  for (std::size_t i = 0; i < lines.size(); ++i) {
-    if (i) sink.put('\n');
-    sink.put(lines[i]);
-  }
-  sink.close();
-}
-
-void write_jtop_trace(const std::string& path, int duration_s, int num_cores, double power_mw,
-                      double gpu_util, double gpu_mem_mb, std::optional<double> temp_c) {
-  const std::int64_t start_ns = static_cast<std::int64_t>(1700000000000000000LL);
-  const std::int64_t ns_per_s = 1000000000;
-  JsonArray samples;
-  for (int second = 0; second <= duration_s; ++second) {
-    JsonObject s{{"time", start_ns + static_cast<std::int64_t>(second) * ns_per_s},
-                 {"GPU", gpu_util},
-                 {"gpu_memory_usage", gpu_mem_mb},
-                 {"RAM", 4096.0},
-                 {"SWAP", 128.0},
-                 {"Power TOT", power_mw},
-                 {"VDD_GPU_SOC", power_mw * 0.65}};
-    for (int core = 1; core <= num_cores; ++core) s.emplace_back("CPU" + std::to_string(core), 35.0);
-    if (temp_c) s.emplace_back("Temp gpu", *temp_c);
-    samples.emplace_back(std::move(s));
-  }
-  write_json_file(path, Json(std::move(samples)), 2);
-}
 
 void write_trtexec_timing(const std::string& path, int queries, double h2d_ms, double compute_ms,
                           double d2h_ms, double overlap_ms, double idle_gap_ms) {
@@ -121,4 +64,4 @@ void write_trtexec_layers(const std::string& profile_path, const std::string& en
   write_json_file(engine_path, Json(JsonObject{{"Layers", std::move(layers)}}), 2);
 }
 
-}  // namespace cta
+}  // namespace cta::synth

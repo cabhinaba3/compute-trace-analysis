@@ -4,11 +4,11 @@
 #include <cstdint>
 #include <stdexcept>
 
+#include "analysis/dag.hpp"
+#include "analysis/dag_edges.hpp"
+#include "analysis/intervals.hpp"
 #include "bindings/bindings.hpp"
-#include "bindings/numpy.hpp"
-#include "core/dag.hpp"
-#include "core/dag_edges.hpp"
-#include "core/intervals.hpp"
+#include "bindings/convert.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -19,14 +19,14 @@ template <typename T>
 using Column = nb::ndarray<const T, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 }  // namespace
 
-void bind_core(nb::module_& m) {
+void bind_analysis(nb::module_& m) {
   m.def(
       "nesting_parents",
       [](nb::ndarray<const std::int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> starts,
          nb::ndarray<const std::int64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> ends) {
         if (starts.shape(0) != ends.shape(0))
           throw std::invalid_argument("starts and ends must have the same length");
-        return to_numpy(cta::nesting_parents(starts.data(), ends.data(), starts.shape(0)));
+        return to_numpy(cta::analysis::nesting_parents(starts.data(), ends.data(), starts.shape(0)));
       },
       "starts"_a, "ends"_a,
       "Enclosing range of each range, for ranges sorted by start (-1 for none).");
@@ -44,10 +44,10 @@ void bind_core(nb::module_& m) {
           throw std::invalid_argument("per-vertex arrays must have the same length");
         if (edge_src.shape(0) != edge_dst.shape(0))
           throw std::invalid_argument("edge_src and edge_dst must have the same length");
-        cta::DagResult r;
+        cta::analysis::DagResult r;
         {
           nb::gil_scoped_release release;
-          r = cta::solve_dag(weights.data(), is_comm.data(), is_compute.data(), size_bytes.data(), n,
+          r = cta::analysis::solve_dag(weights.data(), is_comm.data(), is_compute.data(), size_bytes.data(), n,
                              edge_src.data(), edge_dst.data(), edge_src.shape(0));
         }
         nb::dict d;
@@ -63,7 +63,7 @@ void bind_core(nb::module_& m) {
         return d;
       },
       "weights"_a, "is_comm"_a, "is_compute"_a, "size_bytes"_a, "edge_src"_a, "edge_dst"_a,
-      "Critical path and slack of a graph; see core/dag.hpp for what each field means.");
+      "Critical path and slack of a graph; see analysis/dag.hpp for what each field means.");
 
   m.def(
       "build_dag_edges",
@@ -77,12 +77,12 @@ void bind_core(nb::module_& m) {
         const std::size_t m = e_rank.shape(0);
         if (e_src.shape(0) != m || e_dst.shape(0) != m)
           throw std::invalid_argument("per-edge arrays must have the same length");
-        cta::EdgeList edges;
+        cta::analysis::EdgeList edges;
         {
           nb::gil_scoped_release release;
-          edges = cta::build_dag_edges(n, rank.data(), node_id.data(), is_send.data(), is_recv.data(), src_rank.data(),
-                                       dst_rank.data(), tag.data(), m, e_rank.data(), e_src.data(), e_dst.data(),
-                                       threads);
+          edges = cta::analysis::build_dag_edges(n, rank.data(), node_id.data(), is_send.data(), is_recv.data(),
+                                                 src_rank.data(), dst_rank.data(), tag.data(), m, e_rank.data(),
+                                                 e_src.data(), e_dst.data(), threads);
         }
         nb::dict timing;
         timing["index"] = edges.index_seconds;

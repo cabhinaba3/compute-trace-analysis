@@ -34,10 +34,10 @@ def test_all_six_plot_kinds_and_formats(tmp_path: pathlib.Path) -> None:
     base_run_dir = tmp_path / "c0"
     skew_run_dir = tmp_path / "c1"
     fast_run_dir = tmp_path / "c2"
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         base_run_dir, world_size=4, compute_us=800, allreduce_bytes=400_000
     )
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         skew_run_dir,
         world_size=4,
         compute_us=800,
@@ -45,7 +45,7 @@ def test_all_six_plot_kinds_and_formats(tmp_path: pathlib.Path) -> None:
         straggler_rank=2,
         straggler_factor=1.8,
     )
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         fast_run_dir, world_size=4, compute_us=500, allreduce_bytes=200_000
     )
 
@@ -81,13 +81,13 @@ def test_all_six_plot_kinds_and_formats(tmp_path: pathlib.Path) -> None:
 
     # 2. Device and roofline plots (overlap, kernels,
     # roofline).
-    fp16_trace_path = kineto.write_kineto_trace(
+    fp16_trace_path = kineto.write_trace(
         tmp_path / "k0.json.gz",
         attn_us=420.0,
         gemm_us=580.0,
         kernel_variant="fp16",
     )
-    fp8_trace_path = kineto.write_kineto_trace(
+    fp8_trace_path = kineto.write_trace(
         tmp_path / "k1.json.gz",
         attn_us=190.0,
         gemm_us=260.0,
@@ -101,10 +101,10 @@ def test_all_six_plot_kinds_and_formats(tmp_path: pathlib.Path) -> None:
         kineto_report.plot(kind=kind, path=figure_path)
         assert figure_path.exists() and figure_path.stat().st_size > 500
 
-    memory_bound_csv_path = ncu.write_ncu_csv(
+    memory_bound_csv_path = ncu.write_csv(
         tmp_path / "n0.csv", sm_pct=34.0, dram_pct=85.0
     )
-    compute_bound_csv_path = ncu.write_ncu_csv(
+    compute_bound_csv_path = ncu.write_csv(
         tmp_path / "n1.csv",
         gemm_dur_ns=250_000.0,
         sm_pct=82.0,
@@ -129,11 +129,11 @@ def test_multitrial_toml_manifest_stats_and_pandas_latex(
     # 4 trials per group exercise Welch's t-test, the Mann-Whitney U test,
     # Cohen's d and the 95% confidence interval.
     for i, compute_ms in enumerate((3.10, 3.20, 3.15, 3.25)):
-        trtexec.write_trtexec_timing(
+        trtexec.write_timing(
             tmp_path / f"base_{i}.json", queries=25, compute_ms=compute_ms
         )
     for i, compute_ms in enumerate((1.40, 1.45, 1.38, 1.42)):
-        trtexec.write_trtexec_timing(
+        trtexec.write_timing(
             tmp_path / f"cand_{i}.json", queries=25, compute_ms=compute_ms
         )
 
@@ -341,12 +341,8 @@ def test_quickstarts_tall_ncu_legacy_nsys_and_bundle_equivalence(
 
     # 3. A legacy Nsight Systems SQLite export with a GENERIC_EVENTS table
     # instead of GPU_METRICS.
-    legacy_a_path = nsys.write_nsys_sqlite(
-        tmp_path / "leg_a.sqlite", gemm_us=500
-    )
-    legacy_b_path = nsys.write_nsys_sqlite(
-        tmp_path / "leg_b.sqlite", gemm_us=300
-    )
+    legacy_a_path = nsys.write_sqlite(tmp_path / "leg_a.sqlite", gemm_us=500)
+    legacy_b_path = nsys.write_sqlite(tmp_path / "leg_b.sqlite", gemm_us=300)
     for db_path, sm_active_pct in (
         (legacy_a_path, 45.0),
         (legacy_b_path, 78.0),
@@ -367,20 +363,20 @@ def test_quickstarts_tall_ncu_legacy_nsys_and_bundle_equivalence(
     # the schedule_equivalence aspect.
     ring_bundle_dir = tmp_path / "bundle_ring"
     bad_bundle_dir = tmp_path / "bundle_bad"
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         ring_bundle_dir, world_size=4, compute_us=600, allreduce_bytes=400_000
     )
-    goal.write_goal_allreduce(
+    goal.write_allreduce(
         ring_bundle_dir / "sched.goal",
         world_size=4,
         compute_ns=600_000,
         allreduce_bytes=400_000,
         algorithm="ring",
     )
-    chakra.write_chakra_et_run(
+    chakra.write_run(
         bad_bundle_dir, world_size=4, compute_us=600, allreduce_bytes=400_000
     )
-    goal.write_goal_allreduce(
+    goal.write_allreduce(
         bad_bundle_dir / "sched.goal",
         world_size=4,
         compute_ns=900_000,
