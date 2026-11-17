@@ -70,6 +70,29 @@ def split_comma_separated_ints(value: str | None) -> list[int]:
     return [int(item) for item in split_comma_separated(value) or []]
 
 
+def check_export_formats(out_dir: pathlib.Path | None, export: str) -> None:
+    """Exits with an error if ``--export`` names an unknown format.
+
+    Called before the analysis, so a typo does not cost a full run.
+
+    Args:
+        out_dir: The ``--out-dir`` value; nothing is checked without one.
+        export: The ``--export`` value, comma-separated.
+
+    Raises:
+        typer.Exit: A format is unknown (exit code 2).
+    """
+    if out_dir is None:
+        return
+    from cta.export import writers
+
+    try:
+        writers.resolve_formats(split_comma_separated(export) or [])
+    except ValueError as exc:
+        print_error(exc)
+        raise typer.Exit(code=2) from exc
+
+
 def emit_report(
     report: models.Report,
     output_format: str,

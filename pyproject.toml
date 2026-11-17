@@ -156,6 +156,6 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Test modules are found by path, so two directories may hold files of the
-# same name and tests never import the source tree by accident.
+# Test modules are imported by path, so they never shadow or import the
+# source tree by accident. Keep test file names unique: mypy needs that.
 addopts = "-q --import-mode=importlib"

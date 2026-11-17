@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 Writer = Callable[["models.Report", pathlib.Path], dict[str, pathlib.Path]]
 
-# Built-in formats, in the order ``write_report`` writes them.
+# Built-in formats.
 WRITERS: plugins.Registry[Writer] = plugins.Registry(
     "export format",
     (
@@ -51,6 +51,31 @@ def register_writer(
     return decorator
 
 
+def resolve_formats(formats: Iterable[str]) -> list[str]:
+    """Resolves format names and aliases, keeping order and dropping repeats.
+
+    Args:
+        formats: Format names or aliases, case-insensitive.
+
+    Returns:
+        The registered format names, in the order given.
+
+    Raises:
+        ValueError: A format is not registered; the message names the
+            closest one.
+    """
+    resolved = list(dict.fromkeys(WRITERS.resolve(f.lower()) for f in formats))
+    unknown = [name for name in resolved if name not in WRITERS]
+    if unknown:
+        hints = [hint for name in unknown if (hint := WRITERS.suggest(name))]
+        raise ValueError(
+            f"Unknown export format(s): {', '.join(unknown)}."
+            + (f" Did you mean {', '.join(hints)}?" if hints else "")
+            + f" Available: {', '.join(sorted(WRITERS))}"
+        )
+    return resolved
+
+
 def write_report(
     report: models.Report,
     out_dir: pathlib.Path,
@@ -61,7 +86,8 @@ def write_report(
     Args:
         report: The report to write.
         out_dir: Output directory; created if missing.
-        formats: Format names or aliases, case-insensitive.
+        formats: Format names or aliases, case-insensitive, written in the
+            order given.
 
     Returns:
         The written files, keyed by what each writer reports (``"json"``,
@@ -71,22 +97,9 @@ def write_report(
         ValueError: A format is not registered; the message names the
             closest one.
     """
-    requested = {WRITERS.resolve(name.lower()) for name in formats}
-    unknown = sorted(name for name in requested if name not in WRITERS)
-    if unknown:
-        hints = [WRITERS.suggest(name) for name in unknown]
-        raise ValueError(
-            f"Unknown export format(s) {unknown}"
-            + (
-                f" (did you mean {', '.join(h for h in hints if h)}?)"
-                if any(hints)
-                else ""
-            )
-            + f". Available: {', '.join(WRITERS)}"
-        )
+    names = resolve_formats(formats)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, pathlib.Path] = {}
-    for name, writer in WRITERS.items():
-        if name in requested:
-            written.update(writer(report, out_dir))
+    for name in names:
+        written.update(WRITERS[name](report, out_dir))
     return written

@@ -35,6 +35,9 @@ jobs:
       - name: Lint (Ruff)
         run: ruff check src tests examples
 
+      - name: Format (Ruff)
+        run: ruff format --check src tests examples
+
       - name: Typecheck (Mypy)
         run: mypy src tests examples
 

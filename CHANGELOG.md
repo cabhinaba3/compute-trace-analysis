@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Restructured package (breaking)
+- The package lives in `src/cta`, and `cta.core` is gone. The data model is `cta.models`, the registries `cta.plugins`, the SDK entry points `cta.api`, the engine `cta.engine`, the gates `cta.gating`, the shared table schemas `cta.table_schemas`. Discovery, manifests and the cache are in `cta.ingest`; alignment, intervals, DAGs, statistics, step slicing and network arithmetic in `cta.analysis`. `cta.exporters` is `cta.export`, `cta.profile` is `cta.profiling`, and the CLI commands are in `cta.cli.commands`, one module each. Top-level names such as `cta.compare` stay where they were.
+- Renamed classes: `CompareConfig` is `AnalysisConfig`, `ComparisonReport` is `Report`, `RegressionViolation` is `GateViolation`, `ComparisonAspect` is `cta.plugins.Aspect`.
+- Renamed aspects: `latency_throughput` is `latency`, `kernel_diff` is `kernels`, `timeline_overlap` is `overlap`, `roofline_diff` is `roofline`, `dag_critical_path` is `critical_path`, `comm_collectives` is `collectives`, `system_energy` is `energy`, `hta_kineto` is `hta`, `network_api` is `network`.
+- Renamed formats: `chakra_et` is `chakra`, `chakra_host_et` is `chakra_host`. Cached Chakra ingests are rebuilt.
+- The `cta.synth` functions no longer repeat their module's format: `kineto.write_trace`, `kineto.write_large_trace`, `nsys.write_sqlite`, `ncu.write_csv`, `jtop.write_trace`, `trtexec.write_timing` and `write_layers`, `goal.write_allreduce`, `write_allreduce_bin` and `compile_to_bin`, `chakra.write_run` and `write_host_trace`, `training.write_goal`, `write_goal_bin` and `write_chakra`. The Python writer for the Chakra schema moved to `cta.synth.chakra_proto`.
+- Adapters, aspects, plot kinds and export formats are all registries that import their built-in modules and the `cta.plugins` entry points on first use, so nothing has to call a loader first. Plot kinds and export formats from plugins now load too, and `cta.register_plot` and `cta.register_writer` join `register_adapter` and `register_aspect`.
+- `Report.export` and `--export` reject an unknown format and name the closest one; they used to skip it. `--export pdf|svg|png` draws the plot kinds registered with `exported=True`.
+- Every missing optional package names the extra to install as `compute-trace-analysis[<extra>]`. Several messages said `cta[viz]` or `cta[jax]`, which pip cannot install.
+- `native/` mirrors the Python layout (`util`, `analysis`, `readers/<format>/reader`, `synth`), with namespaces to match. Each reader's columns are listed once and converted to NumPy generically. The native readers are `read_kineto`, `read_chakra`, `read_goal` and `read_nsys`, and `_native.pyi` types every function.
+- The tests are laid out like the package, and mypy reports missing first-party modules.
+
 ### Network API analysis (`network_api`)
 - New `network_ops` table from the `kineto` and `nsys` adapters, one row per communication call: API (`nccl`, `mpi`, `ucx`, `p2p`), logical operation, algorithm and protocol, dtype, process group, group size, message size, launch/start/end times and a `posted` flag. Both adapter versions went up, so cached ingests are rebuilt.
 - NCCL: the Kineto reader takes sizes, dtype and group from the args PyTorch puts on NCCL kernels. nsys has no per-call sizes for NCCL, so those rows have timing and algorithm but a size of 0. Kernel names from NCCL 2.32 (`ncclDevKernel_AllReduce_f32_RING`) parse too.

@@ -135,6 +135,7 @@ def compare_command(
     from cta import gating
     from cta.ingest import manifest as ingest_manifest
 
+    output.check_export_formats(out_dir, export)
     try:
         gates = gating.parse_gate_spec(gate)
     except ValueError as exc:

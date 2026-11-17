@@ -98,6 +98,7 @@ def analyze_command(
     """Analyses one trace, a glob, or a directory holding a run bundle."""
     from cta import api
 
+    output.check_export_formats(out_dir, export)
     try:
         report = api.analyze(
             trace,

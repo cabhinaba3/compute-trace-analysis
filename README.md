@@ -30,7 +30,7 @@ cta synth demo_traces                                  # write small synthetic t
 cta inspect demo_traces/gpu_bundle_fp16                # show what CTA found in a trace or directory
 cta analyze demo_traces/gpu_bundle_fp16 --warmup-steps 2
 cta compare baseline.json.gz candidate.json.gz --labels Baseline,Candidate --warmup-steps 1
-cta compare a b --aspects network                  # pick aspects; `cta list` shows them
+cta compare a b --aspects network,kernels             # pick aspects; `cta list` shows them
 cta compare a b --gate "mean_step_ms:+5%"              # exit code 2 if a metric regresses by more than 5%
 cta profile nsys --analyze -- python train.py          # run a vendor profiler with the flags CTA needs
 ```
@@ -48,7 +48,40 @@ df = report.to_polars("kernels", table="by_family")
 report.plot(kind="tornado", path="kernel_tornado.pdf")
 ```
 
-`cta.analyze(path)` takes a single trace. Plugins add formats and aspects with the decorators in `cta/core/registry.py`, or through the `cta.plugins` entry-point group.
+`cta.analyze(path)` takes a single trace.
+
+## Extending
+
+Trace formats, aspects, plot kinds and export formats are plugins, and the built-in ones register the same way as yours. Decorate a class or function with `cta.register_adapter`, `cta.register_aspect`, `cta.register_plot` or `cta.register_writer`, and make the module importable through the `cta.plugins` entry-point group:
+
+```toml
+[project.entry-points."cta.plugins"]
+my_format = "my_package.cta_format"
+```
+
+CTA imports the plugins the first time it looks up a format, aspect, plot kind or export format. `cta/plugins.py` documents the adapter and aspect interfaces, and `cta/table_schemas.py` the shapes of the tables that several adapters share.
+
+## Layout
+
+```
+src/cta/
+  api.py, engine.py       analyze/compare/inspect_trace, and the engine that runs the aspects
+  models.py               trace artifacts, run bundles, trial groups, config, report
+  plugins.py              the adapter and aspect registries and interfaces
+  table_schemas.py        the tables several adapters write and many readers use
+  gating.py, diagnosis.py regression gates and bottleneck regimes
+  ingest/                 trace discovery, manifests and the Parquet cache
+  adapters/<format>/      one reader per trace format
+  analysis/               kernel-name alignment, intervals, step slicing, DAGs, statistics
+  aspects/                device, distributed, edge, network and HTA comparisons
+  export/                 Markdown, LaTeX, JSON, CSV and figures; the terminal view
+  viz/                    the plot kind registry, data context, kinds and renderers
+  profiling/              one runner per vendor profiler (cta profile)
+  synth/                  synthetic trace writers (cta synth)
+  cli/commands/           one module per command
+native/                   the C++ readers, writers and graph solver (see native/README.md)
+tests/unit/               laid out like src/cta; tests/integration runs the CLI end to end
+```
 
 ## Contributing
 
@@ -57,8 +90,9 @@ Issues and pull requests are welcome at <https://github.com/cabhinaba3/compute-t
 Before opening a pull request, run the same checks as CI:
 
 ```bash
-ruff check cta tests examples
-mypy cta tests examples
+ruff check src tests examples
+ruff format --check src tests examples
+mypy src tests examples
 pytest
 ```
 

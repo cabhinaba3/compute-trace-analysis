@@ -1,4 +1,4 @@
-"""CTA v1.0: Cross-platform multi-trace and multi-aspect comparison framework.
+"""CTA: multi-trace, multi-aspect performance comparison for AI/HPC runs.
 
 Public names are resolved lazily (PEP 562) so ``import cta`` and
 ``cta --version`` do not pay for polars, scipy, matplotlib or the profiler
@@ -16,56 +16,64 @@ __version__ = "1.0.0"
 
 # Public name -> (module, attribute in that module).
 _LAZY: dict[str, tuple[str, str]] = {
-    "EquivalenceVerdict": (
-        "cta.aspects.distributed.equivalence",
-        "EquivalenceVerdict",
-    ),
-    "verify_chakra_goal_equivalence": (
-        "cta.aspects.distributed.equivalence",
-        "verify_chakra_goal_equivalence",
-    ),
-    "detect_format": ("cta.ingest.discovery", "detect_format"),
-    "resolve_bundle": ("cta.ingest.discovery", "resolve_bundle"),
-    "resolve_trial_group": ("cta.ingest.discovery", "resolve_trial_group"),
+    # Entry points.
     "analyze": ("cta.api", "analyze"),
     "compare": ("cta.api", "compare"),
     "inspect_trace": ("cta.api", "inspect_trace"),
     "run_comparison": ("cta.engine", "run_comparison"),
+    "verify_chakra_goal_equivalence": (
+        "cta.aspects.distributed.equivalence",
+        "verify_chakra_goal_equivalence",
+    ),
+    # Inputs.
+    "detect_format": ("cta.ingest.discovery", "detect_format"),
+    "resolve_bundle": ("cta.ingest.discovery", "resolve_bundle"),
+    "resolve_trial_group": ("cta.ingest.discovery", "resolve_trial_group"),
     "load_manifest": ("cta.ingest.manifest", "load_manifest"),
+    # Data model.
+    "AnalysisConfig": ("cta.models", "AnalysisConfig"),
     "AspectResult": ("cta.models", "AspectResult"),
     "BottleneckShift": ("cta.models", "BottleneckShift"),
-    "AnalysisConfig": ("cta.models", "AnalysisConfig"),
-    "Report": ("cta.models", "Report"),
+    "EquivalenceVerdict": (
+        "cta.aspects.distributed.equivalence",
+        "EquivalenceVerdict",
+    ),
     "GateViolation": ("cta.models", "GateViolation"),
+    "Report": ("cta.models", "Report"),
     "RunBundle": ("cta.models", "RunBundle"),
     "TraceArtifact": ("cta.models", "TraceArtifact"),
     "TrialGroup": ("cta.models", "TrialGroup"),
+    # Extension points (see cta.plugins).
     "register_adapter": ("cta.plugins", "register_adapter"),
     "register_aspect": ("cta.plugins", "register_aspect"),
+    "register_plot": ("cta.viz.registry", "register_plot"),
+    "register_writer": ("cta.export.writers", "register_writer"),
 }
 
 __all__ = [
     "__version__",
+    "analyze",
+    "compare",
+    "inspect_trace",
+    "run_comparison",
+    "verify_chakra_goal_equivalence",
+    "detect_format",
+    "resolve_bundle",
+    "resolve_trial_group",
+    "load_manifest",
+    "AnalysisConfig",
     "AspectResult",
     "BottleneckShift",
-    "AnalysisConfig",
-    "Report",
     "EquivalenceVerdict",
     "GateViolation",
+    "Report",
     "RunBundle",
     "TraceArtifact",
     "TrialGroup",
-    "analyze",
-    "compare",
-    "detect_format",
-    "verify_chakra_goal_equivalence",
-    "inspect_trace",
-    "load_manifest",
     "register_adapter",
     "register_aspect",
-    "resolve_bundle",
-    "resolve_trial_group",
-    "run_comparison",
+    "register_plot",
+    "register_writer",
 ]
 
 if TYPE_CHECKING:
@@ -77,6 +85,7 @@ if TYPE_CHECKING:
         verify_chakra_goal_equivalence,
     )
     from cta.engine import run_comparison
+    from cta.export.writers import register_writer
     from cta.ingest.discovery import detect_format
     from cta.ingest.discovery import resolve_bundle
     from cta.ingest.discovery import resolve_trial_group
@@ -91,6 +100,7 @@ if TYPE_CHECKING:
     from cta.models import TrialGroup
     from cta.plugins import register_adapter
     from cta.plugins import register_aspect
+    from cta.viz.registry import register_plot
 
 
 def __getattr__(name: str) -> Any:
