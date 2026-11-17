@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 project(cta_native LANGUAGES CXX)
 
-# Built by the root package's hatch build hook (hatch_build.py) into cta/, so
+# Built by the root package's hatch build hook (hatch_build.py) into src/cta/, so
 # `pip install .` produces one wheel with the extension as `cta._native`.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

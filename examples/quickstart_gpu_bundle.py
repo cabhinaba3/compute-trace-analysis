@@ -12,7 +12,7 @@ import tempfile
 import cta
 from cta.synth import jtop
 from cta.synth import nsys
-from cta.synth import tensorrt
+from cta.synth import trtexec
 
 
 def _populate_bundle(
@@ -40,10 +40,10 @@ def _populate_bundle(
         gemm_us=int(compute_ms * 300),
         comm_us=240,
     )
-    tensorrt.write_trtexec_timing(
+    trtexec.write_trtexec_timing(
         bundle_dir / "times.json", queries=40, compute_ms=compute_ms
     )
-    tensorrt.write_trtexec_layers(
+    trtexec.write_trtexec_layers(
         bundle_dir / "profile.json",
         bundle_dir / "engine.json",
         fused=is_fused,

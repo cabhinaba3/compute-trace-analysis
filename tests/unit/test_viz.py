@@ -17,10 +17,10 @@ import pytest
 from typer import testing
 
 import cta
+from cta import models
 from cta import viz
 from cta.cli import app as cli_app
-from cta.core import models
-from cta.viz import data
+from cta.viz import context
 from cta.viz import spec as viz_spec
 
 REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real"
@@ -167,7 +167,7 @@ def test_raw_tables_are_per_rank_relative_and_honour_slicing(
         warmup_steps=2,
         cache_dir=tmp_path / "c",
     )
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     steps = ctx.frame("steps")
     kernels = ctx.frame("kernels")
     # The warm-up steps are gone and time restarts at 0.
@@ -191,13 +191,13 @@ def test_raw_tables_are_per_rank_relative_and_honour_slicing(
 
 
 def test_sql_over_named_tables(pair: models.ComparisonReport) -> None:
-    kernel_counts = data.DataContext(pair).sql(
+    kernel_counts = context.DataContext(pair).sql(
         "SELECT label, count(*) AS n FROM kernels GROUP BY label ORDER BY label"
     )
     assert kernel_counts["label"].to_list() == ["base", "cand"]
     assert kernel_counts["n"].to_list() == [12, 12]
     with pytest.raises(ValueError, match="SQL error"):
-        data.DataContext(pair).sql("SELECT nope FROM kernels")
+        context.DataContext(pair).sql("SELECT nope FROM kernels")
 
 
 @pytest.mark.parametrize(
@@ -228,7 +228,7 @@ def test_sql_over_named_tables(pair: models.ComparisonReport) -> None:
 def test_kinds_build_and_render_both_backends(
     pair: models.ComparisonReport, kind: str, tmp_path: pathlib.Path
 ) -> None:
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
     png_path = tmp_path / f"{kind}.png"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -248,7 +248,7 @@ def test_step_trace_flags_a_drifting_run(tmp_path: pathlib.Path) -> None:
         label="drift",
         cache_dir=tmp_path / "c",
     )
-    chart, _ = viz.build_chart(data.DataContext(report), "step_trace")
+    chart, _ = viz.build_chart(context.DataContext(report), "step_trace")
     assert "drifts" in chart.notes
     assert any(
         "trend" in (trace.name or "") for trace in chart.panels[0].traces
@@ -270,11 +270,11 @@ def test_inapplicable_plots_raise_not_applicable_which_is_a_value_error(
         with pytest.raises(ValueError):
             pair.plot(kind=kind)
     with pytest.raises(viz_spec.NotApplicableError):
-        viz.build_chart(data.DataContext(pair), "power_trace")
+        viz.build_chart(context.DataContext(pair), "power_trace")
 
 
 def test_waterfall_adds_up(pair: models.ComparisonReport) -> None:
-    chart, _ = viz.build_chart(data.DataContext(pair), "waterfall")
+    chart, _ = viz.build_chart(context.DataContext(pair), "waterfall")
     totals = chart.panels[0].traces[0]
     total_values = totals.y or [0]
     assert len(totals.x or []) >= 3
@@ -292,7 +292,7 @@ def test_gates_plot_uses_configured_thresholds(tmp_path: pathlib.Path) -> None:
         cache_dir=tmp_path / "c",
         labels=["a", "b"],
     )
-    chart, _ = viz.build_chart(data.DataContext(report), "gates")
+    chart, _ = viz.build_chart(context.DataContext(report), "gates")
     bar_names = [
         trace.name for trace in chart.panels[0].traces if trace.mark == "barh"
     ]
@@ -336,7 +336,7 @@ def test_history_control_chart_flags_the_regression(
         tmp_path, [10.0, 10.1, 9.9, 10.0, 10.2, 9.8, 10.1, 10.0, 15.0]
     )
     chart, _ = viz.build_chart(
-        data.DataContext(None, history=pattern), "history"
+        context.DataContext(None, history=pattern), "history"
     )
     flagged = [
         trace for trace in chart.panels[0].traces if trace.name == "regression"
@@ -348,7 +348,7 @@ def test_history_control_chart_flags_the_regression(
     empty_history = str(tmp_path / "nothing" / "*.json")
     with pytest.raises(viz_spec.NotApplicableError, match="need at least 3"):
         viz.build_chart(
-            data.DataContext(None, history=empty_history), "history"
+            context.DataContext(None, history=empty_history), "history"
         )
 
 
@@ -363,7 +363,7 @@ def test_report_json_carries_created_at_for_history(
 def test_custom_plot_from_sql_and_report_table(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
     chart, _ = viz.build_chart(
         ctx,
         "custom",
@@ -528,7 +528,7 @@ def test_cli_list_kinds_spec_html_and_errors(
 
 
 def test_manifest_plots_block(tmp_path: pathlib.Path) -> None:
-    from cta.core import manifest
+    from cta.ingest import manifest
 
     trace_path = _kineto_trace(tmp_path / "a.json")
     manifest_path = tmp_path / "m.yaml"
@@ -557,9 +557,9 @@ def test_real_ddp_rank_plots(tmp_path: pathlib.Path) -> None:
         REAL_DATA_DIR / "e", label="ddp", cache_dir=tmp_path / "c"
     )
     for kind in ("rank_heatmap", "straggler", "timeline", "step_trace"):
-        chart, _ = viz.build_chart(data.DataContext(report), kind)
+        chart, _ = viz.build_chart(context.DataContext(report), kind)
         assert chart.panels
-    kernels = data.DataContext(report).frame("kernels")
+    kernels = context.DataContext(report).frame("kernels")
     earliest_by_rank = kernels.group_by("rank").agg(pl.col("t_ms").min())
     assert earliest_by_rank.filter(pl.col("t_ms") < 0).is_empty()
 
@@ -567,10 +567,10 @@ def test_real_ddp_rank_plots(tmp_path: pathlib.Path) -> None:
 def test_steps_only_bundle_gets_the_same_warmup_slicing_as_the_aspects(
     tmp_path: pathlib.Path,
 ) -> None:
-    from cta.synth import tensorrt
+    from cta.synth import trtexec
 
     timing_path = tmp_path / "timing.json"
-    tensorrt.write_trtexec_timing(timing_path, queries=12)
+    trtexec.write_trtexec_timing(timing_path, queries=12)
     report = cta.analyze(
         timing_path, label="trt", warmup_steps=2, cache_dir=tmp_path / "c"
     )
@@ -578,7 +578,7 @@ def test_steps_only_bundle_gets_the_same_warmup_slicing_as_the_aspects(
     rows_by_metric = {
         row["metric"]: row for row in latency.iter_rows(named=True)
     }
-    steps = data.DataContext(report).frame("steps")
+    steps = context.DataContext(report).frame("steps")
     assert steps.height == int(rows_by_metric["total_steps"]["trt"])
 
 
@@ -591,7 +591,7 @@ def test_multi_trial_groups_keep_trials_apart(tmp_path: pathlib.Path) -> None:
         label="g",
         cache_dir=tmp_path / "c",
     )
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     chart, _ = viz.build_chart(ctx, "step_trace")
     step_lines = [
         trace
@@ -626,7 +626,7 @@ def test_ncu_plots_do_not_pool_groups(tmp_path: pathlib.Path) -> None:
     report = cta.compare(
         base_path, cand_path, labels=["base", "cand"], cache_dir=tmp_path / "c"
     )
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     kernel_counts = ctx.frame("ncu_kernels").group_by("label").len()
     kernels_per_label = kernel_counts.sort("label")["len"].to_list()
     for kind in ("ncu_util", "stalls", "occupancy"):
@@ -749,7 +749,7 @@ def test_device_and_rank_filters_reach_metrics_and_plots(
         8 * 0.3
     )
     # Plots over the raw tables see the same slice.
-    device1_kernels = data.DataContext(device1_report).frame("kernels")
+    device1_kernels = context.DataContext(device1_report).frame("kernels")
     assert set(device1_kernels["device"].to_list()) == {1}
     # There is no rank 3: the slice is empty, which must not crash.
     missing_rank_report = cta.analyze(
@@ -878,7 +878,7 @@ def test_trace_analysis_dual_backend_svg_and_png(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
     """All five kinds render to PNG, SVG and Plotly HTML."""
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
     kinds = (
         "metric_trace",
         "metric_dist",
@@ -911,7 +911,7 @@ def test_trace_analysis_options_and_modes(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
     """Options and modes of the new plots change what is drawn."""
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
 
     # metric_dist across all 4 modes
     for mode in ("hist", "ecdf", "box", "percentile"):
@@ -988,7 +988,7 @@ def test_trace_analysis_real_ddp_data(tmp_path: pathlib.Path) -> None:
     report = cta.analyze(
         REAL_DATA_DIR / "e", label="ddp", cache_dir=tmp_path / "c"
     )
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     kinds = (
         "metric_trace",
         "metric_dist",
@@ -1008,7 +1008,7 @@ def test_trace_analysis_two_gpu_trace(tmp_path: pathlib.Path) -> None:
     """The execution heatmap covers both devices of a two-GPU trace."""
     trace_path = _two_gpu_trace(tmp_path / "two_gpu.json")
     report = cta.analyze(trace_path, label="two_gpu", cache_dir=tmp_path / "c")
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
 
     chart, opts = viz.build_chart(
         ctx, "execution_heatmap", {"y": "device", "x": "step"}
@@ -1024,7 +1024,7 @@ def test_trace_analysis_input_validation_and_errors(
     pair: models.ComparisonReport,
 ) -> None:
     """Bad options and missing columns raise clear errors."""
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
 
     # Invalid option choice
     with pytest.raises(ValueError, match="is not one of"):
@@ -1045,7 +1045,7 @@ def test_trace_analysis_input_validation_and_errors(
 
 def _network_context(
     pair: models.ComparisonReport,
-) -> data.DataContext:
+) -> context.DataContext:
     """Returns a context whose network_ops has two groups on two ranks.
 
     "base" runs NCCL allreduce at 2 MB and 32 MB, "cand" runs MPI allreduce
@@ -1082,7 +1082,7 @@ def _network_context(
                         "trial": 0,
                     }
                 )
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
     ctx._raw_tables = {"network_ops": pl.DataFrame(rows)}
     ctx._is_built = True
     return ctx
@@ -1152,7 +1152,7 @@ def test_network_kinds_can_split_by_api_and_filter(
 
 
 def test_network_ops_is_a_plot_source() -> None:
-    assert "network_ops" in data.SOURCES
+    assert "network_ops" in context.SOURCES
 
 
 def test_network_matrix_sums_sends_by_rank_pair(
@@ -1208,7 +1208,7 @@ def test_queue_depth_dual_backend_rendering(
     pair: models.ComparisonReport, tmp_path: pathlib.Path
 ) -> None:
     """queue_depth renders on both backends."""
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
     chart, opts = viz.build_chart(ctx, "queue_depth", {"by": "category"})
     assert chart.panels
     assert all(t.mark == "step" for p in chart.panels for t in p.traces)
@@ -1284,9 +1284,9 @@ def test_live_server_kind_switching_api(
     assert isinstance(res_qd["suitability"], list)
 
 
-def _kernel_context(rows: list[dict[str, Any]]) -> data.DataContext:
+def _kernel_context(rows: list[dict[str, Any]]) -> context.DataContext:
     """Returns a context whose kernels table is ``rows``."""
-    ctx = data.DataContext(None)
+    ctx = context.DataContext(None)
     ctx._raw_tables = {"kernels": pl.DataFrame(rows)}
     ctx._is_built = True
     return ctx
@@ -1415,7 +1415,7 @@ def test_extended_kinds_on_a_real_report_draw_or_decline(
     pair: models.ComparisonReport, tmp_path: pathlib.Path, kind: str
 ) -> None:
     """On cached tables each kind either draws or says why it cannot."""
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
     try:
         chart, options = viz.build_chart(ctx, kind)
     except viz_spec.NotApplicableError:
@@ -1428,7 +1428,7 @@ def test_extended_kinds_on_a_real_report_draw_or_decline(
 def test_runtime_calls_reach_the_plots_through_the_cache(
     pair: models.ComparisonReport,
 ) -> None:
-    ctx = data.DataContext(pair)
+    ctx = context.DataContext(pair)
     assert "runtime_calls" in ctx.available()
     calls = ctx.frame("runtime_calls")
     assert {"label", "t_ms", "end_ms", "idx", "name", "thread"} <= set(

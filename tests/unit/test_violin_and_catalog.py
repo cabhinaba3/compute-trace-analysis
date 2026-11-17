@@ -10,15 +10,15 @@ import polars as pl
 import pytest
 
 import cta
+from cta import models
 from cta import viz
-from cta.core import models
-from cta.viz import data
+from cta.viz import context
 from cta.viz import ir
 from cta.viz import plots
-from cta.viz import render_mpl
-from cta.viz import render_plotly
 from cta.viz import spec as viz_spec
 from cta.viz import suitability
+from cta.viz.backends import matplotlib as mpl_backend
+from cta.viz.backends import plotly as plotly_backend
 
 
 def _trace(mark: str, **fields: Any) -> ir.Trace:
@@ -138,7 +138,7 @@ def test_matplotlib_violin_rendering_formats(tmp_path: pathlib.Path) -> None:
         ]
     )
     chart = ir.Chart(title="Violin Test", panels=[panel])
-    fig = render_mpl.render(chart)
+    fig = mpl_backend.render(chart)
 
     # Test PDF
     pdf_path = tmp_path / "violin.pdf"
@@ -166,7 +166,7 @@ def test_plotly_violin_rendering(tmp_path: pathlib.Path) -> None:
         ]
     )
     chart = ir.Chart(title="Violin Test", panels=[panel])
-    plotly_fig = render_plotly.render(chart)
+    plotly_fig = plotly_backend.render(chart)
     html_path = tmp_path / "violin.html"
     plots.write_html(plotly_fig, html_path)
     assert html_path.stat().st_size > 1000
@@ -176,7 +176,7 @@ def test_plotly_violin_rendering(tmp_path: pathlib.Path) -> None:
 
 def test_custom_mark_violin(tmp_path: pathlib.Path) -> None:
     report = _report_fixture(tmp_path)
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     chart, _ = viz.build_chart(
         ctx,
         "custom",
@@ -229,12 +229,12 @@ def test_violin_with_numpy_array(tmp_path: pathlib.Path) -> None:
 
     # Check suitability without raising ValueError
     report = _report_fixture(tmp_path)
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     msgs = suitability.check_suitability(ctx, "violin", {}, chart=chart)
     assert any("Sample size (N=3) is too small" in m for m in msgs)
 
     # Render in Matplotlib (.pdf, .png, .svg)
-    fig = render_mpl.render(chart)
+    fig = mpl_backend.render(chart)
     pdf_path = tmp_path / "np_violin.pdf"
     fig.savefig(pdf_path, bbox_inches="tight")
     assert pdf_path.stat().st_size > 1000
@@ -248,7 +248,7 @@ def test_violin_with_numpy_array(tmp_path: pathlib.Path) -> None:
     assert svg_path.stat().st_size > 500
 
     # Render in Plotly (.html)
-    plotly_fig = render_plotly.render(chart)
+    plotly_fig = plotly_backend.render(chart)
     html_path = tmp_path / "np_violin.html"
     plots.write_html(plotly_fig, html_path)
     assert html_path.stat().st_size > 1000
@@ -263,18 +263,18 @@ def test_violin_with_polars_series(tmp_path: pathlib.Path) -> None:
 
     # Check suitability without raising TypeError
     report = _report_fixture(tmp_path)
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     msgs = suitability.check_suitability(ctx, "violin", {}, chart=chart)
     assert any("Sample size (N=3) is too small" in m for m in msgs)
 
     # Render in Matplotlib (.pdf, .png, .svg)
-    fig = render_mpl.render(chart)
+    fig = mpl_backend.render(chart)
     png_path = tmp_path / "pl_violin.png"
     fig.savefig(png_path, bbox_inches="tight")
     assert png_path.stat().st_size > 1000
 
     # Render in Plotly (.html)
-    plotly_fig = render_plotly.render(chart)
+    plotly_fig = plotly_backend.render(chart)
     html_path = tmp_path / "pl_violin.html"
     plots.write_html(plotly_fig, html_path)
     assert html_path.stat().st_size > 1000
@@ -285,7 +285,7 @@ def test_violin_zero_array_no_silent_data_loss(tmp_path: pathlib.Path) -> None:
     panel = ir.Panel(traces=[trace])
     chart = ir.Chart(title="Violin Zero Array", panels=[panel])
     report = _report_fixture(tmp_path)
-    ctx = data.DataContext(report)
+    ctx = context.DataContext(report)
     msgs = suitability.check_suitability(ctx, "violin", {}, chart=chart)
     # Correctly evaluated as sample size 1 (not 0)
     assert any("Sample size (N=1) is too small" in m for m in msgs)
@@ -296,7 +296,7 @@ def test_violin_none_filtering_render_mpl(tmp_path: pathlib.Path) -> None:
     panel = ir.Panel(traces=[trace])
     chart = ir.Chart(title="Violin None Filtering", panels=[panel])
     # Matplotlib rendering should filter cleanly without TypeError
-    fig = render_mpl.render(chart)
+    fig = mpl_backend.render(chart)
     png_path = tmp_path / "none_filter.png"
     fig.savefig(png_path, bbox_inches="tight")
     assert png_path.stat().st_size > 1000

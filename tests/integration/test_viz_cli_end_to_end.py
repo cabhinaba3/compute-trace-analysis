@@ -9,17 +9,18 @@ less common input formats, and single-trace analysis and plots.
 from __future__ import annotations
 
 import pathlib
+import runpy
 
 import pytest
 from typer import testing
 
 import cta
 from cta.cli import app as cli_app
-from cta.core import manifest
+from cta.ingest import manifest
 from cta.synth import chakra
 from cta.synth import kineto
 from cta.synth import ncu
-from cta.synth import tensorrt
+from cta.synth import trtexec
 
 cli_runner = testing.CliRunner()
 
@@ -128,11 +129,11 @@ def test_multitrial_toml_manifest_stats_and_pandas_latex(
     # 4 trials per group exercise Welch's t-test, the Mann-Whitney U test,
     # Cohen's d and the 95% confidence interval.
     for i, compute_ms in enumerate((3.10, 3.20, 3.15, 3.25)):
-        tensorrt.write_trtexec_timing(
+        trtexec.write_trtexec_timing(
             tmp_path / f"base_{i}.json", queries=25, compute_ms=compute_ms
         )
     for i, compute_ms in enumerate((1.40, 1.45, 1.38, 1.42)):
-        tensorrt.write_trtexec_timing(
+        trtexec.write_trtexec_timing(
             tmp_path / f"cand_{i}.json", queries=25, compute_ms=compute_ms
         )
 
@@ -305,14 +306,16 @@ def test_quickstarts_tall_ncu_legacy_nsys_and_bundle_equivalence(
 
     from cta.synth import goal
     from cta.synth import nsys
-    from examples import quickstart_chakra_goal
-    from examples import quickstart_gpu_bundle
 
     cache_dir = tmp_path / "cache"
 
     # 1. Run both quickstart scripts end to end.
-    quickstart_chakra_goal.main(tmp_path / "qs_cg")
-    quickstart_gpu_bundle.main(tmp_path / "qs_gpu")
+    examples_dir = pathlib.Path(__file__).resolve().parents[2] / "examples"
+    for script, work_dir in (
+        ("quickstart_chakra_goal.py", "qs_cg"),
+        ("quickstart_gpu_bundle.py", "qs_gpu"),
+    ):
+        runpy.run_path(str(examples_dir / script))["main"](tmp_path / work_dir)
     assert (tmp_path / "qs_cg" / "figures" / "breakdown.pdf").exists()
     assert (tmp_path / "qs_gpu" / "artifacts" / "tornado.pdf").exists()
 

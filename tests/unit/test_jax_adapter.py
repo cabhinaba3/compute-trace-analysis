@@ -16,10 +16,10 @@ import polars as pl
 import pytest
 
 import cta
+from cta import models
 from cta.adapters.jax import reader as jax_reader
 from cta.adapters.kineto import reader as kineto_reader
-from cta.core import bundle as core_bundle
-from cta.core import models
+from cta.ingest import discovery
 
 REAL_JAX_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real" / "f"
 
@@ -377,7 +377,7 @@ def test_one_file_per_host_is_claimed_and_kineto_leaves_jax_alone(
         leading_fields='"displayTimeUnit": "ns", ',
     )
     (profile_dir / "host.xplane.pb").write_bytes(b"\x00")
-    bundle = core_bundle.resolve_bundle(tmp_path / "logdir")
+    bundle = discovery.resolve_bundle(tmp_path / "logdir")
     assert list(bundle.artifacts) == ["jax"]
     sources = jax_reader.select_sources(bundle.artifacts["jax"].paths)
     assert [source.name for source in sources] == ["host.trace.json.gz"]
@@ -394,15 +394,13 @@ def test_perfetto_then_xplane_fallbacks(tmp_path: pathlib.Path) -> None:
         _trace_events(has_step_annotations=True),
     )
     (perfetto_dir / "h.xplane.pb").write_bytes(b"\x00")
-    jax_paths = core_bundle.resolve_bundle(perfetto_dir).artifacts["jax"].paths
+    jax_paths = discovery.resolve_bundle(perfetto_dir).artifacts["jax"].paths
     sources = jax_reader.select_sources(jax_paths)
     assert [source.name for source in sources] == ["perfetto_trace.json.gz"]
     xplane_only_dir = tmp_path / "b"
     xplane_only_dir.mkdir()
     (xplane_only_dir / "h.xplane.pb").write_bytes(b"\x00")
-    jax_paths = (
-        core_bundle.resolve_bundle(xplane_only_dir).artifacts["jax"].paths
-    )
+    jax_paths = discovery.resolve_bundle(xplane_only_dir).artifacts["jax"].paths
     sources = jax_reader.select_sources(jax_paths)
     assert [source.name for source in sources] == ["h.xplane.pb"]
 
@@ -450,15 +448,15 @@ def test_analyze_end_to_end_and_scope_depth(tmp_path: pathlib.Path) -> None:
 def test_real_gpu_traces_two_h200(tmp_path: pathlib.Path) -> None:
     import glob
 
-    from cta.core import registry
+    from cta import plugins
 
     def ingest_profile_dir(source_dir: pathlib.Path) -> dict[str, pl.DataFrame]:
         """Ingests the JAX profile under a directory through the registry."""
-        bundle = core_bundle.resolve_bundle(source_dir)
+        bundle = discovery.resolve_bundle(source_dir)
         out_dir = tmp_path / source_dir.name
         out_dir.mkdir()
         artifact = bundle.artifacts["jax"]
-        return _read_tables(registry.ADAPTERS["jax"].ingest(artifact, out_dir))
+        return _read_tables(plugins.ADAPTERS["jax"].ingest(artifact, out_dir))
 
     annotated = ingest_profile_dir(REAL_JAX_DIR / "annotated")
     kernels, steps = annotated["kernels"], annotated["steps"]

@@ -22,7 +22,7 @@ from typer import testing
 
 import cta
 from cta.cli import app as cli_app
-from cta.profile import runners
+from cta.profiling import runners
 
 cli_runner = testing.CliRunner()
 
@@ -117,7 +117,7 @@ def test_command_construction() -> None:
     jax_argv = runners.jax_command(
         ["python", "train.py", "--lr", "1"], pathlib.Path("logdir")
     )
-    assert jax_argv[1:3] == ["-m", "cta.profile.jax_runner"]
+    assert jax_argv[1:3] == ["-m", "cta.profiling.jax_runner"]
     assert jax_argv[-3:] == ["train.py", "--lr", "1"]
     assert "--no-perfetto" not in jax_argv
     assert "--no-perfetto" in runners.jax_command(
@@ -128,7 +128,7 @@ def test_command_construction() -> None:
         pathlib.Path("t.json.gz"),
         step_on="optimizer",
     )
-    assert kineto_argv[1:3] == ["-m", "cta.profile.kineto_runner"]
+    assert kineto_argv[1:3] == ["-m", "cta.profiling.kineto_runner"]
     assert kineto_argv[-3:] == ["train.py", "--lr", "1"]
     assert "python" not in kineto_argv[-4:]
 

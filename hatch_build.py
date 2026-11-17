@@ -1,7 +1,7 @@
 """Hatch build hook: compiles the C++ extension into the cta package.
 
 One build for everything: `pip install .` (or `-e .`) runs CMake on native/,
-which writes `cta/_native*.so` next to the Python code, and the wheel is
+which writes `src/cta/_native*.so` next to the Python code, and the wheel is
 tagged as a platform wheel.
 
 The build can be adjusted with environment variables (all optional):
@@ -217,7 +217,7 @@ class NativeBuildHook(BuildHookInterface):
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict) -> None:
-        """Compiles the extension into ``cta/`` and tags the wheel as native.
+        """Compiles the extension into ``src/cta/`` and tags the wheel as native.
 
         Args:
             version: Build version (``"standard"`` or ``"editable"``).
@@ -250,7 +250,7 @@ class NativeBuildHook(BuildHookInterface):
                 env,
                 source_dir=source_dir,
                 build_dir=build_dir,
-                output_dir=root / "cta",
+                output_dir=root / "src" / "cta",
                 python=sys.executable,
                 nanobind_dir=nanobind.cmake_dir(),
                 generator=generator,
@@ -261,4 +261,4 @@ class NativeBuildHook(BuildHookInterface):
         subprocess.run(build_command(env, build_dir), check=True)
         build_data["pure_python"] = False
         build_data["infer_tag"] = True
-        build_data["artifacts"].append("cta/_native*.so")
+        build_data["artifacts"].append("src/cta/_native*.so")

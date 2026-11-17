@@ -15,8 +15,8 @@ import pytest
 from typer import testing
 
 import cta
+from cta import models
 from cta.cli import app as cli_app
-from cta.core import models
 from cta.synth import chakra
 from cta.synth import goal
 
@@ -200,29 +200,29 @@ def test_chakra_to_goal_equivalence_and_cli(tmp_path: pathlib.Path) -> None:
 
 def test_chakra_storage_and_data_op_nodes(tmp_path: pathlib.Path) -> None:
     from cta.adapters.chakra import reader
-    from cta.adapters.chakra import schema
+    from cta.synth import chakra_proto
 
-    file_read = schema.NodeMsg(
-        id=1, name="pread", type=schema.STORAGE_NODE, duration_micros=5
+    file_read = chakra_proto.NodeMsg(
+        id=1, name="pread", type=chakra_proto.STORAGE_NODE, duration_micros=5
     )
     file_read.storage.fs.op = file_read.storage.fs.FS_OP_PREAD
     file_read.storage.fs.size_bytes = 4096
-    block_io = schema.NodeMsg(
-        id=2, name="bio", type=schema.STORAGE_NODE, duration_micros=1
+    block_io = chakra_proto.NodeMsg(
+        id=2, name="bio", type=chakra_proto.STORAGE_NODE, duration_micros=1
     )
     block_io.storage.block.nr_sectors = 8
-    checkpoint = schema.NodeMsg(
+    checkpoint = chakra_proto.NodeMsg(
         id=3,
         name="ckpt",
-        type=schema.DATA_OP_NODE,
+        type=chakra_proto.DATA_OP_NODE,
         duration_micros=7,
         data_deps=[1],
     )
-    metadata = schema.GlobalMetadataMsg(version="0.0.4")
+    metadata = chakra_proto.GlobalMetadataMsg(version="0.0.4")
     encoded = bytearray()
     for message in (metadata, file_read, block_io, checkpoint):
         payload = message.SerializeToString()
-        encoded += schema.encode_varint(len(payload)) + payload
+        encoded += chakra_proto.encode_varint(len(payload)) + payload
     et_path = tmp_path / "t.0.et"
     et_path.write_bytes(bytes(encoded))
 

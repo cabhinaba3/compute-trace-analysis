@@ -9,12 +9,12 @@ import numpy as np
 import polars as pl
 import pytest
 
+from cta import models
+from cta import plugins
 from cta.adapters.kineto import reader
 from cta.adapters.nsys import network_ops
+from cta.analysis import network
 from cta.aspects import network as network_aspect
-from cta.core import models
-from cta.core import network
-from cta.core import registry
 
 REAL_DDP_KINETO_DIR = (
     pathlib.Path(__file__).resolve().parents[1] / "data_real" / "e" / "kineto"
@@ -305,7 +305,7 @@ def test_aspect_compares_two_apis(tmp_path: pathlib.Path) -> None:
         ).write_parquet(path)
         groups.append(models.TrialGroup(name, name, ()))
         tables[name] = [{"kineto.network_ops": path}] * 3
-    result = registry.ASPECTS["network_api"].run(
+    result = plugins.ASPECTS["network_api"].run(
         tuple(groups), tables, models.CompareConfig()
     )
     rows = {r["metric"]: r for r in result.summary.iter_rows(named=True)}

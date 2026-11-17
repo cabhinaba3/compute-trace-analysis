@@ -21,8 +21,8 @@ import polars as pl
 import pytest
 
 from cta import _native
+from cta import models
 from cta.adapters.goal import reader
-from cta.core import models
 from cta.synth import goal as synth_goal
 from cta.synth import training
 

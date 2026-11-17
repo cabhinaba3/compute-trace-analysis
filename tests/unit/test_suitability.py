@@ -9,8 +9,8 @@ import numpy as np
 import polars as pl
 import pytest
 
-from cta.core import models
-from cta.viz import data
+from cta import models
+from cta.viz import context
 from cta.viz import ir
 from cta.viz import suitability
 
@@ -50,7 +50,7 @@ def test_suitability_warning_class() -> None:
 
 
 def test_violin_sample_size_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Trace with N = 4 (< 10)
     trace = ir.Trace("violin", y=[1.0, 2.0, 3.0, 4.0], name="test")
     chart = ir.Chart(title="Violin", panels=[ir.Panel(traces=[trace])])
@@ -64,7 +64,7 @@ def test_violin_sample_size_heuristic() -> None:
 
 
 def test_boxplot_sample_size_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Trace with N = 3 (< 5)
     trace = ir.Trace("box", y=[1.0, 2.0, 3.0], name="test")
     chart = ir.Chart(title="Box", panels=[ir.Panel(traces=[trace])])
@@ -79,7 +79,7 @@ def test_boxplot_sample_size_heuristic() -> None:
 
 
 def test_line_plot_sample_size_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Trace with N = 1 (< 2)
     trace = ir.Trace("line", x=[1.0], y=[2.0], name="test")
     chart = ir.Chart(title="Line", panels=[ir.Panel(traces=[trace])])
@@ -94,7 +94,7 @@ def test_line_plot_sample_size_heuristic() -> None:
 
 
 def test_violin_distribution_continuity_and_zero_variance() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # N = 12, but only 2 distinct values (3 or fewer is too few)
     trace_discrete = ir.Trace("violin", y=[1.0, 2.0] * 6, name="discrete")
     chart_discrete = ir.Chart(
@@ -122,7 +122,7 @@ def test_violin_distribution_continuity_and_zero_variance() -> None:
 
 
 def test_boxplot_multimodality_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Bimodal distribution with two separate peaks
     peak1 = np.random.normal(loc=10.0, scale=0.5, size=25)
     peak2 = np.random.normal(loc=100.0, scale=0.5, size=25)
@@ -137,7 +137,7 @@ def test_boxplot_multimodality_heuristic() -> None:
 
 
 def test_line_plot_unordered_categorical_x_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # X has non-numeric category strings
     trace = ir.Trace(
         "line",
@@ -155,7 +155,7 @@ def test_line_plot_unordered_categorical_x_heuristic() -> None:
 
 
 def test_line_plot_duplicate_x_with_varying_y_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Duplicate X values with differing Y values
     trace = ir.Trace(
         "line",
@@ -174,7 +174,7 @@ def test_line_plot_duplicate_x_with_varying_y_heuristic() -> None:
 
 def test_multi_rank_on_single_rank_trace_heuristic() -> None:
     # world_size = 1
-    ctx = data.DataContext(_empty_report(world_size=1))
+    ctx = context.DataContext(_empty_report(world_size=1))
     msgs = suitability.check_suitability(ctx, "skew", {})
     assert any(
         "Multi-rank distribution plot 'skew' requested" in m for m in msgs
@@ -195,7 +195,7 @@ def test_multi_rank_on_single_rank_trace_heuristic() -> None:
 
 def test_violin_on_two_ranks_heuristic() -> None:
     # world_size = 2
-    ctx = data.DataContext(_empty_report(world_size=2))
+    ctx = context.DataContext(_empty_report(world_size=2))
     msgs = suitability.check_suitability(ctx, "violin", {"by": "rank"})
     assert any("contains only 2 ranks" in m for m in msgs)
     assert any(
@@ -206,7 +206,7 @@ def test_violin_on_two_ranks_heuristic() -> None:
 
 
 def test_kernel_duration_dynamic_range_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Kernel durations spanning ratio > 1000 without log scale
     trace = ir.Trace(
         "box",
@@ -231,7 +231,7 @@ def test_kernel_duration_dynamic_range_heuristic() -> None:
 
 
 def test_valid_data_emits_no_warnings() -> None:
-    ctx = data.DataContext(_empty_report(world_size=4))
+    ctx = context.DataContext(_empty_report(world_size=4))
     # N = 20, reasonable variance, continuous
     trace = ir.Trace(
         "violin",
@@ -246,7 +246,7 @@ def test_valid_data_emits_no_warnings() -> None:
 
 
 def test_validate_and_warn_emits_suitability_warning() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     trace = ir.Trace("violin", y=[1.0, 2.0, 3.0], name="test")
     chart = ir.Chart(title="Violin", panels=[ir.Panel(traces=[trace])])
     with pytest.warns(suitability.SuitabilityWarning, match="Sample size"):
@@ -254,7 +254,7 @@ def test_validate_and_warn_emits_suitability_warning() -> None:
 
 
 def test_suitability_with_numpy_and_polars_sequences() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
 
     # Violin with ndarray (N=3)
     v_trace_np = _trace("violin", y=np.array([1.0, 2.0, 3.0]))
@@ -324,7 +324,7 @@ def test_suitability_with_numpy_and_polars_sequences() -> None:
 
 
 def test_suitability_zero_array_no_silent_loss() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     trace = _trace("violin", y=np.array([0.0]))
     chart = ir.Chart(title="Zero", panels=[ir.Panel(traces=[trace])])
     msgs = suitability.check_suitability(ctx, "violin", {}, chart=chart)
@@ -332,7 +332,7 @@ def test_suitability_zero_array_no_silent_loss() -> None:
 
 
 def test_suitability_none_in_sequence_filtered() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     trace = ir.Trace("violin", y=[1.0, None, 2.0])
     chart = ir.Chart(title="None", panels=[ir.Panel(traces=[trace])])
     msgs = suitability.check_suitability(ctx, "violin", {}, chart=chart)
@@ -356,7 +356,7 @@ def test_extract_suggested_alternatives() -> None:
 
 
 def test_queue_depth_sample_size_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Chart with meta indicating N=3 (< 5)
     trace = ir.Trace("step", x=[0.0, 1.0], y=[1.0, 1.0], name="test")
     chart = ir.Chart(
@@ -372,7 +372,7 @@ def test_queue_depth_sample_size_heuristic() -> None:
 
 
 def test_queue_depth_serialized_execution_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # Chart with N=10 kernels, but max concurrency is 1 (never overlaps)
     trace = ir.Trace(
         "step",
@@ -394,7 +394,7 @@ def test_queue_depth_serialized_execution_heuristic() -> None:
 
 
 def test_queue_depth_idle_starvation_heuristic() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # 9 out of 10 points are 0 concurrency (90% idle > 80%)
     trace = ir.Trace(
         "step",
@@ -416,7 +416,7 @@ def test_queue_depth_idle_starvation_heuristic() -> None:
 
 
 def test_queue_depth_suitable_data() -> None:
-    ctx = data.DataContext(_empty_report())
+    ctx = context.DataContext(_empty_report())
     # N=10, max concurrency = 3, idle is only 1 out of 10 points (10% idle)
     trace = ir.Trace(
         "step",

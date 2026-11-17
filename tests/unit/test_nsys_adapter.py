@@ -14,8 +14,8 @@ import warnings
 import polars as pl
 import pytest
 
+from cta import models
 from cta.adapters.nsys import reader
-from cta.core import models
 
 REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real"
 
@@ -229,7 +229,7 @@ def test_real_per_rank_and_multi_gpu_reports(tmp_path: pathlib.Path) -> None:
 def test_real_gpu_metrics_keep_zero_samples_and_are_windowed(
     tmp_path: pathlib.Path,
 ) -> None:
-    from cta.aspects.device import step_slicing
+    from cta.analysis import step_slicing
 
     report_path = REAL_DATA_DIR / "a_nsys" / "single_fp16_gpumetrics.sqlite"
     tables = _ingest([report_path], tmp_path / "g")

@@ -19,15 +19,15 @@ import polars as pl
 import pytest
 
 from cta import _native
+from cta import models
 from cta.adapters.chakra import reader
-from cta.adapters.chakra import schema
-from cta.core import models
 from cta.synth import chakra as synth_chakra
+from cta.synth import chakra_proto
 from cta.synth import training
 
 
 def _attr(name: str, **value: Any) -> Any:
-    return schema.AttributeProtoMsg(name=name, **value)
+    return chakra_proto.AttributeProtoMsg(name=name, **value)
 
 
 def _node(
@@ -40,7 +40,7 @@ def _node(
     ctrl_deps: tuple[int, ...] = (),
     duration_micros: int = 1,
 ) -> Any:
-    return schema.NodeMsg(
+    return chakra_proto.NodeMsg(
         id=node_id,
         name=name,
         type=node_type,
@@ -53,26 +53,26 @@ def _node(
 
 def adversarial_nodes() -> list[Any]:
     """Returns nodes that exercise every branch of the reader."""
-    pb2 = schema.et_def_pb2()
-    storage_fs = _node(60, "fs", schema.STORAGE_NODE)
+    pb2 = chakra_proto.et_def_pb2()
+    storage_fs = _node(60, "fs", chakra_proto.STORAGE_NODE)
     storage_fs.storage.fs.size_bytes = 4096
-    storage_block = _node(61, "block", schema.STORAGE_NODE)
+    storage_block = _node(61, "block", chakra_proto.STORAGE_NODE)
     storage_block.storage.block.nr_sectors = 8
-    storage_page = _node(62, "page", schema.STORAGE_NODE)
+    storage_page = _node(62, "page", chakra_proto.STORAGE_NODE)
     storage_page.storage.page.nr_pages = 3
     storage_sized = _node(
         63,
         "sized",
-        schema.STORAGE_NODE,
+        chakra_proto.STORAGE_NODE,
         attrs=(_attr("comm_size", int64_val=100),),
     )
     storage_sized.storage.fs.size_bytes = 5000
-    storage_empty = _node(64, "bare storage", schema.STORAGE_NODE)
+    storage_empty = _node(64, "bare storage", chakra_proto.STORAGE_NODE)
     return [
         _node(
             1,
             "compute ü名前",
-            schema.COMP_NODE,
+            chakra_proto.COMP_NODE,
             attrs=(
                 _attr("num_ops", uint64_val=2**40),
                 _attr("tensor_size", int32_val=1024),
@@ -82,7 +82,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             2,
             "ar_int",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", int32_val=0),
                 _attr("comm_size", int64_val=4096),
@@ -93,7 +93,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             3,
             "a2a",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", sint64_val=6),
                 _attr("comm_size", uint64_val=8000),
@@ -102,7 +102,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             4,
             "unknown enum",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", fixed32_val=99),
                 _attr("comm_size", sfixed64_val=777),
@@ -111,7 +111,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             5,
             "text type",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", string_val="all_gather"),
                 _attr("tensor_size", int64_val=500),
@@ -120,7 +120,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             6,
             "zero comm size shadows tensor size",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_size", int32_val=0),
                 _attr("tensor_size", int32_val=999),
@@ -129,7 +129,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             7,
             "bool and float",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", bool_val=True),
                 _attr("comm_size", double_val=123.9),
@@ -138,7 +138,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             8,
             "float type, text size",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", double_val=1.0),
                 _attr("comm_size", string_val="2048"),
@@ -147,7 +147,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             9,
             "send",
-            schema.COMM_SEND_NODE,
+            chakra_proto.COMM_SEND_NODE,
             attrs=(
                 _attr("comm_dst", int32_val=3),
                 _attr("comm_tag", uint32_val=77),
@@ -157,13 +157,13 @@ def adversarial_nodes() -> list[Any]:
         _node(
             10,
             "recv",
-            schema.COMM_RECV_NODE,
+            chakra_proto.COMM_RECV_NODE,
             attrs=(_attr("comm_src", sint32_val=2),),
         ),
         _node(
             11,
             "send to nowhere",
-            schema.COMM_SEND_NODE,
+            chakra_proto.COMM_SEND_NODE,
             attrs=(
                 _attr("comm_dst", int32_val=-5),
                 _attr("comm_size", int32_val=8),
@@ -172,7 +172,7 @@ def adversarial_nodes() -> list[Any]:
         _node(
             12,
             "repeated attributes",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", int32_val=0),
                 _attr("comm_type", string_val="reduce"),
@@ -186,15 +186,15 @@ def adversarial_nodes() -> list[Any]:
         storage_page,
         storage_sized,
         storage_empty,
-        _node(70, "data op", schema.DATA_OP_NODE, data_deps=(60,)),
-        _node(71, "load", schema.MEM_LOAD_NODE),
-        _node(72, "store", schema.MEM_STORE_NODE),
+        _node(70, "data op", chakra_proto.DATA_OP_NODE, data_deps=(60,)),
+        _node(71, "load", chakra_proto.MEM_LOAD_NODE),
+        _node(72, "store", chakra_proto.MEM_STORE_NODE),
         _node(73, "unknown type", 99),
         _node(74, "invalid type", 0),
         _node(
             80,
             "negative values",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_size", int64_val=-5),
                 _attr("comm_tag", int32_val=-1),
@@ -204,13 +204,13 @@ def adversarial_nodes() -> list[Any]:
         _node(
             81,
             "wide values",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_size", uint64_val=2**63 + 5),
                 _attr("num_ops", uint64_val=2**64 - 1),
             ),
         ),
-        _node(2**63, "", schema.COMP_NODE),
+        _node(2**63, "", chakra_proto.COMP_NODE),
         pb2.Node(id=90, name="no attributes, no type"),
     ]
 
@@ -220,9 +220,9 @@ def write_et(
 ) -> pathlib.Path:
     """Writes nodes as a length-delimited .et file."""
     out = bytearray()
-    for message in (schema.GlobalMetadataMsg(version=version), *nodes):
+    for message in (chakra_proto.GlobalMetadataMsg(version=version), *nodes):
         payload = message.SerializeToString()
-        out += schema.encode_varint(len(payload)) + payload
+        out += chakra_proto.encode_varint(len(payload)) + payload
     path.write_bytes(bytes(out))
     return path
 
@@ -453,7 +453,7 @@ def test_collective_traffic_is_the_sum_over_collectives(
         _node(
             i,
             f"c{i}",
-            schema.COMM_COLL_NODE,
+            chakra_proto.COMM_COLL_NODE,
             attrs=(
                 _attr("comm_type", int32_val=kind),
                 _attr("comm_size", int64_val=size),

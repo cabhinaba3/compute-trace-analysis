@@ -15,8 +15,8 @@ import polars as pl
 import pytest
 
 import cta
+from cta import models
 from cta.adapters.ncu import reader
-from cta.core import models
 
 REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real"
 NCU_RUN_DIR = REAL_DATA_DIR / "a"

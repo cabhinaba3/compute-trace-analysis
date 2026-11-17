@@ -13,14 +13,14 @@ import pathlib
 import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
-_CHECKED_DIRECTORIES = ("cta", "tests", "examples")
+_CHECKED_DIRECTORIES = ("src/cta", "tests", "examples")
 _NAME_IMPORT_ALLOWED = {
     "__future__",
     "collections.abc",
     "typing",
     "typing_extensions",
 }
-_REEXPORT_FILES = {"cta/__init__.py", "cta/viz/__init__.py"}
+_REEXPORT_FILES = {"src/cta/__init__.py", "src/cta/viz/__init__.py"}
 
 
 def _python_files() -> list[pathlib.Path]:
@@ -42,7 +42,7 @@ def _is_module(dotted_name: str) -> bool:
     """Returns whether a dotted name is an importable module or package.
 
     Args:
-        dotted_name: Name such as ``cta.core.models``.
+        dotted_name: Name such as ``cta.models``.
 
     Returns:
         True if the import system finds a module or package of that name;

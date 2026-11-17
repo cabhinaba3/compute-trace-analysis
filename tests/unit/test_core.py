@@ -15,10 +15,10 @@ import polars as pl
 import pytest
 
 import cta
-from cta.core import alignment
-from cta.core import cache
-from cta.core import diagnosis
-from cta.core import stats
+from cta import diagnosis
+from cta.analysis import alignment
+from cta.analysis import stats
+from cta.ingest import cache
 
 
 @cta.register_adapter("mock_trace", version="1.0")
@@ -341,9 +341,9 @@ def test_import_cta_is_lazy() -> None:
 
 
 def test_chakra_node_type_numbers_match_generated_enum() -> None:
-    from cta.adapters.chakra import schema
+    from cta.synth import chakra_proto
 
-    pb2 = schema.et_def_pb2()
+    pb2 = chakra_proto.et_def_pb2()
     for node_type in (
         "MEM_LOAD_NODE",
         "MEM_STORE_NODE",
@@ -354,7 +354,9 @@ def test_chakra_node_type_numbers_match_generated_enum() -> None:
         "STORAGE_NODE",
         "DATA_OP_NODE",
     ):
-        assert getattr(schema, node_type) == getattr(pb2, node_type), node_type
+        assert getattr(chakra_proto, node_type) == getattr(pb2, node_type), (
+            node_type
+        )
 
 
 def test_compare_entity_tables_survives_an_empty_untyped_group() -> None:

@@ -13,9 +13,9 @@ from typing import Any
 import pytest
 
 import cta
-from cta.core import models
+from cta import models
 from cta.synth import jtop
-from cta.synth import tensorrt
+from cta.synth import trtexec
 
 
 def _summary_by_metric(
@@ -39,7 +39,7 @@ def test_trtexec_timing_and_layer_fusion(tmp_path: pathlib.Path) -> None:
     fp32_dir = tmp_path / "trt_fp32"
     int8_dir = tmp_path / "trt_int8"
 
-    tensorrt.write_trtexec_timing(
+    trtexec.write_trtexec_timing(
         fp32_dir / "times.json",
         queries=25,
         compute_ms=4.0,
@@ -47,14 +47,14 @@ def test_trtexec_timing_and_layer_fusion(tmp_path: pathlib.Path) -> None:
         d2h_ms=0.4,
         overlap_ms=0.05,
     )
-    tensorrt.write_trtexec_layers(
+    trtexec.write_trtexec_layers(
         fp32_dir / "profile.json",
         fp32_dir / "engine.json",
         fused=False,
         precision="FP32",
     )
 
-    tensorrt.write_trtexec_timing(
+    trtexec.write_trtexec_timing(
         int8_dir / "times.json",
         queries=25,
         compute_ms=1.2,
@@ -62,7 +62,7 @@ def test_trtexec_timing_and_layer_fusion(tmp_path: pathlib.Path) -> None:
         d2h_ms=0.4,
         overlap_ms=0.4,
     )
-    tensorrt.write_trtexec_layers(
+    trtexec.write_trtexec_layers(
         int8_dir / "profile.json",
         int8_dir / "engine.json",
         fused=True,
@@ -107,7 +107,7 @@ def test_jtop_multicore_nano_fallback_and_bundle_joules_per_query(
         power_mw=20_000.0,
         temp_c=88.0,
     )
-    tensorrt.write_trtexec_timing(
+    trtexec.write_trtexec_timing(
         max_n_dir / "times.json", queries=100, compute_ms=2.0
     )
 
@@ -120,7 +120,7 @@ def test_jtop_multicore_nano_fallback_and_bundle_joules_per_query(
         power_mw=10_000.0,
         temp_c=None,
     )
-    tensorrt.write_trtexec_timing(
+    trtexec.write_trtexec_timing(
         efficient_dir / "times.json", queries=100, compute_ms=1.5
     )
 

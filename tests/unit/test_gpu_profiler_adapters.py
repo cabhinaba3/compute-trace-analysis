@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 
 import cta
-from cta.core import intervals
-from cta.core import models
+from cta import models
+from cta.analysis import intervals
 from cta.synth import kineto
 from cta.synth import ncu
 from cta.synth import nsys

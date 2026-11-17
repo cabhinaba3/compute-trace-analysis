@@ -14,14 +14,14 @@ import numpy as np
 import polars as pl
 import pytest
 
+from cta import models
 from cta import viz
-from cta.core import models
-from cta.viz import data
+from cta.viz import context
 from cta.viz import spec as viz_spec
 from cta.viz import suitability
 from cta.viz.kinds import chart_helpers
+from cta.viz.kinds import host_api
 from cta.viz.kinds import memory
-from cta.viz.kinds import runtime_api
 
 LABELS = ("base", "cand")
 
@@ -63,9 +63,9 @@ def _context(
     raw: dict[str, list[dict[str, Any]]] | None = None,
     aspects: dict[str, models.AspectResult] | None = None,
     labels: tuple[str, ...] = LABELS,
-) -> data.DataContext:
+) -> context.DataContext:
     """Returns a context over in-memory raw tables."""
-    ctx = data.DataContext(_report(aspects, labels))
+    ctx = context.DataContext(_report(aspects, labels))
     ctx._raw_tables = {
         name: pl.DataFrame(rows) for name, rows in (raw or {}).items()
     }
@@ -365,7 +365,7 @@ def test_new_kinds_are_registered_with_options() -> None:
         "facet",
     }
     assert expected <= names
-    assert "runtime_calls" in data.SOURCES
+    assert "runtime_calls" in context.SOURCES
     for name in sorted(expected):
         kind = viz_spec.get_kind(name)
         assert kind.group in viz_spec.GROUPS
@@ -655,7 +655,7 @@ def test_volcano_without_p_values_says_so() -> None:
     ],
 )
 def test_api_class(name: str, kind: str) -> None:
-    assert runtime_api.api_class(name) == kind
+    assert host_api.api_class(name) == kind
 
 
 def test_runtime_top_ranks_by_total_time() -> None:

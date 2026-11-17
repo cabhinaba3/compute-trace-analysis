@@ -17,8 +17,8 @@ import polars as pl
 import pytest
 
 import cta
+from cta import models
 from cta.adapters.kineto import reader
-from cta.core import models
 
 REAL_DDP_KINETO_DIR = (
     pathlib.Path(__file__).resolve().parents[1] / "data_real" / "e" / "kineto"

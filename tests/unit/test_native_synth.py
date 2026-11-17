@@ -18,7 +18,7 @@ from cta.synth import goal
 from cta.synth import jtop
 from cta.synth import kineto
 from cta.synth import ncu
-from cta.synth import tensorrt
+from cta.synth import trtexec
 
 
 def _sha256(path: pathlib.Path) -> str:
@@ -94,7 +94,7 @@ def test_small_outputs_match_the_python_generators_they_replaced(
         "ncu default": _sha256(ncu.write_ncu_csv(tmp_path / "n.csv")),
         "jtop default": _sha256(jtop.write_jtop_trace(tmp_path / "j.json")),
         "trtexec timing": _sha256(
-            tensorrt.write_trtexec_timing(tmp_path / "t.json")
+            trtexec.write_trtexec_timing(tmp_path / "t.json")
         ),
     }
     assert actual == golden

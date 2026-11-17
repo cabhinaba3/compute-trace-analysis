@@ -16,8 +16,8 @@ import pytest
 from typer import testing
 
 import cta
+from cta import diagnosis
 from cta.cli import app as cli_app
-from cta.core import diagnosis
 from cta.synth import chakra
 
 cli_runner = testing.CliRunner()
@@ -108,7 +108,7 @@ def test_version_and_module_entry() -> None:
 
 
 def test_version_single_sourced() -> None:
-    repo_root = pathlib.Path(cta.__file__).resolve().parent.parent
+    repo_root = pathlib.Path(cta.__file__).resolve().parents[2]
     pyproject = (repo_root / "pyproject.toml").read_text()
     assert 'dynamic = ["version"]' in pyproject
     citation = (repo_root / "CITATION.cff").read_text()
@@ -207,8 +207,8 @@ def test_cache_hits_for_copied_trace(
     import os
     import shutil
 
-    from cta.core import bundle
-    from cta.core import cache as core_cache
+    from cta.ingest import cache
+    from cta.ingest import discovery
 
     original_dir, _, _ = chakra_pair
     copy_dir = tmp_path / "copy"
@@ -217,10 +217,10 @@ def test_cache_hits_for_copied_trace(
         if path.is_file():
             # A different mtime, but identical content.
             os.utime(path, ns=(1, 1))
-    original = bundle.resolve_bundle(original_dir).artifacts["chakra_et"]
-    copied = bundle.resolve_bundle(copy_dir).artifacts["chakra_et"]
-    original_digest = core_cache.compute_artifact_digest(original, "1.0")
-    copied_digest = core_cache.compute_artifact_digest(copied, "1.0")
+    original = discovery.resolve_bundle(original_dir).artifacts["chakra_et"]
+    copied = discovery.resolve_bundle(copy_dir).artifacts["chakra_et"]
+    original_digest = cache.compute_artifact_digest(original, "1.0")
+    copied_digest = cache.compute_artifact_digest(copied, "1.0")
     assert original_digest == copied_digest
 
 
@@ -238,7 +238,7 @@ def test_compare_does_not_mutate_caller_groups(
 def test_dag_cycle_warns() -> None:
     import polars as pl
 
-    from cta.core import dag
+    from cta.analysis import dag
 
     nodes = pl.DataFrame(
         {

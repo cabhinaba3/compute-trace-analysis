@@ -21,9 +21,9 @@ import polars as pl
 import pytest
 
 from cta import _native
+from cta import models
+from cta.adapters import runtime_calls
 from cta.adapters.kineto import reader
-from cta.adapters.nsys import runtime_calls
-from cta.core import models
 from cta.synth import kineto as synth_kineto
 
 # Microseconds. The second base is a Unix-epoch timestamp, which is too large

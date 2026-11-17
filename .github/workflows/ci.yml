@@ -33,10 +33,10 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint (Ruff)
-        run: ruff check cta tests examples
+        run: ruff check src tests examples
 
       - name: Typecheck (Mypy)
-        run: mypy cta tests examples
+        run: mypy src tests examples
 
       - name: Unit & Integration Tests (Pytest)
         run: pytest --cov=cta --cov-report=term-missing

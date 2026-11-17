@@ -1,4 +1,4 @@
-"""Tests of the DAG solver (`cta.core.dag`, backed by `cta._native.solve_dag`).
+"""Tests of the DAG solver (`cta.analysis.dag`, backed by native `solve_dag`).
 
 The expected numbers for the random graphs came from the Python solver this
 code replaced, with one change: where predecessors tie on finish time and
@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 
 from cta import _native as native
-from cta.core import dag
+from cta.analysis import dag
 
 _NOMINAL_COLLECTIVE_NS = (
     500.0 + 2 * 150.0

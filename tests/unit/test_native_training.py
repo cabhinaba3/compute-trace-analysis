@@ -8,11 +8,11 @@ import warnings
 import polars as pl
 import pytest
 
+from cta import plugins
 from cta.adapters.goal import reader as goal_reader
-from cta.core import bundle
-from cta.core import cache
-from cta.core import dag
-from cta.core import registry
+from cta.analysis import dag
+from cta.ingest import cache
+from cta.ingest import discovery
 from cta.synth import goal
 from cta.synth import training
 
@@ -39,10 +39,10 @@ def _solve(nodes: pl.DataFrame, edges: pl.DataFrame) -> dag.DagStats:
 def _read_chakra(
     directory: pathlib.Path, cache_dir: pathlib.Path
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    registry.load_plugins()
-    run = bundle.resolve_bundle(directory)
+    plugins.load_plugins()
+    run = discovery.resolve_bundle(directory)
     tables = cache.CacheStore(cache_dir).get_or_ingest(
-        run.artifacts["chakra_et"], registry.ADAPTERS["chakra_et"]
+        run.artifacts["chakra_et"], plugins.ADAPTERS["chakra_et"]
     )
     return pl.read_parquet(tables["nodes"]), pl.read_parquet(tables["edges"])
 

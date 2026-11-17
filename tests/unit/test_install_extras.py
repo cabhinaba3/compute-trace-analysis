@@ -14,9 +14,9 @@ import sys
 import polars as pl
 import pytest
 
-from cta.adapters.chakra import schema
 from cta.cli import output
-from cta.viz import data
+from cta.synth import chakra_proto
+from cta.viz import context
 from cta.viz import spec as viz_spec
 
 _OPTIONAL = (
@@ -101,15 +101,15 @@ def test_sql_and_where_name_the_sql_extra(
 ) -> None:
     monkeypatch.setitem(sys.modules, "duckdb", None)
     with pytest.raises(viz_spec.NotApplicableError, match=r"\[sql\]"):
-        data.DataContext(None).sql("SELECT 1")
+        context.DataContext(None).sql("SELECT 1")
     with pytest.raises(viz_spec.NotApplicableError, match=r"\[sql\]"):
-        data._sql_filter(pl.DataFrame({"a": [1]}), "a > 0")
+        context._sql_filter(pl.DataFrame({"a": [1]}), "a > 0")
 
 
 def test_writing_et_files_names_the_chakra_extra(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    schema.et_def_pb2.cache_clear()
+    chakra_proto.et_def_pb2.cache_clear()
     # Other tests may have imported the schema already, so block every level.
     for name in (
         "chakra",
@@ -120,9 +120,9 @@ def test_writing_et_files_names_the_chakra_extra(
         monkeypatch.setitem(sys.modules, name, None)
     try:
         with pytest.raises(ImportError, match=r"\[chakra\]"):
-            schema.et_def_pb2()
+            chakra_proto.et_def_pb2()
     finally:
-        schema.et_def_pb2.cache_clear()
+        chakra_proto.et_def_pb2.cache_clear()
 
 
 def test_errors_keep_the_brackets_of_install_hints(
