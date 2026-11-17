@@ -240,7 +240,7 @@ def plot_command(
             "--html",
             help=(
                 "Write ONE interactive dashboard (tabs, group/rank/step "
-                "filters) to this file; needs cta[viz]."
+                "filters) to this file; needs the viz extra."
             ),
         ),
     ] = None,
@@ -578,3 +578,8 @@ def plot_command(
     except (ValueError, ImportError, FileNotFoundError) as exc:
         output.print_error(exc)
         raise typer.Exit(code=2) from exc
+
+
+def register(app: typer.Typer) -> None:
+    """Adds ``cta plot`` to the application."""
+    app.command("plot")(plot_command)

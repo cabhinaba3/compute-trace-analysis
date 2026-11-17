@@ -326,7 +326,7 @@ class Report:
     ) -> pathlib.Path:
         """Writes one interactive HTML dashboard of the report.
 
-        Needs the optional viz dependencies (``pip install cta[viz]``).
+        Needs the ``viz`` extra.
 
         Args:
             path: The HTML file to write.
@@ -400,14 +400,14 @@ class Report:
 
         Args:
             out_dir: Directory to write the files to; created if missing.
-            formats: Output formats, see
-                ``cta.export.tabular.export_bundle``.
+            formats: Output format names (see ``cta.export.writers``).
 
         Returns:
             The written files, keyed by output (e.g. ``"csv:<aspect>"``).
-        """
-        from cta.export import tabular
 
-        return tabular.export_bundle(
-            self, pathlib.Path(out_dir), formats=formats
-        )
+        Raises:
+            ValueError: A format is not registered.
+        """
+        from cta.export import writers
+
+        return writers.write_report(self, pathlib.Path(out_dir), formats)

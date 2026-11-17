@@ -22,7 +22,13 @@ from typer import testing
 
 import cta
 from cta.cli import app as cli_app
-from cta.profiling import runners
+from cta.profiling import base
+from cta.profiling import jax as profiling_jax
+from cta.profiling import jtop as profiling_jtop
+from cta.profiling import kineto as profiling_kineto
+from cta.profiling import ncu as profiling_ncu
+from cta.profiling import nsys as profiling_nsys
+from cta.profiling import trtexec as profiling_trtexec
 
 cli_runner = testing.CliRunner()
 
@@ -71,19 +77,19 @@ def _install_fake_tool(bin_dir: pathlib.Path, name: str) -> pathlib.Path:
 
 
 def test_default_name() -> None:
-    assert runners.default_name(["python", "train.py", "--x"]) == "train"
-    assert runners.default_name(["./bin/app"]) == "app"
+    assert base.default_name(["python", "train.py", "--x"]) == "train"
+    assert base.default_name(["./bin/app"]) == "app"
 
 
 def test_command_construction() -> None:
     output_path = pathlib.Path("out/x")
-    nsys_argv = runners.nsys_command(
+    nsys_argv = profiling_nsys.build_argv(
         ["python", "a.py"], output_path, trace="cuda,nvtx", gpu_metrics=True
     )
     assert nsys_argv[:2] == ["nsys", "profile"]
     assert "--gpu-metrics-devices=all" in nsys_argv
     assert nsys_argv[-2:] == ["python", "a.py"]
-    ncu_argv = runners.ncu_command(
+    ncu_argv = profiling_ncu.build_argv(
         ["python", "a.py"],
         output_path,
         ncu_set="full",
@@ -96,7 +102,7 @@ def test_command_construction() -> None:
     assert ncu_argv[ncu_argv.index("--set") + 1] == "full"
     assert ncu_argv[ncu_argv.index("--launch-count") + 1] == "24"
     assert "regex:gemm" in ncu_argv
-    ncu_metrics_argv = runners.ncu_command(
+    ncu_metrics_argv = profiling_ncu.build_argv(
         ["a"],
         output_path,
         ncu_set="full",
@@ -109,21 +115,21 @@ def test_command_construction() -> None:
     assert "--set" not in ncu_metrics_argv
     metrics_index = ncu_metrics_argv.index("--metrics")
     assert ncu_metrics_argv[metrics_index + 1] == "m1,m2"
-    trtexec_argv = runners.trtexec_command(
+    trtexec_argv = profiling_trtexec.build_argv(
         ["--loadEngine=m.plan"], pathlib.Path("b")
     )
     assert any(arg.startswith("--exportTimes=") for arg in trtexec_argv)
     assert "--profilingVerbosity=detailed" in trtexec_argv
-    jax_argv = runners.jax_command(
+    jax_argv = profiling_jax.build_argv(
         ["python", "train.py", "--lr", "1"], pathlib.Path("logdir")
     )
     assert jax_argv[1:3] == ["-m", "cta.profiling.jax_runner"]
     assert jax_argv[-3:] == ["train.py", "--lr", "1"]
     assert "--no-perfetto" not in jax_argv
-    assert "--no-perfetto" in runners.jax_command(
+    assert "--no-perfetto" in profiling_jax.build_argv(
         ["train.py"], pathlib.Path("logdir"), perfetto=False
     )
-    kineto_argv = runners.kineto_command(
+    kineto_argv = profiling_kineto.build_argv(
         ["python", "train.py", "--lr", "1"],
         pathlib.Path("t.json.gz"),
         step_on="optimizer",
@@ -267,7 +273,7 @@ def test_jtop_sampler_writes_json_list(
 
     fake_jtop_module = types.SimpleNamespace(jtop=FakeJtop)
     monkeypatch.setitem(sys.modules, "jtop", fake_jtop_module)
-    result = runners.run_jtop(
+    result = profiling_jtop.run(
         [sys.executable, "-c", "import time; time.sleep(0.2)"],
         tmp_path,
         "j",

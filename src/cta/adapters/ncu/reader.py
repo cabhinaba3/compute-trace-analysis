@@ -32,6 +32,7 @@ from typing import Any
 
 import polars as pl
 
+from cta import _optional
 from cta import models
 from cta import plugins
 from cta.adapters import common
@@ -409,8 +410,10 @@ def _rows_from_report(
     Raises:
         ImportError: The optional ``ncu_report`` module is not installed.
     """
-    # Optional dependency (extra "ncu"); the caller handles ImportError.
-    import ncu_report
+    # The caller falls back to the CSV route on ImportError.
+    ncu_report = _optional.require(
+        "ncu_report", extra="ncu", purpose="reading .ncu-rep files natively"
+    )
 
     ctx = ncu_report.load_report(str(path))
     kernel_rows: list[dict[str, Any]] = []

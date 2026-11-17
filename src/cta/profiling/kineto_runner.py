@@ -24,7 +24,7 @@ import pathlib
 import sys
 from typing import Any
 
-from cta.profiling import runners
+from cta.profiling import base
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
                 lambda *_a, **_k: prof.step()
             )
         try:
-            status = runners.execute_target(target)
+            status = base.execute_target(target)
         finally:
             if handle is not None:
                 handle.remove()

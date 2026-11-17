@@ -1,12 +1,10 @@
-"""The ``synth``, ``inspect`` and ``list`` commands."""
+"""The ``synth`` command: writes small synthetic traces to try CTA on."""
 
 from __future__ import annotations
 
 import pathlib
 from typing import Annotated
 
-from rich import pretty
-from rich import table
 import typer
 
 from cta.cli import output
@@ -134,40 +132,6 @@ def synth_command(
     )
 
 
-def inspect_command(
-    source: Annotated[
-        str, typer.Argument(help="Trace file, glob, or RunBundle directory.")
-    ],
-    cache_dir: Annotated[
-        pathlib.Path, typer.Option("--cache-dir")
-    ] = pathlib.Path(".cta_cache"),
-) -> None:
-    """Shows the detected formats, the world size and the table schemas."""
-    from cta import api
-
-    info = api.inspect_trace(source, cache_dir=cache_dir)
-    output.console.print(pretty.Pretty(info))
-
-
-def list_command() -> None:
-    """Lists the registered trace formats and comparison aspects.
-
-    Plugins are included.
-    """
-    from cta import plugins
-
-    formats_table = table.Table(title="Trace formats")
-    formats_table.add_column("format")
-    formats_table.add_column("adapter version")
-    for name, adapter in sorted(plugins.ADAPTERS.items()):
-        formats_table.add_row(name, adapter.version)
-    output.console.print(formats_table)
-    aspects_table = table.Table(title="Aspects")
-    for column in ("name", "title", "requires"):
-        aspects_table.add_column(column)
-    for name, aspect in sorted(plugins.ASPECTS.items()):
-        mode = "any of" if aspect.any_of_formats else "all of"
-        aspects_table.add_row(
-            name, aspect.title, f"{mode}: {', '.join(aspect.required_formats)}"
-        )
-    output.console.print(aspects_table)
+def register(app: typer.Typer) -> None:
+    """Adds ``cta synth`` to the application."""
+    app.command("synth")(synth_command)

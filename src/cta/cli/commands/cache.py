@@ -47,3 +47,8 @@ def cache_clear(
     output.console.print(
         f"Cleared [bold]{removed}[/bold] cached trace entries."
     )
+
+
+def register(app: typer.Typer) -> None:
+    """Adds the ``cta cache`` command group to the application."""
+    app.add_typer(cache_app, name="cache")

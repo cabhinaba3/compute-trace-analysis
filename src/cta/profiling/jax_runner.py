@@ -18,7 +18,7 @@ import argparse
 import pathlib
 import sys
 
-from cta.profiling import runners
+from cta.profiling import base
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     with jax.profiler.trace(
         str(out), create_perfetto_trace=not args.no_perfetto
     ):
-        status = runners.execute_target(target)
+        status = base.execute_target(target)
     print(f"wrote {out}", file=sys.stderr)
     return status
 

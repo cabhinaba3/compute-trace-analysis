@@ -1,4 +1,10 @@
-"""The ``cta`` command-line application: wires every command group together."""
+"""The ``cta`` command-line application: wires every command together.
+
+Each module in ``cta.cli.commands`` defines one command (or command group)
+and a ``register(app)`` function; ``COMMANDS`` lists them in ``--help``
+order. Heavy modules (polars, scipy, the profilers) are imported inside the
+commands, so ``cta --help`` and ``cta --version`` stay fast.
+"""
 
 from __future__ import annotations
 
@@ -7,27 +13,33 @@ from typing import Annotated
 import typer
 
 import cta
+from cta.cli.commands import analyze
 from cta.cli.commands import cache
+from cta.cli.commands import catalog
 from cta.cli.commands import compare
+from cta.cli.commands import inspect
 from cta.cli.commands import plot
 from cta.cli.commands import profile
-from cta.cli.commands import traces
+from cta.cli.commands import synth
+from cta.cli.commands import verify
 
-# Heavy modules (polars, scipy, profilers) are imported inside each command
-# so that `cta --help` and `cta --version` stay fast.
-app = typer.Typer(
-    name="cta",
-    help=(
-        "CTA v1.0: Multi-trace & multi-aspect performance comparison framework."
-    ),
-    no_args_is_help=True,
+COMMANDS = (
+    cache,
+    profile,
+    compare,
+    verify,
+    analyze,
+    plot,
+    synth,
+    inspect,
+    catalog,
 )
 
-
-app.add_typer(cache.cache_app, name="cache")
-
-
-app.add_typer(profile.profile_app, name="profile")
+app = typer.Typer(
+    name="cta",
+    help="CTA: multi-trace, multi-aspect performance comparison.",
+    no_args_is_help=True,
+)
 
 
 def _print_version_and_exit(value: bool) -> None:
@@ -52,13 +64,8 @@ def _root(
     """Declares the root-level options of ``cta`` (only ``--version``)."""
 
 
-app.command("compare")(compare.compare_command)
-app.command("verify-equivalence")(compare.verify_equivalence_command)
-app.command("analyze")(compare.analyze_command)
-app.command("plot")(plot.plot_command)
-app.command("synth")(traces.synth_command)
-app.command("inspect")(traces.inspect_command)
-app.command("list")(traces.list_command)
+for command in COMMANDS:
+    command.register(app)
 
 
 def main() -> None:

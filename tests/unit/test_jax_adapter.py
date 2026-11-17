@@ -420,7 +420,7 @@ def test_xplane_without_xprof_names_the_extra(
     monkeypatch.setitem(sys.modules, "xprof", None)
     xplane_path = tmp_path / "h.xplane.pb"
     xplane_path.write_bytes(b"\x00")
-    with pytest.raises(ImportError, match=r"cta\[jax\]"):
+    with pytest.raises(ImportError, match=r"compute-trace-analysis\[jax\]"):
         _ingest(xplane_path, tmp_path / "o")
 
 

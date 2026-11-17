@@ -6,6 +6,7 @@ import pathlib
 from typing import Any
 
 from cta import models
+from cta.export import writers
 
 _TEX_SPECIAL = {
     "\\": "\\textbackslash{}",
@@ -125,3 +126,13 @@ def export_latex(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     return content
+
+
+@writers.register_writer("latex", aliases=("tex",))
+def write_latex(
+    report: models.Report, out_dir: pathlib.Path
+) -> dict[str, pathlib.Path]:
+    """Writes ``report.tex``."""
+    latex_path = out_dir / "report.tex"
+    export_latex(report, latex_path)
+    return {"latex": latex_path}

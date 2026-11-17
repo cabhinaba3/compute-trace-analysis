@@ -136,8 +136,23 @@ python_version = "3.12"
 warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
-ignore_missing_imports = true
 exclude = ["third_party", "scripts"]
+
+[[tool.mypy.overrides]]
+# Third-party packages without type information. Only these may be missing:
+# a missing first-party module is an error.
+module = [
+    "google.*",
+    "hta.*",
+    "jax.*",
+    "jtop",
+    "pandas.*",
+    "plotly.*",
+    "pyarrow.*",
+    "scipy.*",
+    "torch.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

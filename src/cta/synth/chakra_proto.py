@@ -17,6 +17,8 @@ from __future__ import annotations
 import functools
 from typing import Any
 
+from cta import _optional
+
 # NodeType enum numbers: stable protobuf wire values, asserted against the
 # generated enum in the tests.
 MEM_LOAD_NODE = 2
@@ -40,15 +42,11 @@ def et_def_pb2() -> Any:
         ImportError: The ``chakra`` extra (mlc-chakra and protobuf) is not
             installed.
     """
-    try:
-        from chakra.schema.protobuf import et_def_pb2 as generated_module
-    except ImportError as exc:
-        raise ImportError(
-            "writing .et files needs the Chakra schema: "
-            "pip install 'compute-trace-analysis[chakra]'"
-        ) from exc
-
-    return generated_module
+    return _optional.require(
+        "chakra.schema.protobuf.et_def_pb2",
+        extra="chakra",
+        purpose="writing .et files from Python",
+    )
 
 
 # Lazily resolved module attributes (PEP 562): alias -> protobuf message name.

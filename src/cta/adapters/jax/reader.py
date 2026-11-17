@@ -5,7 +5,7 @@ A trace session (``<logdir>/plugins/profile/<run>/``) holds
 ``<host>.trace.json.gz`` and ``perfetto_trace.json.gz``. The three describe
 the same profile, so exactly one file per host is read: the XProf Chrome trace
 if present, else the Perfetto one, else the ``xplane.pb`` (converted with the
-optional ``xprof`` package: ``pip install cta[jax]``).
+optional ``xprof`` package from the ``jax`` extra).
 
 Device ops are every event on a ``/device:*`` stream (GPU kernels, memcpys,
 memsets) plus XLA:CPU thunks (events with an ``hlo_op`` argument on the host).
@@ -30,6 +30,7 @@ import warnings
 import numpy as np
 import polars as pl
 
+from cta import _optional
 from cta import models
 from cta import plugins
 from cta import table_schemas
@@ -105,13 +106,11 @@ def _xplane_to_events(path: pathlib.Path) -> list[dict[str, Any]]:
     Raises:
         ImportError: If the optional ``xprof`` package is not installed.
     """
-    try:
-        from xprof.convert import raw_to_tool_data  # optional dependency
-    except ImportError as exc:
-        raise ImportError(
-            f"{path.name} is an XPlane protobuf; converting it needs xprof: "
-            "pip install 'cta[jax]'"
-        ) from exc
+    raw_to_tool_data = _optional.require(
+        "xprof.convert.raw_to_tool_data",
+        extra="jax",
+        purpose=f"reading the XPlane protobuf {path.name}",
+    )
     tool_data, _ = raw_to_tool_data.xspace_to_tool_data(
         [str(path)], "trace_viewer", {}
     )

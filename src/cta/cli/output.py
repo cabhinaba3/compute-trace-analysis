@@ -65,6 +65,11 @@ def split_comma_separated(value: str | None) -> list[str] | None:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def split_comma_separated_ints(value: str | None) -> list[int]:
+    """Parses a comma-separated option value such as ``"0,1"`` into ints."""
+    return [int(item) for item in split_comma_separated(value) or []]
+
+
 def emit_report(
     report: models.Report,
     output_format: str,
@@ -86,7 +91,7 @@ def emit_report(
         typer.BadParameter: If ``output_format`` is neither ``"rich"`` nor
             ``"json"``.
     """
-    from cta.export import tabular
+    from cta.export import serialize
     from cta.export import terminal
 
     if output_format not in ("rich", "json"):
@@ -95,7 +100,7 @@ def emit_report(
         )
     status_console = err_console if output_format == "json" else console
     if output_format == "json":
-        typer.echo(tabular.report_to_json(report))
+        typer.echo(serialize.report_to_json(report))
     else:
         terminal.render_terminal_report(report, console=console)
     if out_dir is not None:

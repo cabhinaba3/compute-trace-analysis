@@ -1,6 +1,6 @@
 """One interactive HTML dashboard per report: tabs per use case, shared filters.
 
-Needs ``pip install cta[viz]``. Two modes share one page:
+Needs the ``viz`` extra. Two modes share one page:
 
 * **Static file** (``build_dashboard``): fully offline, plotly.js embedded
   once (``cdn=True`` loads it instead). The filters hide or restyle what is
@@ -18,11 +18,11 @@ from collections.abc import Sequence
 import contextlib
 import dataclasses
 import html
-import importlib.util
 import json
 import pathlib
 from typing import Any
 
+from cta import _optional
 from cta.viz import context
 from cta.viz import plots
 from cta.viz import registry as viz_registry
@@ -164,9 +164,9 @@ def default_specs(ctx: context.DataContext) -> list[viz_spec.PlotSpec]:
 
 def _require_plotly() -> None:
     """Raises ImportError with an install hint if Plotly is missing."""
-    if importlib.util.find_spec("plotly") is None:
-        raise ImportError(
-            "the interactive dashboard needs plotly: pip install 'cta[viz]'"
+    if not _optional.available("plotly"):
+        raise _optional.missing(
+            "plotly", extra="viz", purpose="the interactive dashboard"
         )
 
 

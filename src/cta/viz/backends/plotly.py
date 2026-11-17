@@ -1,16 +1,15 @@
 """Plotly renderer for :class:`~cta.viz.ir.Chart` (interactive HTML).
 
-Needs ``pip install cta[viz]``.
+Needs the ``viz`` extra.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from cta import _optional
 from cta.viz import ir
 from cta.viz import theme as viz_theme
-
-_INSTALL_HINT = "interactive HTML plots need plotly: pip install 'cta[viz]'"
 
 
 def _graph_objects() -> Any:
@@ -20,11 +19,9 @@ def _graph_objects() -> Any:
         ImportError: If Plotly is not installed; the message says how to
             install it.
     """
-    try:
-        import plotly.graph_objects as go
-    except ImportError as exc:
-        raise ImportError(_INSTALL_HINT) from exc
-    return go
+    return _optional.require(
+        "plotly.graph_objects", extra="viz", purpose="interactive HTML plots"
+    )
 
 
 def render(

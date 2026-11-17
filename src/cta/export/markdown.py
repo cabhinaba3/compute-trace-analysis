@@ -5,6 +5,7 @@ from __future__ import annotations
 import pathlib
 
 from cta import models
+from cta.export import writers
 
 
 def _format_cell(value: object) -> str:
@@ -76,3 +77,13 @@ def export_markdown(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
     return content
+
+
+@writers.register_writer("markdown", aliases=("md",))
+def write_markdown(
+    report: models.Report, out_dir: pathlib.Path
+) -> dict[str, pathlib.Path]:
+    """Writes ``report.md``."""
+    markdown_path = out_dir / "report.md"
+    export_markdown(report, markdown_path)
+    return {"markdown": markdown_path}

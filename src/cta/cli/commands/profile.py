@@ -12,7 +12,7 @@ from cta.cli import output
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from cta.profiling import runners
+    from cta.profiling import base
 
 profile_app = typer.Typer(
     help=(
@@ -58,7 +58,7 @@ _AnalyzeOption = Annotated[
 ]
 
 
-def _finish_profile(result: runners.ProfileResult, analyze: bool) -> None:
+def _finish_profile(result: base.ProfileResult, analyze: bool) -> None:
     """Reports the collected artifacts and optionally analyses the bundle.
 
     Args:
@@ -95,7 +95,7 @@ def _finish_profile(result: runners.ProfileResult, analyze: bool) -> None:
 def _run_profile(
     ctx: typer.Context,
     tool: str,
-    run_profiler: Callable[[list[str], str], runners.ProfileResult],
+    run_profiler: Callable[[list[str], str], base.ProfileResult],
     name: str | None,
     analyze: bool,
 ) -> None:
@@ -112,7 +112,7 @@ def _run_profile(
         typer.BadParameter: If no command was given.
         typer.Exit: If the profiler fails or the profiled command fails.
     """
-    from cta.profiling import runners
+    from cta.profiling import base
 
     command = list(ctx.args)
     if not command:
@@ -121,8 +121,8 @@ def _run_profile(
             f"{tool} -- python train.py"
         )
     try:
-        result = run_profiler(command, name or runners.default_name(command))
-    except runners.ProfilerError as exc:
+        result = run_profiler(command, name or base.default_name(command))
+    except base.ProfilerError as exc:
         output.print_error(exc)
         raise typer.Exit(code=2) from exc
     _finish_profile(result, analyze)
@@ -148,12 +148,12 @@ def profile_nsys(
 
     Writes the `.nsys-rep` and the `.sqlite` export.
     """
-    from cta.profiling import runners
+    from cta.profiling import nsys as profiling_nsys
 
     _run_profile(
         ctx,
         "nsys",
-        lambda command, bundle_name: runners.run_nsys(
+        lambda command, bundle_name: profiling_nsys.run(
             command,
             out_dir,
             bundle_name,
@@ -202,7 +202,7 @@ def profile_ncu(
 
     Needs access to the hardware counters.
     """
-    from cta.profiling import runners
+    from cta.profiling import ncu as profiling_ncu
 
     metric_names = (
         tuple(metric.strip() for metric in metrics.split(",") if metric.strip())
@@ -212,7 +212,7 @@ def profile_ncu(
     _run_profile(
         ctx,
         "ncu",
-        lambda command, bundle_name: runners.run_ncu(
+        lambda command, bundle_name: profiling_ncu.run(
             command,
             out_dir,
             bundle_name,
@@ -249,12 +249,12 @@ def profile_kineto(
     Run `cta profile kineto -- python train.py` or
     `cta profile kineto -- -m package.module`.
     """
-    from cta.profiling import runners
+    from cta.profiling import kineto as profiling_kineto
 
     _run_profile(
         ctx,
         "kineto",
-        lambda command, bundle_name: runners.run_kineto(
+        lambda command, bundle_name: profiling_kineto.run(
             command, out_dir, bundle_name, step_on=step_on
         ),
         name,
@@ -280,12 +280,12 @@ def profile_jax(
     Run `cta profile jax -- python train.py` or
     `cta profile jax -- -m package.module`.
     """
-    from cta.profiling import runners
+    from cta.profiling import jax as profiling_jax
 
     _run_profile(
         ctx,
         "jax",
-        lambda command, bundle_name: runners.run_jax(
+        lambda command, bundle_name: profiling_jax.run(
             command, out_dir, bundle_name, perfetto=perfetto
         ),
         name,
@@ -304,12 +304,12 @@ def profile_trtexec(
 
     The export flags are added for you.
     """
-    from cta.profiling import runners
+    from cta.profiling import trtexec as profiling_trtexec
 
     _run_profile(
         ctx,
         "trtexec",
-        lambda trtexec_args, bundle_name: runners.run_trtexec(
+        lambda trtexec_args, bundle_name: profiling_trtexec.run(
             trtexec_args, out_dir, bundle_name
         ),
         name or "trtexec",
@@ -331,14 +331,19 @@ def profile_jtop(
 
     Run `cta profile jtop -- python infer.py`.
     """
-    from cta.profiling import runners
+    from cta.profiling import jtop as profiling_jtop
 
     _run_profile(
         ctx,
         "jtop",
-        lambda command, bundle_name: runners.run_jtop(
+        lambda command, bundle_name: profiling_jtop.run(
             command, out_dir, bundle_name, interval=interval
         ),
         name,
         analyze,
     )
+
+
+def register(app: typer.Typer) -> None:
+    """Adds the ``cta profile`` command group to the application."""
+    app.add_typer(profile_app, name="profile")

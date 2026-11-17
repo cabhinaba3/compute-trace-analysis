@@ -18,6 +18,7 @@ from typing import Any, cast
 
 import polars as pl
 
+from cta import _optional
 from cta import models
 from cta.analysis import step_slicing
 from cta.viz import registry
@@ -566,13 +567,11 @@ def _require_duckdb() -> Any:
             filters and the ``custom`` kind cannot run.
     """
     try:
-        import duckdb
+        return _optional.require(
+            "duckdb", extra="sql", purpose="SQL plots and 'where' filters"
+        )
     except ImportError as exc:
-        raise registry.NotApplicableError(
-            "SQL and 'where' filters need DuckDB: "
-            "pip install 'compute-trace-analysis[sql]'"
-        ) from exc
-    return duckdb
+        raise registry.NotApplicableError(str(exc)) from exc
 
 
 def _sql_filter(df: pl.DataFrame, predicate: str) -> pl.DataFrame:

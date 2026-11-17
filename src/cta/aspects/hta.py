@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import contextlib
-import importlib.util
 import logging
 import pathlib
 import shutil
@@ -21,14 +20,14 @@ from typing import Any
 
 import polars as pl
 
+from cta import _optional
 from cta import models
 from cta import plugins
 from cta.analysis import stats
 
-# Optional dependency (pip install "compute-trace-analysis[hta]"). find_spec
-# avoids importing HTA, which drags in pandas and plotly (>1 s), until the
-# aspect actually runs.
-_HTA_AVAILABLE = importlib.util.find_spec("hta") is not None
+# Optional dependency (the "hta" extra). Checking without importing avoids
+# HTA's pandas and plotly imports (>1 s) until the aspect actually runs.
+_HTA_AVAILABLE = _optional.available("hta")
 
 _METRICS: list[tuple[str, str, bool]] = [
     ("idle_host_wait_us", "us", True),
