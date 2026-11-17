@@ -1,4 +1,4 @@
-"""The ``kernel_diff`` aspect: kernel time by kernel, op family and scope."""
+"""The ``kernels`` aspect: kernel time by kernel, op family and scope."""
 
 from __future__ import annotations
 
@@ -83,12 +83,12 @@ def _mean_over_trials(
 
 
 @plugins.register_aspect(
-    "kernel_diff",
+    "kernels",
     title="Kernel & Operator Family Diff",
     required_formats=_KERNEL_FORMATS,
     any_of_formats=True,
 )
-class KernelDiffAspect(plugins.Aspect):
+class KernelsAspect(plugins.Aspect):
     """Compares GPU kernel time by category, kernel, op family and scope.
 
     Attributes:

@@ -8,7 +8,7 @@ import polars as pl
 
 # Formats that provide an execution graph (nodes, edges and traffic tables),
 # in the order ``read_graph_tables`` prefers them.
-FORMATS = ("chakra_et", "chakra_host_et", "goal")
+FORMATS = ("chakra", "chakra_host", "goal")
 
 
 def read_graph_tables(

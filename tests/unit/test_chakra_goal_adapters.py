@@ -63,17 +63,17 @@ def test_chakra_et_multirank_comparison(tmp_path: pathlib.Path) -> None:
 
     report = cta.compare(balanced_dir, straggler_dir, cache_dir=cache_dir)
     assert set(report.aspects) == {
-        "dag_critical_path",
-        "comm_collectives",
+        "critical_path",
+        "collectives",
         "rank_skew",
         "traffic_matrix",
     }
 
-    critical_path = _summary_by_metric(report, "dag_critical_path")
+    critical_path = _summary_by_metric(report, "critical_path")
     assert critical_path["critical_path_us"]["delta_pct"] > 50.0
     assert critical_path["dag_depth"]["baseline"] == pytest.approx(4.0)
 
-    comm = _summary_by_metric(report, "comm_collectives")
+    comm = _summary_by_metric(report, "collectives")
     assert comm["total_comm_mb"]["delta_pct"] == pytest.approx(300.0)
 
     skew = _summary_by_metric(report, "rank_skew")
@@ -91,7 +91,7 @@ def test_chakra_host_et_comparison(tmp_path: pathlib.Path) -> None:
     report = cta.compare(
         slow_host_et_path, fast_host_et_path, cache_dir=tmp_path / ".cache"
     )
-    critical_path = _summary_by_metric(report, "dag_critical_path")
+    critical_path = _summary_by_metric(report, "critical_path")
     assert critical_path["cp_compute_us"]["delta_pct"] == pytest.approx(-50.0)
 
 
@@ -118,8 +118,8 @@ def test_goal_text_and_mmap_bin_exact_parity_and_algo_diff(
     # 1. Exact parity between the .goal text and the SPCL .bin binary schedule.
     parity = cta.compare(ring_goal, ring_bin, cache_dir=cache_dir)
     for aspect_name in (
-        "dag_critical_path",
-        "comm_collectives",
+        "critical_path",
+        "collectives",
         "rank_skew",
         "traffic_matrix",
     ):
@@ -229,9 +229,9 @@ def test_chakra_storage_and_data_op_nodes(tmp_path: pathlib.Path) -> None:
     out_dir = tmp_path / "out"
     out_dir.mkdir()
     artifact = models.TraceArtifact(
-        format="chakra_et", paths=(et_path,), world_size=1
+        format="chakra", paths=(et_path,), world_size=1
     )
-    tables = reader.ChakraEtAdapter().ingest(artifact, out_dir)
+    tables = reader.ChakraAdapter().ingest(artifact, out_dir)
     nodes = pl.read_parquet(tables["nodes"])
     edges = pl.read_parquet(tables["edges"])
     nodes_by_name = {row["name"]: row for row in nodes.iter_rows(named=True)}

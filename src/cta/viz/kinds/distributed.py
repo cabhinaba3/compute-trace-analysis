@@ -176,7 +176,7 @@ def skew(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     "critical_path",
     group="distributed",
     title="Critical path: compute, exposed communication and slack",
-    needs="aspect dag_critical_path (Chakra or GOAL traces)",
+    needs="aspect critical_path (Chakra or GOAL traces)",
     aliases=("cp_summary",),
     options={},
 )
@@ -202,7 +202,7 @@ def critical_path(
     """
     del options
     values = chart_helpers.summary_values(
-        ctx.report_table("dag_critical_path"), ctx.labels
+        ctx.report_table("critical_path"), ctx.labels
     )
     labels = [
         label

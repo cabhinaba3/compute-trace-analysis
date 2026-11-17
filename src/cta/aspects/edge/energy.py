@@ -1,4 +1,4 @@
-"""Aspect ``system_energy``: Jetson power, energy per query and utilisation."""
+"""Aspect ``energy``: Jetson power, energy per query and utilisation."""
 
 from __future__ import annotations
 
@@ -50,11 +50,11 @@ def _count_bundle_queries(
 
 
 @plugins.register_aspect(
-    "system_energy",
+    "energy",
     title="System Utilization, Thermals & Energy Efficiency",
     required_formats=("jtop",),
 )
-class SystemEnergyAspect(plugins.Aspect):
+class EnergyAspect(plugins.Aspect):
     """Compares Jetson power, energy per query, utilisation and thermals.
 
     Attributes:

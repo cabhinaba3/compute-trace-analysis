@@ -1,4 +1,4 @@
-"""Aspect ``comm_collectives``: collective counts and volumes by type."""
+"""Aspect ``collectives``: collective counts and volumes by type."""
 
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from cta.aspects.distributed import graph_tables
 
 
 @plugins.register_aspect(
-    "comm_collectives",
+    "collectives",
     title="Communication & Collective Characterization",
     required_formats=graph_tables.FORMATS,
     any_of_formats=True,
 )
-class CommCollectivesAspect(plugins.Aspect):
+class CollectivesAspect(plugins.Aspect):
     """Compares communication volume, op count and message sizes.
 
     Attributes:

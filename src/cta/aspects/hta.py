@@ -1,11 +1,11 @@
-"""Optional ``hta_kineto`` aspect built on Meta's Holistic Trace Analysis.
+"""Optional ``hta`` aspect built on Meta's Holistic Trace Analysis.
 
 HTA (PyPI `traceinsight`) already implements GPU idle-time attribution,
 kernel-launch statistics and stream queue-length analysis for Kineto traces,
 so this module only adapts its output to CTA's summary schema instead of
 reimplementing it. It runs on the whole raw trace (CTA's
 --warmup-steps/--max-steps do not apply) and is opt-in:
-``--aspects hta_kineto``.
+``--aspects hta``.
 """
 
 from __future__ import annotations
@@ -142,12 +142,12 @@ def _run_hta(
 if _HTA_AVAILABLE:
 
     @plugins.register_aspect(
-        "hta_kineto",
+        "hta",
         title="HTA GPU Health: Idle Attribution, Launch Delay & Queue Length",
         required_formats=("kineto",),
         default_enabled=False,
     )
-    class HtaKinetoAspect(plugins.Aspect):
+    class HtaAspect(plugins.Aspect):
         """Compares HTA's idle-time, launch-delay and queue-length metrics.
 
         Registered only when HTA is installed.

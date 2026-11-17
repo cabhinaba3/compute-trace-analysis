@@ -36,13 +36,13 @@ _CRITICAL_PATH_SERIES = (
     group="overview",
     title="Timeline execution breakdown",
     exported=True,
-    needs="aspect timeline_overlap or dag_critical_path",
+    needs="aspect overlap or critical_path",
 )
 def breakdown(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     """Plots stacked compute, overlapped comm, exposed comm and idle time.
 
-    Uses the timeline_overlap aspect, or else the critical-path composition
-    from dag_critical_path.
+    Uses the overlap aspect, or else the critical-path composition
+    from critical_path.
 
     Args:
         ctx: Data access for the report being plotted.
@@ -55,16 +55,15 @@ def breakdown(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         NotApplicableError: Neither aspect is in the report.
     """
     series: tuple[tuple[str, str], ...]
-    if ctx.has_aspect("timeline_overlap"):
-        aspect, series = "timeline_overlap", _TIMELINE_OVERLAP_SERIES
+    if ctx.has_aspect("overlap"):
+        aspect, series = "overlap", _TIMELINE_OVERLAP_SERIES
         ylabel, title = "Time (ms)", "Timeline execution breakdown"
-    elif ctx.has_aspect("dag_critical_path"):
-        aspect, series = "dag_critical_path", _CRITICAL_PATH_SERIES
+    elif ctx.has_aspect("critical_path"):
+        aspect, series = "critical_path", _CRITICAL_PATH_SERIES
         ylabel, title = "Critical-path time (us)", "Critical-path composition"
     else:
         raise registry.NotApplicableError(
-            "Breakdown plot requires 'timeline_overlap' or 'dag_critical_path'"
-            " aspect"
+            "Breakdown plot requires 'overlap' or 'critical_path' aspect"
         )
     labels = ctx.labels
     traces = []
@@ -88,7 +87,7 @@ def breakdown(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     "waterfall",
     group="compare",
     title="Delta waterfall",
-    needs="2 groups; a per-entity table of kernel_diff",
+    needs="2 groups; a per-entity table of kernels",
     options={
         "top_k": registry.Opt(
             "int", 8, "Entities shown; the rest collapse into 'other'."
@@ -96,7 +95,7 @@ def breakdown(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         "table": registry.Opt(
             "str",
             "by_family",
-            "kernel_diff table: by_family, by_kernel or by_scope.",
+            "kernels table: by_family, by_kernel or by_scope.",
         ),
     },
 )
@@ -122,7 +121,7 @@ def waterfall(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         raise registry.NotApplicableError(
             "Waterfall needs exactly two groups (baseline and candidate)"
         )
-    per_entity = ctx.report_table("kernel_diff", options["table"])
+    per_entity = ctx.report_table("kernels", options["table"])
     baseline_label, candidate_label = ctx.labels
     key_column = per_entity.columns[0]
     if not {baseline_label, candidate_label, "delta"} <= set(

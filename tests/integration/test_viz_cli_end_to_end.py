@@ -29,7 +29,7 @@ def test_all_six_plot_kinds_and_formats(tmp_path: pathlib.Path) -> None:
     cache_dir = tmp_path / "cache"
     figure_dir = tmp_path / "figs"
 
-    # 1. Distributed report (dag_critical_path, comm_collectives, rank_skew,
+    # 1. Distributed report (critical_path, collectives, rank_skew,
     # traffic_matrix).
     base_run_dir = tmp_path / "c0"
     skew_run_dir = tmp_path / "c1"
@@ -79,8 +79,8 @@ def test_all_six_plot_kinds_and_formats(tmp_path: pathlib.Path) -> None:
         three_way_report.plot(kind=kind, path=figure_path)
         assert figure_path.exists() and figure_path.stat().st_size > 500
 
-    # 2. Device and roofline plots (timeline_overlap, kernel_diff,
-    # roofline_diff).
+    # 2. Device and roofline plots (overlap, kernels,
+    # roofline).
     fp16_trace_path = kineto.write_kineto_trace(
         tmp_path / "k0.json.gz",
         attn_us=420.0,
@@ -162,7 +162,7 @@ trials = ["cand_0.json", "cand_1.json", "cand_2.json", "cand_3.json"]
 
     groups, config = manifest.load_manifest(manifest_path)
     report = cta.run_comparison(groups, config)
-    summary = report.to_polars("latency_throughput")
+    summary = report.to_polars("latency")
     row = summary.filter(summary["metric"] == "mean_step_ms").row(0, named=True)
     assert row["significant"] is True
     assert float(row["p_welch"]) < 0.01
@@ -170,7 +170,7 @@ trials = ["cand_0.json", "cand_1.json", "cand_2.json", "cand_3.json"]
     assert float(row["delta"]) < -1.5
     assert not report.violations
 
-    pandas_summary = report.to_pandas("latency_throughput")
+    pandas_summary = report.to_pandas("latency")
     assert len(pandas_summary) == summary.height
 
     tex = report.to_latex(tmp_path / "out.tex")
@@ -337,7 +337,7 @@ def test_quickstarts_tall_ncu_legacy_nsys_and_bundle_equivalence(
             "smsp__sass_thread_inst_executed_op_fadd_pred_on.sum,20000000000\n"
         )
     tall_report = cta.compare(tall_a, tall_b, cache_dir=cache_dir)
-    assert "roofline_diff" in tall_report.aspects
+    assert "roofline" in tall_report.aspects
 
     # 3. A legacy Nsight Systems SQLite export with a GENERIC_EVENTS table
     # instead of GPU_METRICS.
@@ -361,7 +361,7 @@ def test_quickstarts_tall_ncu_legacy_nsys_and_bundle_equivalence(
     legacy_report = cta.compare(
         legacy_a_path, legacy_b_path, cache_dir=cache_dir
     )
-    assert "kernel_diff" in legacy_report.aspects
+    assert "kernels" in legacy_report.aspects
 
     # 4. A RunBundle with both Chakra-ET and GOAL artifacts, which exercises
     # the schedule_equivalence aspect.
@@ -410,9 +410,7 @@ def test_single_trace_analyze_and_single_trace_plots(
     assert chakra_report.mode == "single"
     assert len(chakra_report.diagnoses) == 1
     assert "Bottleneck Regime:" in chakra_report.diagnoses[0].summary
-    by_comm_type = chakra_report.to_polars(
-        "comm_collectives", table="by_comm_type"
-    )
+    by_comm_type = chakra_report.to_polars("collectives", table="by_comm_type")
     assert "share_pct" in by_comm_type.columns
     for kind in ("breakdown", "topk", "traffic", "skew", "scaling"):
         figure_path = figure_dir / f"c_{kind}.pdf"

@@ -326,7 +326,7 @@ def _write_history_reports(
         saved_report = {
             "created_at": f"2026-01-{i + 1:02d}T00:00:00+00:00",
             "groups": ["a", "b"],
-            "aspects": {"latency_throughput": [latency_row]},
+            "aspects": {"latency": [latency_row]},
         }
         (run_dir / "report.json").write_text(json.dumps(saved_report))
     return str(root / "*" / "report.json")
@@ -398,7 +398,7 @@ def test_custom_plot_from_sql_and_report_table(
         ctx,
         "custom",
         {
-            "source": "report:kernel_diff.by_family",
+            "source": "report:kernels.by_family",
             "mark": "barh",
             "x": "delta",
             "y": "op_family",
@@ -579,7 +579,7 @@ def test_steps_only_bundle_gets_the_same_warmup_slicing_as_the_aspects(
     report = cta.analyze(
         timing_path, label="trt", warmup_steps=2, cache_dir=tmp_path / "c"
     )
-    latency = report.to_polars("latency_throughput")
+    latency = report.to_polars("latency")
     rows_by_metric = {
         row["metric"]: row for row in latency.iter_rows(named=True)
     }
@@ -761,7 +761,7 @@ def test_device_and_rank_filters_reach_metrics_and_plots(
         trace_path, label="g", ranks=[3], cache_dir=tmp_path / "c"
     )
     assert (
-        "kernel_diff" not in missing_rank_report.aspects
+        "kernels" not in missing_rank_report.aspects
         or _metric_value(missing_rank_report, "kernel_launches") == 0.0
     )
 

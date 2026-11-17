@@ -122,7 +122,7 @@ def test_list_shows_formats_and_aspects() -> None:
     assert result.exit_code == 0
     # Rich tables may wrap long names, so also search with whitespace removed.
     compact_output = re.sub(r"\s+", "", result.output)
-    for token in ("chakra", "goal", "latency_throughput", "kernel_diff"):
+    for token in ("chakra", "goal", "latency", "kernels"):
         assert token in compact_output or token in result.output
 
 
@@ -217,8 +217,8 @@ def test_cache_hits_for_copied_trace(
         if path.is_file():
             # A different mtime, but identical content.
             os.utime(path, ns=(1, 1))
-    original = discovery.resolve_bundle(original_dir).artifacts["chakra_et"]
-    copied = discovery.resolve_bundle(copy_dir).artifacts["chakra_et"]
+    original = discovery.resolve_bundle(original_dir).artifacts["chakra"]
+    copied = discovery.resolve_bundle(copy_dir).artifacts["chakra"]
     original_digest = cache.compute_artifact_digest(original, "1.0")
     copied_digest = cache.compute_artifact_digest(copied, "1.0")
     assert original_digest == copied_digest
@@ -273,22 +273,22 @@ def test_hta_aspect_is_opt_in_and_wraps_hta(tmp_path: pathlib.Path) -> None:
     default_report = cta.compare(
         baseline_trace_path, candidate_trace_path, cache_dir=cache_dir
     )
-    assert "hta_kineto" not in default_report.aspects
+    assert "hta" not in default_report.aspects
 
     report = cta.compare(
         baseline_trace_path,
         candidate_trace_path,
-        aspects=["hta_kineto"],
+        aspects=["hta"],
         cache_dir=cache_dir,
     )
-    summary = report.to_polars("hta_kineto")
+    summary = report.to_polars("hta")
     metrics = set(summary["metric"].to_list())
     assert {
         "idle_host_wait_us",
         "launch_delay_mean_us",
         "queue_length_max",
     } <= metrics
-    details = report.aspect("hta_kineto").details
+    details = report.aspect("hta").details
     assert any(name.startswith("launch_stats[") for name in details)
 
     result = cli_runner.invoke(
@@ -298,7 +298,7 @@ def test_hta_aspect_is_opt_in_and_wraps_hta(tmp_path: pathlib.Path) -> None:
             str(baseline_trace_path),
             str(candidate_trace_path),
             "-a",
-            "hta_kineto",
+            "hta",
             "--cache-dir",
             str(cache_dir),
             "--format",

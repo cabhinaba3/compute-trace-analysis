@@ -41,7 +41,7 @@ def _read_chakra(
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     run = discovery.resolve_bundle(directory)
     tables = cache.CacheStore(cache_dir).get_or_ingest(
-        run.artifacts["chakra_et"], plugins.ADAPTERS["chakra_et"]
+        run.artifacts["chakra"], plugins.ADAPTERS["chakra"]
     )
     return pl.read_parquet(tables["nodes"]), pl.read_parquet(tables["edges"])
 

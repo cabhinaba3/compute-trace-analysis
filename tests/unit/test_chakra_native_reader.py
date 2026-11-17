@@ -271,9 +271,9 @@ def _tables(
     """Ingests the files as one artifact and reads the tables back."""
     out_dir.mkdir(parents=True, exist_ok=True)
     artifact = models.TraceArtifact(
-        format="chakra_et", paths=tuple(paths), world_size=len(paths)
+        format="chakra", paths=tuple(paths), world_size=len(paths)
     )
-    written = reader.ChakraEtAdapter().ingest(artifact, out_dir)
+    written = reader.ChakraAdapter().ingest(artifact, out_dir)
     return {name: pl.read_parquet(p) for name, p in written.items()}
 
 

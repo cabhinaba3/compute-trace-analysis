@@ -146,7 +146,7 @@ def verify_chakra_goal_equivalence(
     chakra_format = next(
         (
             trace_format
-            for trace_format in ("chakra_et", "chakra_host_et")
+            for trace_format in ("chakra", "chakra_host")
             if trace_format in chakra_bundle.artifacts
         ),
         None,
@@ -259,7 +259,7 @@ def verify_chakra_goal_equivalence(
 @plugins.register_aspect(
     "schedule_equivalence",
     title="Chakra-ET to GOAL Conversion Conservation",
-    required_formats=("chakra_et", "goal"),
+    required_formats=("chakra", "goal"),
     any_of_formats=False,
 )
 class ScheduleEquivalenceAspect(plugins.Aspect):
@@ -299,7 +299,7 @@ class ScheduleEquivalenceAspect(plugins.Aspect):
             compute_mismatch_pct: list[float] = []
             comm_mismatch_pct: list[float] = []
             for table_paths in tables[group.group_id]:
-                chakra_nodes = pl.read_parquet(table_paths["chakra_et.nodes"])
+                chakra_nodes = pl.read_parquet(table_paths["chakra.nodes"])
                 goal_nodes = pl.read_parquet(table_paths["goal.nodes"])
                 world_size = max(
                     int(chakra_nodes["rank"].n_unique()),

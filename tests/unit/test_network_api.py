@@ -1,4 +1,4 @@
-"""Tests for the network-ops table and the ``network_api`` aspect."""
+"""Tests for the network-ops table and the ``network`` aspect."""
 
 from __future__ import annotations
 
@@ -305,7 +305,7 @@ def test_aspect_compares_two_apis(tmp_path: pathlib.Path) -> None:
         ).write_parquet(path)
         groups.append(models.TrialGroup(name, name, ()))
         tables[name] = [{"kineto.network_ops": path}] * 3
-    result = plugins.ASPECTS["network_api"].run(
+    result = plugins.ASPECTS["network"].run(
         tuple(groups), tables, models.AnalysisConfig()
     )
     rows = {r["metric"]: r for r in result.summary.iter_rows(named=True)}

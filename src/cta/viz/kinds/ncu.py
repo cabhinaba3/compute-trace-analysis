@@ -291,7 +291,7 @@ _LOG_AXIS_FLOOR = 1e-3
         ),
         "peak_bw_gbs": registry.Opt("float", None, "Memory roof (GB/s)."),
     },
-    needs="aspect roofline_diff (Nsight Compute data)",
+    needs="aspect roofline (Nsight Compute data)",
 )
 def roofline(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     """Plots arithmetic intensity against achieved TFLOP/s per kernel.
@@ -307,14 +307,14 @@ def roofline(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         A one-panel log-log chart.
 
     Raises:
-        NotApplicableError: The report lacks the roofline_diff aspect or
+        NotApplicableError: The report lacks the roofline aspect or
             kernels with FLOP/byte data.
     """
-    if not ctx.has_aspect("roofline_diff"):
+    if not ctx.has_aspect("roofline"):
         raise registry.NotApplicableError(
-            "Roofline plot requires 'roofline_diff' aspect"
+            "Roofline plot requires 'roofline' aspect"
         )
-    roofline_aspect = ctx.require_report().aspects["roofline_diff"]
+    roofline_aspect = ctx.require_report().aspects["roofline"]
     labels = ctx.labels
     traces: list[ir.Trace] = []
     kernels_by_label = {

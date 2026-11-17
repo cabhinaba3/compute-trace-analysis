@@ -1,7 +1,7 @@
 """Plot kinds for communication calls: bandwidth, wait skew and size sweeps.
 
 They read the ``network_ops`` source and reuse the aspect's arithmetic, so a
-plot and the ``network_api`` summary agree.
+plot and the ``network`` summary agree.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""The ``latency_throughput`` aspect: per-step latency and throughput."""
+"""The ``latency`` aspect: per-step latency and throughput."""
 
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from cta.analysis import step_slicing
 
 
 @plugins.register_aspect(
-    "latency_throughput",
+    "latency",
     title="End-to-End Latency, Tail Percentiles & Throughput",
     required_formats=step_slicing.TIMELINE_FORMATS,
     any_of_formats=True,
 )
-class LatencyThroughputAspect(plugins.Aspect):
+class LatencyAspect(plugins.Aspect):
     """Compares step latency percentiles, throughput and CUDA runtime time.
 
     Attributes:

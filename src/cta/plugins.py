@@ -239,7 +239,7 @@ ASPECTS: Registry[Aspect] = Registry(
     (
         "cta.aspects.device.latency",
         "cta.aspects.device.kernels",
-        "cta.aspects.device.timeline",
+        "cta.aspects.device.overlap",
         "cta.aspects.device.os_runtime",
         "cta.aspects.device.roofline",
         "cta.aspects.distributed.critical_path",

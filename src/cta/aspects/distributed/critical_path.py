@@ -1,4 +1,4 @@
-"""Aspect ``dag_critical_path``: graph size, depth, critical path and slack."""
+"""Aspect ``critical_path``: graph size, depth, critical path and slack."""
 
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ from cta.aspects.distributed import graph_tables
 
 
 @plugins.register_aspect(
-    "dag_critical_path",
+    "critical_path",
     title="DAG Structure & Critical Path",
     required_formats=graph_tables.FORMATS,
     any_of_formats=True,
 )
-class DagCriticalPathAspect(plugins.Aspect):
+class CriticalPathAspect(plugins.Aspect):
     """Compares the execution DAG's size, depth, critical path and slack.
 
     Attributes:

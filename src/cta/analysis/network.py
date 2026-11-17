@@ -1,4 +1,4 @@
-"""Network-API helpers for the trace adapters and the ``network_api`` aspect.
+"""Network-API helpers for the trace adapters and the ``network`` aspect.
 
 A ``network_ops`` table has one row per communication call (an NCCL kernel, a
 GPU-to-GPU copy, an MPI or UCX call), in the same shape whichever API made

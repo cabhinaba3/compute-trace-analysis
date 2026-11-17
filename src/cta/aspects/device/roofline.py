@@ -1,4 +1,4 @@
-"""The ``roofline_diff`` aspect: Nsight Compute roofline and utilisation."""
+"""The ``roofline`` aspect: Nsight Compute roofline and utilisation."""
 
 from __future__ import annotations
 
@@ -109,11 +109,11 @@ def _findings_table(findings: list[pl.DataFrame]) -> pl.DataFrame:
 
 
 @plugins.register_aspect(
-    "roofline_diff",
+    "roofline",
     title="Nsight Compute Roofline, Utilization & Warp Stalls",
     required_formats=("ncu",),
 )
-class RooflineDiffAspect(plugins.Aspect):
+class RooflineAspect(plugins.Aspect):
     """Compares Nsight Compute utilisation, roofline position and stalls.
 
     Attributes:

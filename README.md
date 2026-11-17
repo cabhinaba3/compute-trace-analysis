@@ -30,7 +30,7 @@ cta synth demo_traces                                  # write small synthetic t
 cta inspect demo_traces/gpu_bundle_fp16                # show what CTA found in a trace or directory
 cta analyze demo_traces/gpu_bundle_fp16 --warmup-steps 2
 cta compare baseline.json.gz candidate.json.gz --labels Baseline,Candidate --warmup-steps 1
-cta compare a b --aspects network_api                  # pick aspects; `cta list` shows them
+cta compare a b --aspects network                  # pick aspects; `cta list` shows them
 cta compare a b --gate "mean_step_ms:+5%"              # exit code 2 if a metric regresses by more than 5%
 cta profile nsys --analyze -- python train.py          # run a vendor profiler with the flags CTA needs
 ```
@@ -44,7 +44,7 @@ import cta
 
 report = cta.compare("baseline.json.gz", "candidate.json.gz",
                      labels=["Baseline", "Candidate"], warmup_steps=1)
-df = report.to_polars("kernel_diff", table="by_family")
+df = report.to_polars("kernels", table="by_family")
 report.plot(kind="tornado", path="kernel_tornado.pdf")
 ```
 

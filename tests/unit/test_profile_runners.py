@@ -336,7 +336,7 @@ def test_kineto_gpu_step_annotations_are_not_extra_steps(
     with gzip.open(trace_path, "wt") as fh:
         json.dump({"traceEvents": events}, fh)
     report = cta.analyze(trace_path, label="t", cache_dir=tmp_path / "c")
-    latency = report.to_polars("latency_throughput")
+    latency = report.to_polars("latency")
     rows_by_metric = {
         row["metric"]: row for row in latency.iter_rows(named=True)
     }

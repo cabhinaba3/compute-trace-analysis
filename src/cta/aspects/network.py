@@ -1,4 +1,4 @@
-"""The ``network_api`` aspect: communication calls by operation and size."""
+"""The ``network`` aspect: communication calls by operation and size."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ from cta.analysis import step_slicing
 
 
 @plugins.register_aspect(
-    "network_api",
+    "network",
     title="Network API: Bandwidth and Cross-Rank Wait by Operation and Size",
     required_formats=("nsys", "kineto"),
     any_of_formats=True,
 )
-class NetworkApiAspect(plugins.Aspect):
+class NetworkAspect(plugins.Aspect):
     """Compares the bandwidth of communication calls per operation and size.
 
     Calls are matched across groups by logical operation and message-size

@@ -180,12 +180,12 @@ def test_analyze_reports_steps_per_rank_not_summed(
     rank0_path = _rank_trace(tmp_path / "t_rank0.json", t0_us=1_000.0, rank=0)
     _rank_trace(tmp_path / "t_rank1.json", t0_us=7_000_000.0, rank=1)
     report = cta.analyze(rank0_path.parent, label="r", cache_dir=tmp_path / "c")
-    latency = report.to_polars("latency_throughput")
+    latency = report.to_polars("latency")
     latency_by_metric = {
         row["metric"]: row for row in latency.iter_rows(named=True)
     }
     assert latency_by_metric["total_steps"]["r"] == 3.0
-    overlap = report.to_polars("timeline_overlap")
+    overlap = report.to_polars("overlap")
     overlap_by_metric = {
         row["metric"]: row for row in overlap.iter_rows(named=True)
     }
@@ -217,7 +217,7 @@ def test_real_two_rank_ddp_traces(tmp_path: pathlib.Path) -> None:
     report = cta.analyze(
         REAL_DDP_KINETO_DIR, label="ddp", cache_dir=tmp_path / "c"
     )
-    latency = report.to_polars("latency_throughput")
+    latency = report.to_polars("latency")
     rows_by_metric = {
         row["metric"]: row for row in latency.iter_rows(named=True)
     }

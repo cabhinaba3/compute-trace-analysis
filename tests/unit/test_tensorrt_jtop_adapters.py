@@ -73,12 +73,12 @@ def test_trtexec_timing_and_layer_fusion(tmp_path: pathlib.Path) -> None:
         fp32_dir, int8_dir, warmup_steps=5, cache_dir=cache_dir
     )
     assert set(report.aspects) == {
-        "latency_throughput",
-        "timeline_overlap",
+        "latency",
+        "overlap",
         "layer_fusion",
     }
 
-    latency = _summary_by_metric(report, "latency_throughput")
+    latency = _summary_by_metric(report, "latency")
     assert latency["total_steps"]["baseline"] == pytest.approx(20.0)
     assert latency["throughput_per_s"]["delta_pct"] > 100.0
 
@@ -125,7 +125,7 @@ def test_jtop_multicore_nano_fallback_and_bundle_joules_per_query(
     )
 
     report = cta.compare(max_n_dir, efficient_dir, cache_dir=cache_dir)
-    energy = _summary_by_metric(report, "system_energy")
+    energy = _summary_by_metric(report, "energy")
     assert energy["total_energy_j"]["baseline"] == pytest.approx(100.0)
     assert energy["total_energy_j"]["candidate"] == pytest.approx(50.0)
     assert energy["avg_power_w"]["baseline"] == pytest.approx(20.0)

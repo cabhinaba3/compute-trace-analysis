@@ -431,13 +431,13 @@ def test_analyze_end_to_end_and_scope_depth(tmp_path: pathlib.Path) -> None:
     report = cta.analyze(
         trace_path, label="j", cache_dir=tmp_path / "c", scope_depth=1
     )
-    latency = report.to_polars("latency_throughput")
+    latency = report.to_polars("latency")
     rows_by_metric = {
         row["metric"]: row for row in latency.iter_rows(named=True)
     }
     assert rows_by_metric["total_steps"]["j"] == 3.0
     # Depth 1 is the jitted function.
-    by_scope = report.to_polars("kernel_diff", table="by_scope")
+    by_scope = report.to_polars("kernels", table="by_scope")
     assert set(by_scope["scope"].to_list()) == {"jit(f)"}
 
 

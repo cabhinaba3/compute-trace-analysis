@@ -474,15 +474,15 @@ def _drift_flag(
 
 # Per-entity tables `topk` tries in order: (aspect, table, key column, unit).
 _TOPK_SOURCES = (
-    ("kernel_diff", "by_family", "op_family", "ms"),
+    ("kernels", "by_family", "op_family", "ms"),
     ("layer_fusion", "by_layer", "name", "ms"),
-    ("comm_collectives", "by_comm_type", "comm_type", "MB"),
+    ("collectives", "by_comm_type", "comm_type", "MB"),
     ("os_runtime", "by_syscall", "name", "ms"),
-    ("roofline_diff", "by_kernel", "canonical_name", "us"),
+    ("roofline", "by_kernel", "canonical_name", "us"),
 )
 
 
-# Key column of the kernel_diff tables other than by_kernel.
+# Key column of the kernels tables other than by_kernel.
 _KERNEL_DIFF_KEY_BY_TABLE = {"by_family": "op_family", "by_scope": "scope"}
 
 
@@ -495,16 +495,16 @@ _KERNEL_DIFF_KEY_BY_TABLE = {"by_family": "op_family", "by_scope": "scope"}
     options={
         "top_k": registry.Opt("int", 10, "How many entities."),
         "table": registry.Opt(
-            "str", None, "Table of kernel_diff, e.g. by_kernel or by_scope."
+            "str", None, "Table of kernels, e.g. by_kernel or by_scope."
         ),
     },
-    needs="a per-entity report table (kernel_diff, layer_fusion, ...)",
+    needs="a per-entity report table (kernels, layer_fusion, ...)",
 )
 def topk(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     """Plots the top-K entities by time (one group) or by delta (two groups).
 
     The entities come from the first per-entity report table that has the
-    needed column; the `table` option puts a kernel_diff table first.
+    needed column; the `table` option puts a kernels table first.
 
     Args:
         ctx: Data access for the report being plotted.
@@ -599,7 +599,7 @@ def _topk_table(
         table_name = options["table"]
         key_column = _KERNEL_DIFF_KEY_BY_TABLE.get(table_name, "canonical_name")
         candidates = [
-            ("kernel_diff", table_name, key_column, "ms"),
+            ("kernels", table_name, key_column, "ms"),
             *candidates,
         ]
     for aspect_name, table_name, key_column, unit in candidates:

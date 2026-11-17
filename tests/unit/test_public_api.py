@@ -14,11 +14,11 @@ def test_aspects_register_in_report_order() -> None:
     from cta import plugins
 
     device_aspects = [
-        "latency_throughput",
-        "kernel_diff",
-        "timeline_overlap",
+        "latency",
+        "kernels",
+        "overlap",
         "os_runtime",
-        "roofline_diff",
+        "roofline",
     ]
     registered = [name for name in plugins.ASPECTS if name in device_aspects]
     assert registered == device_aspects

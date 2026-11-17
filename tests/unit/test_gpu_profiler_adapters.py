@@ -98,19 +98,19 @@ def test_nsys_sqlite_warmup_slicing_and_legacy_schema(
         baseline_db_path, candidate_db_path, warmup_steps=1, cache_dir=cache_dir
     )
     assert set(report.aspects) == {
-        "latency_throughput",
-        "kernel_diff",
-        "timeline_overlap",
+        "latency",
+        "kernels",
+        "overlap",
         "os_runtime",
-        "network_api",
+        "network",
     }
 
-    latency = _summary_by_metric(report, "latency_throughput")
+    latency = _summary_by_metric(report, "latency")
     # Warm-up step 0 is trimmed, so the remaining 3 steps are analysed.
     assert latency["total_steps"]["baseline"] == pytest.approx(3.0)
     assert latency["mean_step_ms"]["speedup"] > 1.8
 
-    overlap = _summary_by_metric(report, "timeline_overlap")
+    overlap = _summary_by_metric(report, "overlap")
     comm_overlap_pct = overlap["comm_overlap_pct"]
     assert comm_overlap_pct["candidate"] > comm_overlap_pct["baseline"]
     tensor_active_pct = overlap["tensor_active_median_pct"]
@@ -145,7 +145,7 @@ def test_kineto_gz_family_and_cpu_op_scope_matching(
     )
     # The kernel names change completely (ampere_fp16 vs sm90_wgmma_fp8), yet
     # the op families and CPU-op scopes still align one to one.
-    family_table = report.to_polars("kernel_diff", table="by_family")
+    family_table = report.to_polars("kernels", table="by_family")
     rows_by_family = {
         row["op_family"]: row for row in family_table.iter_rows(named=True)
     }
@@ -153,7 +153,7 @@ def test_kineto_gz_family_and_cpu_op_scope_matching(
     flash_attention = rows_by_family["FlashAttention"]
     assert flash_attention["delta_pct"] == pytest.approx(-50.0)
 
-    scope_table = report.to_polars("kernel_diff", table="by_scope")
+    scope_table = report.to_polars("kernels", table="by_scope")
     rows_by_scope = {
         row["scope"]: row for row in scope_table.iter_rows(named=True)
     }
@@ -184,7 +184,7 @@ def test_ncu_roofline_and_regime_shift(tmp_path: pathlib.Path) -> None:
     report = cta.compare(
         memory_bound_csv_path, compute_bound_csv_path, cache_dir=cache_dir
     )
-    roofline = _summary_by_metric(report, "roofline_diff")
+    roofline = _summary_by_metric(report, "roofline")
     assert roofline["achieved_tflops"]["delta_pct"] > 500.0
     intensity = roofline["overall_arithmetic_intensity"]
     assert intensity["candidate"] > intensity["baseline"]

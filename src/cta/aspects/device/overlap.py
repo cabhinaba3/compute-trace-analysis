@@ -1,4 +1,4 @@
-"""The ``timeline_overlap`` aspect: compute, comm, copy and idle GPU time."""
+"""The ``overlap`` aspect: compute, comm, copy and idle GPU time."""
 
 from __future__ import annotations
 
@@ -79,12 +79,12 @@ def _overlap_per_device(
 
 
 @plugins.register_aspect(
-    "timeline_overlap",
+    "overlap",
     title="Timeline Utilization, Overlap & GPU Metrics",
     required_formats=step_slicing.TIMELINE_FORMATS,
     any_of_formats=True,
 )
-class TimelineOverlapAspect(plugins.Aspect):
+class OverlapAspect(plugins.Aspect):
     """Compares GPU busy/idle time, comm overlap and sampled GPU metrics.
 
     Attributes:

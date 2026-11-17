@@ -193,9 +193,9 @@ def test_roofline_points_aggregate_sums_not_mean_of_ratios(
         ["1", "same_kernel", "1000", "1000", "1", "1"],
     )
     report = cta.analyze(
-        csv_path, aspects=["roofline_diff"], cache_dir=tmp_path / "c"
+        csv_path, aspects=["roofline"], cache_dir=tmp_path / "c"
     )
-    roofline_tables = report.aspect("roofline_diff").details
+    roofline_tables = report.aspect("roofline").details
     point = next(
         table
         for name, table in roofline_tables.items()

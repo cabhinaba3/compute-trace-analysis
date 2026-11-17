@@ -569,15 +569,13 @@ def test_critical_path_reads_the_aspect_summary() -> None:
         _pair_row("mean_slack_us", 5.0, 4.0),
         _pair_row("zero_slack_pct", 30.0, 35.0),
     ]
-    aspects = {"dag_critical_path": _summary(rows)}
+    aspects = {"critical_path": _summary(rows)}
     chart, _ = viz.build_chart(_context(aspects=aspects), "critical_path")
     length = chart.panels[0]
     assert length.stacked
     assert length.traces[0].y == [80.0, 90.0]
     assert length.traces[1].y == [20.0, 40.0]
-    with pytest.raises(
-        viz_registry.NotApplicableError, match="dag_critical_path"
-    ):
+    with pytest.raises(viz_registry.NotApplicableError, match="critical_path"):
         viz.build_chart(_context(), "critical_path")
 
 

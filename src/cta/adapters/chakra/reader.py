@@ -257,16 +257,16 @@ def _decode(codes: np.ndarray, dictionary: list[str]) -> pl.Series:
     return pl.Series(dictionary, dtype=pl.String).gather(codes)
 
 
-@plugins.register_adapter("chakra_et", version="1.1")
-class ChakraEtAdapter:
+@plugins.register_adapter("chakra", version="1.1")
+class ChakraAdapter:
     """Reads Chakra .et protobuf execution traces (one file per rank).
 
     Attributes:
-        format_name: The registered trace format name, ``"chakra_et"``.
+        format_name: The registered trace format name, ``"chakra"``.
         version: The adapter version, part of the ingest cache key.
     """
 
-    format_name = "chakra_et"
+    format_name = "chakra"
     version = "1.1"
 
     def detect(self, path: pathlib.Path) -> bool:
@@ -374,18 +374,18 @@ def _host_node_row(node: dict[str, Any], rank: int) -> dict[str, object]:
     }
 
 
-@plugins.register_adapter("chakra_host_et", version="1.1")
-class ChakraHostEtAdapter:
+@plugins.register_adapter("chakra_host", version="1.1")
+class ChakraHostAdapter:
     """Reads host execution trace JSON files.
 
     Op classes and collective types are inferred from the node names.
 
     Attributes:
-        format_name: The registered trace format name, ``"chakra_host_et"``.
+        format_name: The registered trace format name, ``"chakra_host"``.
         version: The adapter version, part of the ingest cache key.
     """
 
-    format_name = "chakra_host_et"
+    format_name = "chakra_host"
     version = "1.1"
 
     def detect(self, path: pathlib.Path) -> bool:
