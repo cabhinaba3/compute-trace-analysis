@@ -13,7 +13,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz import theme
 from cta.viz.kinds import chart_helpers
 
@@ -28,24 +28,24 @@ _CATEGORIES_BY_METRIC = {
 }
 
 
-@spec.register_plot(
+@registry.register_plot(
     "step_trace",
     group="steps",
     title="Step time over steps (trend and outliers)",
     needs="steps table",
     options={
-        "rolling": spec.Opt(
+        "rolling": registry.Opt(
             "int", 5, "Rolling-median window in steps (0 = off)."
         ),
-        "outliers": spec.Opt(
+        "outliers": registry.Opt(
             "float", 3.5, "Mark steps above median + k robust sigmas (0 = off)."
         ),
-        "trend": spec.Opt(
+        "trend": registry.Opt(
             "bool",
             True,
             "Fit and draw a Theil-Sen trend with its Kendall p-value.",
         ),
-        "yscale": spec.Opt(
+        "yscale": registry.Opt(
             "str",
             "auto",
             "linear, log, or auto (log when the slowest step is >30x the"
@@ -226,14 +226,14 @@ def _step_series_traces(
     return traces, note
 
 
-@spec.register_plot(
+@registry.register_plot(
     "step_dist",
     group="steps",
     title="Step-time distribution",
     needs="steps table",
     options={
-        "mode": spec.Opt("str", "ecdf", "ecdf or hist.", ("ecdf", "hist")),
-        "bins": spec.Opt("int", 30, "Histogram bins."),
+        "mode": registry.Opt("str", "ecdf", "ecdf or hist.", ("ecdf", "hist")),
+        "bins": registry.Opt("int", 30, "Histogram bins."),
     },
 )
 def step_dist(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
@@ -299,7 +299,7 @@ def step_dist(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "step_compare",
     group="compare",
     title="Paired step-time distributions",
@@ -395,13 +395,13 @@ def _per_rank_step_values(
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "rank_heatmap",
     group="distributed",
     title="Per-rank, per-step heatmap",
     needs="steps (and kernels) with 2+ ranks",
     options={
-        "metric": spec.Opt(
+        "metric": registry.Opt(
             "str", "step_ms", "Per-step quantity.", _RANK_METRICS
         )
     },
@@ -419,7 +419,7 @@ def rank_heatmap(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         A one-column chart with one heatmap per group that has 2+ ranks.
 
     Raises:
-        spec.NotApplicableError: No group has at least two ranks.
+        NotApplicableError: No group has at least two ranks.
     """
     per_step = _per_rank_step_values(ctx, options, options["metric"])
     panels = []
@@ -465,19 +465,19 @@ def rank_heatmap(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
             )
         )
     if not panels:
-        raise spec.NotApplicableError("needs a trace with at least 2 ranks")
+        raise registry.NotApplicableError("needs a trace with at least 2 ranks")
     return chart_helpers.grid(
         "Per-rank, per-step " + options["metric"], panels, max_cols=1
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "straggler",
     group="distributed",
     title="Cross-rank spread per step",
     needs="steps table with 2+ ranks",
     options={
-        "metric": spec.Opt(
+        "metric": registry.Opt(
             "str", "step_ms", "Per-step quantity.", _RANK_METRICS
         )
     },
@@ -496,7 +496,7 @@ def straggler(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         panel title gives the mean spread.
 
     Raises:
-        spec.NotApplicableError: No group has at least two ranks.
+        NotApplicableError: No group has at least two ranks.
     """
     per_step = _per_rank_step_values(ctx, options, options["metric"])
     panels = []
@@ -553,5 +553,5 @@ def straggler(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
             )
         )
     if not panels:
-        raise spec.NotApplicableError("needs a trace with at least 2 ranks")
+        raise registry.NotApplicableError("needs a trace with at least 2 ranks")
     return chart_helpers.grid("Cross-rank spread", panels, max_cols=1)

@@ -9,10 +9,10 @@ from cta.viz.plots import build_chart
 from cta.viz.plots import render_chart
 from cta.viz.plots import render_plot
 from cta.viz.plots import render_spec
-from cta.viz.spec import kind_catalog
+from cta.viz.registry import kind_catalog
+from cta.viz.registry import register_plot
 from cta.viz.spec import load_specs
 from cta.viz.spec import PlotSpec
-from cta.viz.spec import register_plot
 
 __all__ = [
     "PlotSpec",

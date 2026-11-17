@@ -13,7 +13,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 
@@ -37,25 +37,25 @@ def _lane_expr(kernels: pl.DataFrame) -> pl.Expr:
     return base.alias("lane")
 
 
-@spec.register_plot(
+@registry.register_plot(
     "timeline",
     group="timeline",
     title="GPU timeline (Gantt)",
     needs="kernels table (nsys, kineto or jax)",
     options={
-        "by": spec.Opt(
+        "by": registry.Opt(
             "str",
             "category",
             "What colours the bars.",
             ("category", "op_family", "name", "scope", "step"),
         ),
-        "max_events": spec.Opt(
+        "max_events": registry.Opt(
             "int",
             20000,
             "Cap on drawn kernels; the earliest steps are kept and the chart"
             " says so.",
         ),
-        "max_lanes": spec.Opt(
+        "max_lanes": registry.Opt(
             "int", 40, "Cap on rank/device/stream rows (the busiest are kept)."
         ),
     },
@@ -163,12 +163,12 @@ def timeline(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "overlap_timeline",
     group="timeline",
     title="Compute vs communication busy fraction over time",
     needs="kernels table",
-    options={"bins": spec.Opt("int", 120, "Time bins.")},
+    options={"bins": registry.Opt("int", 120, "Time bins.")},
 )
 def overlap_timeline(
     ctx: context.DataContext, options: dict[str, Any]
@@ -274,12 +274,12 @@ def _busy_ms_per_bin(
     return busy_ms
 
 
-@spec.register_plot(
+@registry.register_plot(
     "stream_util",
     group="timeline",
     title="Per-stream GPU busy time",
     needs="kernels table",
-    options={"top_k": spec.Opt("int", 16, "Busiest lanes shown.")},
+    options={"top_k": registry.Opt("int", 16, "Busiest lanes shown.")},
 )
 def stream_util(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     """Plots the busy time of each rank/device/stream lane.

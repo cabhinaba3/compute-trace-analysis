@@ -22,6 +22,7 @@ from cta import engine
 from cta import models
 from cta.viz import context
 from cta.viz import dashboard
+from cta.viz import registry
 from cta.viz import spec
 from cta.viz import suitability
 
@@ -124,7 +125,7 @@ class LiveSession:
 
         Raises:
             ImportError: If Plotly is not installed.
-            spec.NotApplicableError: If no plot could be drawn.
+            NotApplicableError: If no plot could be drawn.
         """
         self.base = report
         self.theme, self.palette = theme, palette
@@ -226,7 +227,7 @@ class LiveSession:
         try:
             report = self.report_for(filters)
             target_kind = kind if kind else card.spec.kind
-            target_kind_obj = spec.get_kind(target_kind)
+            target_kind_obj = registry.get_kind(target_kind)
             target_declared = target_kind_obj.all_options()
             filtered_options = {
                 k: v
@@ -303,7 +304,7 @@ def make_server(
 
     Raises:
         ImportError: If Plotly is not installed.
-        spec.NotApplicableError: If no plot could be drawn.
+        NotApplicableError: If no plot could be drawn.
     """
     from plotly import offline
 
@@ -380,7 +381,7 @@ def serve(
 
     Raises:
         ImportError: If Plotly is not installed.
-        spec.NotApplicableError: If no plot could be drawn.
+        NotApplicableError: If no plot could be drawn.
     """
     httpd, _ = make_server(
         report, specs, port=port, title=title, theme=theme, palette=palette

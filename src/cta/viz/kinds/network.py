@@ -14,7 +14,7 @@ import polars as pl
 from cta.analysis import network
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 _BANDWIDTH_CHOICES = ("busbw", "algbw")
@@ -27,9 +27,11 @@ _BUCKET_ORDER = {
 
 # Options every network kind shares.
 _COMMON_OPTIONS = {
-    "api": spec.Opt("str", "", "Only this API (nccl, mpi, ucx, p2p)."),
-    "op": spec.Opt("str", "", "Only this logical operation (allreduce, ...)."),
-    "by": spec.Opt(
+    "api": registry.Opt("str", "", "Only this API (nccl, mpi, ucx, p2p)."),
+    "op": registry.Opt(
+        "str", "", "Only this logical operation (allreduce, ...)."
+    ),
+    "by": registry.Opt(
         "str",
         "label",
         "One series per group label, or per group label and API.",
@@ -44,7 +46,7 @@ def _network_frame(
     """Reads the ``network_ops`` source with the API and operation filters.
 
     Raises:
-        spec.NotApplicableError: There are no calls, or none after filtering.
+        NotApplicableError: There are no calls, or none after filtering.
     """
     ops = ctx.frame("network_ops", options)
     if options["api"]:
@@ -52,7 +54,7 @@ def _network_frame(
     if options["op"]:
         ops = ops.filter(pl.col("op") == options["op"])
     if ops.is_empty():
-        raise spec.NotApplicableError("no network calls match api/op")
+        raise registry.NotApplicableError("no network calls match api/op")
     return ops
 
 
@@ -90,7 +92,7 @@ def _pooled(ops: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "network_bandwidth",
     group="distributed",
     title="Communication bandwidth by operation and size",
@@ -98,13 +100,13 @@ def _pooled(ops: pl.DataFrame) -> pl.DataFrame:
     aliases=("netbw", "comm_bandwidth"),
     options={
         **_COMMON_OPTIONS,
-        "metric": spec.Opt(
+        "metric": registry.Opt(
             "str",
             "busbw",
             "Bus bandwidth (nccl-tests) or algorithm bandwidth.",
             _BANDWIDTH_CHOICES,
         ),
-        "top_k": spec.Opt(
+        "top_k": registry.Opt(
             "int", 12, "Most time-consuming operation/size pairs (0 = all)."
         ),
     },
@@ -126,7 +128,7 @@ def network_bandwidth(
         A one-panel chart of grouped bars, one bar per series and pair.
 
     Raises:
-        spec.NotApplicableError: No timed call has a known message size.
+        NotApplicableError: No timed call has a known message size.
     """
     ops = _network_frame(ctx, options)
     metric = options["metric"]
@@ -151,7 +153,7 @@ def network_bandwidth(
                 time_by_key.get(key, float("nan")) + row["duration_ms"]
             )
     if not rates:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "no timed network call has a known message size (nsys cannot "
             "size NCCL calls; use a Kineto trace for those)"
         )
@@ -186,7 +188,7 @@ def network_bandwidth(
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "network_skew",
     group="distributed",
     title="Cross-rank wait skew and launch gap by operation",
@@ -194,7 +196,7 @@ def network_bandwidth(
     aliases=("comm_skew", "wait_skew"),
     options={
         **_COMMON_OPTIONS,
-        "metric": spec.Opt(
+        "metric": registry.Opt(
             "str",
             "wait_skew",
             "Spread of call durations across ranks, or time between the "
@@ -214,7 +216,7 @@ def network_skew(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         A one-panel chart of grouped bars in microseconds.
 
     Raises:
-        spec.NotApplicableError: The chosen metric cannot be computed, such as
+        NotApplicableError: The chosen metric cannot be computed, such as
             skew from a single rank or launch gap from an nsys-less trace.
     """
     ops = _network_frame(ctx, options)
@@ -236,7 +238,7 @@ def network_skew(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
             values.setdefault(name, {})[key] = row[column]
             keys.add(key)
     if not values:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "needs collectives seen on two or more ranks"
             if wait
             else "no call has a known launch time (nsys and Kineto only)"
@@ -264,7 +266,7 @@ def network_skew(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "network_size_sweep",
     group="distributed",
     title="Bandwidth against message size, per operation",
@@ -272,13 +274,13 @@ def network_skew(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     aliases=("size_sweep", "comm_sweep"),
     options={
         **_COMMON_OPTIONS,
-        "metric": spec.Opt(
+        "metric": registry.Opt(
             "str",
             "busbw",
             "Bus bandwidth (nccl-tests) or algorithm bandwidth.",
             _BANDWIDTH_CHOICES,
         ),
-        "max_ops": spec.Opt(
+        "max_ops": registry.Opt(
             "int", 4, "Operations to draw, most time-consuming first."
         ),
     },
@@ -299,7 +301,7 @@ def network_size_sweep(
         A grid of log-log panels with one line per series.
 
     Raises:
-        spec.NotApplicableError: No timed call has a known message size.
+        NotApplicableError: No timed call has a known message size.
     """
     ops = _network_frame(ctx, options)
     column = "weighted_bytes" if options["metric"] == "busbw" else "timed_bytes"
@@ -324,7 +326,7 @@ def network_size_sweep(
                 )
             )
     if not lines:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "no timed network call has a known message size (nsys cannot "
             "size NCCL calls; use a Kineto trace for those)"
         )
@@ -365,7 +367,7 @@ def network_size_sweep(
 _MATRIX_VALUES = ("bytes", "calls", "time_ms")
 
 
-@spec.register_plot(
+@registry.register_plot(
     "network_matrix",
     group="distributed",
     title="Point-to-point traffic between ranks",
@@ -373,7 +375,7 @@ _MATRIX_VALUES = ("bytes", "calls", "time_ms")
     aliases=("p2p_matrix", "comm_matrix"),
     options={
         **_COMMON_OPTIONS,
-        "value": spec.Opt(
+        "value": registry.Opt(
             "str",
             "bytes",
             "What each cell sums: megabytes, calls, or milliseconds.",
@@ -399,11 +401,11 @@ def network_matrix(
         A grid of heatmaps that share one colour scale.
 
     Raises:
-        spec.NotApplicableError: No call has a known peer.
+        NotApplicableError: No call has a known peer.
     """
     ops = _network_frame(ctx, options).filter(pl.col("peer") >= 0)
     if ops.is_empty():
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "no call records its peer rank (nsys MPI send/recv do; NCCL "
             "kernels and UCX submits do not)"
         )
@@ -413,7 +415,7 @@ def network_matrix(
             {"rank": "peer", "peer": "rank"}
         )
     if sends.is_empty():
-        raise spec.NotApplicableError("no point-to-point send or recv call")
+        raise registry.NotApplicableError("no point-to-point send or recv call")
     value = options["value"]
     column = {"bytes": "bytes", "calls": "bytes", "time_ms": "duration_ns"}[
         value

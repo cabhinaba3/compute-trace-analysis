@@ -6,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import polars as pl
+from scipy import stats as sp_stats
 
 from cta.viz import ir
 from cta.viz import theme
@@ -108,7 +109,6 @@ def trend(x: np.ndarray, y: np.ndarray) -> tuple[float, float, float] | None:
     if len(x) < 4 or np.ptp(y) == 0:
         return None
     # Lazy: scipy.stats costs more than a second to import.
-    from scipy import stats as sp_stats
 
     slope, intercept, _, _ = sp_stats.theilslopes(y, x)
     p_value = float(sp_stats.kendalltau(x, y).pvalue)
@@ -249,3 +249,17 @@ def summary_values(
         for row in table.iter_rows(named=True)
         if "metric" in row
     }
+
+
+# Raw tables whose rows carry a time, for the kinds with a time axis.
+TIMED_SOURCES = (
+    "kernels",
+    "gpu_metrics",
+    "steps",
+    "network_ops",
+    "jtop",
+)
+
+
+# Chart ``meta`` that turns off the suitability checks for the chart.
+SKIP_SUITABILITY = {"skip_suitability": True}

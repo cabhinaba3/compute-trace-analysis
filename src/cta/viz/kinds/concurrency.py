@@ -1,4 +1,4 @@
-"""Kernels running at the same time on a device, over time."""
+"""How busy each GPU is: kernels running at once, and the gaps between them."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 
@@ -56,32 +56,32 @@ def depth_steps(
     return edges[:-1], peak
 
 
-@spec.register_plot(
+@registry.register_plot(
     "queue_depth",
     group="timeline",
     title="Kernels running at once, over time",
     aliases=("concurrency", "stream_concurrency", "active_kernels"),
     needs="kernels table",
     options={
-        "by": spec.Opt(
+        "by": registry.Opt(
             "str",
             "category",
             "Count all kernels, or one line per category or stream.",
             ("category", "stream", "total"),
         ),
-        "devices": spec.Opt(
+        "devices": registry.Opt(
             "str",
             "max",
             "With several GPUs: draw the busiest one at each time, or one "
             "line per GPU.",
             ("max", "split"),
         ),
-        "bins": spec.Opt(
+        "bins": registry.Opt(
             "int",
             200,
             "Time bins; each shows its peak depth (0 = every start and end).",
         ),
-        "max_events": spec.Opt(
+        "max_events": registry.Opt(
             "int", 20000, "Most kernels read per group (0 = all)."
         ),
     },
@@ -100,12 +100,12 @@ def queue_depth(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         A one-column chart with one panel per group.
 
     Raises:
-        spec.NotApplicableError: If the kernels table is empty or has no
+        NotApplicableError: If the kernels table is empty or has no
             timestamps.
     """
     kernels = ctx.frame("kernels", options)
     if "t_ms" not in kernels.columns or "end_ms" not in kernels.columns:
-        raise spec.NotApplicableError("the kernels table has no timestamps")
+        raise registry.NotApplicableError("the kernels table has no timestamps")
 
     cap = int(options["max_events"])
     n_bins = int(options["bins"])
@@ -221,3 +221,137 @@ def _busiest(
         for t, d in per_device
     ]
     return times, np.max(levels, axis=0)
+
+
+_GAP_EDGES_US = (10.0, 100.0, 1_000.0, 10_000.0)
+
+
+_GAP_CLASSES = ("<10 us", "10-100 us", "0.1-1 ms", "1-10 ms", ">=10 ms")
+
+
+def _gaps_ms(group: pl.DataFrame) -> tuple[np.ndarray, float]:
+    """Finds the idle gaps of a group's devices.
+
+    A gap is a stretch inside a device's active span where none of its
+    kernels runs. Each device is taken on its own, in its rank's time.
+
+    Returns:
+        The gap lengths in milliseconds, and the total active span.
+    """
+    gaps, span = [], 0.0
+    for _, device in group.group_by(["rank", "device"]):
+        starts, ends = chart_helpers.merge_intervals(
+            device["t_ms"].to_numpy().astype(float),
+            device["end_ms"].to_numpy().astype(float),
+        )
+        if not len(starts):
+            continue
+        span += float(ends[-1] - starts[0])
+        between = starts[1:] - ends[:-1]
+        gaps.append(between[between > 0])
+    return (np.concatenate(gaps) if gaps else np.zeros(0)), span
+
+
+@registry.register_plot(
+    "idle_gaps",
+    group="timeline",
+    title="GPU idle gaps between kernels",
+    needs="kernels table",
+    aliases=("gaps", "gpu_idle"),
+    options={
+        "min_gap_us": registry.Opt(
+            "float", 0.0, "Ignore gaps shorter than this many microseconds."
+        ),
+        "bins": registry.Opt("int", 30, "Bins of the gap-length histogram."),
+    },
+)
+def idle_gaps(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
+    """Plots how long the GPU waits between kernels, and which waits add up.
+
+    Gaps come from the union of each device's kernels, so overlapping
+    kernels on several streams never make a negative gap. The left panel
+    counts gaps by length; the right one shows how the idle time splits into
+    short launch gaps and long stalls.
+
+    Args:
+        ctx: Data access for the report being plotted.
+        options: Resolved options of this kind.
+
+    Returns:
+        Two panels: gap lengths, and idle time by gap length.
+
+    Raises:
+        NotApplicableError: No device has a gap.
+    """
+    kernels = ctx.frame("kernels", options)
+    floor_ms = float(options["min_gap_us"]) / 1e3
+    found = []
+    for label in chart_helpers.unique_in_order(kernels, "label"):
+        gaps, span = _gaps_ms(kernels.filter(pl.col("label") == label))
+        found.append((str(label), gaps[gaps >= floor_ms], span))
+    if not any(len(gaps) for _, gaps, _ in found):
+        raise registry.NotApplicableError(
+            "the kernels leave no gaps to measure"
+        )
+    everything = np.concatenate([gaps for _, gaps, _ in found if len(gaps)])
+    bins = max(2, int(options["bins"]))
+    edges = np.geomspace(
+        everything.min(), max(everything.max(), everything.min() * 2), bins + 1
+    )
+    class_edges = np.array(_GAP_EDGES_US) / 1e3
+    counts, shares, notes = [], [], []
+    for index, (label, gaps, span) in enumerate(found):
+        style = {"ci": index}
+        histogram, _ = np.histogram(gaps, bins=edges)
+        counts.append(
+            ir.Trace(
+                "step",
+                x=(edges[:-1] * 1e3).tolist(),
+                y=histogram.tolist(),
+                name=label,
+                style=style,
+                meta={"label": label},
+            )
+        )
+        by_class = np.bincount(
+            np.searchsorted(class_edges, gaps, side="right"),
+            weights=gaps,
+            minlength=len(_GAP_CLASSES),
+        )
+        total = by_class.sum()
+        shares.append(
+            ir.Trace(
+                "bar",
+                x=list(_GAP_CLASSES),
+                y=(100.0 * by_class / total).tolist()
+                if total > 0
+                else [0.0] * len(_GAP_CLASSES),
+                name=label,
+                style=style,
+                meta={"label": label},
+            )
+        )
+        if span > 0:
+            notes.append(f"{label}: idle {100.0 * gaps.sum() / span:.1f}%")
+    return chart_helpers.grid(
+        "GPU idle gaps",
+        [
+            ir.Panel(
+                traces=counts,
+                title="Gaps by length",
+                xlabel="gap length (us)",
+                ylabel="gaps",
+                xscale="log",
+            ),
+            ir.Panel(
+                traces=shares,
+                title="Idle time by gap length",
+                xlabel="gap length",
+                ylabel="% of idle time",
+                legend=False,
+            ),
+        ],
+        max_cols=2,
+        notes="Share of the active span spent idle: " + "; ".join(notes),
+        meta={"skip_suitability": True},
+    )

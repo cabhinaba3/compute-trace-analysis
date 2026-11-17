@@ -12,7 +12,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 # Panel title of every plottable jtop column; the order feeds the help text.
@@ -28,13 +28,13 @@ _TITLE_BY_JTOP_METRIC = {
 }
 
 
-@spec.register_plot(
+@registry.register_plot(
     "power_trace",
     group="edge",
     title="Power, utilisation and thermals over time",
     needs="jtop samples (edge bundle)",
     options={
-        "metrics": spec.Opt(
+        "metrics": registry.Opt(
             "list",
             ["power_total_w", "gpu_util_pct", "gpu_temp_c", "gpu_mem_mb"],
             f"jtop columns: {', '.join(_TITLE_BY_JTOP_METRIC)}.",
@@ -118,16 +118,16 @@ _DEFAULT_GPU_METRICS = [
 ]
 
 
-@spec.register_plot(
+@registry.register_plot(
     "gpu_metrics_trace",
     group="edge",
     title="GPU hardware metrics over time (Nsight Systems)",
     needs="nsys capture with --gpu-metrics-device",
     options={
-        "metrics": spec.Opt(
+        "metrics": registry.Opt(
             "list", _DEFAULT_GPU_METRICS, "Substrings of GPU metric names."
         ),
-        "max_points": spec.Opt(
+        "max_points": registry.Opt(
             "int", 4000, "Downsample each series to about this many points."
         ),
     },
@@ -150,7 +150,7 @@ def gpu_metrics_trace(
         rank.
 
     Raises:
-        spec.NotApplicableError: No requested substring matches a captured
+        NotApplicableError: No requested substring matches a captured
             metric.
     """
     samples = ctx.frame("gpu_metrics", options)
@@ -183,7 +183,7 @@ def gpu_metrics_trace(
             )
         )
     if not panels:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             f"none of {options['metrics']} matches a captured GPU metric"
         )
     return chart_helpers.grid("GPU hardware metrics", panels, max_cols=2)

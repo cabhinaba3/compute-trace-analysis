@@ -25,6 +25,7 @@ from typing import Any
 
 from cta.viz import context
 from cta.viz import plots
+from cta.viz import registry as viz_registry
 from cta.viz import spec as viz_spec
 from cta.viz import suitability
 
@@ -153,7 +154,7 @@ def default_specs(ctx: context.DataContext) -> list[viz_spec.PlotSpec]:
     """
     return [
         viz_spec.PlotSpec(kind=kind.name)
-        for kind in viz_spec.kind_catalog()
+        for kind in viz_registry.kind_catalog()
         if not (
             kind.name == "custom"
             or (kind.name == "history" and not ctx.history)
@@ -188,7 +189,7 @@ def figure_json(
         chart title, the chart notes and the suitability warnings.
 
     Raises:
-        viz_spec.NotApplicableError: If the plot cannot be drawn from this data.
+        NotApplicableError: If the plot cannot be drawn from this data.
         ValueError: If the kind or an option is invalid.
     """
     import plotly.io as pio
@@ -233,7 +234,7 @@ def plan(
 
     Raises:
         ImportError: If Plotly is not installed.
-        viz_spec.NotApplicableError: If no plot could be drawn.
+        NotApplicableError: If no plot could be drawn.
     """
     _require_plotly()
     cards: list[Card] = []
@@ -243,13 +244,13 @@ def plan(
             fig_json, title, notes, warnings = figure_json(
                 ctx, spec, theme, palette
             )
-        except (viz_spec.NotApplicableError, ValueError) as exc:
+        except (viz_registry.NotApplicableError, ValueError) as exc:
             skipped[spec.stem] = str(exc)
             continue
-        group = viz_spec.get_kind(spec.kind).group
+        group = viz_registry.get_kind(spec.kind).group
         own_group = [
             k.name
-            for k in viz_spec.kind_catalog()
+            for k in viz_registry.kind_catalog()
             if k.group == group and k.name != "custom"
         ]
         suggested = [
@@ -273,7 +274,7 @@ def plan(
         )
     if not cards:
         first_reasons = list(skipped.items())[:5]
-        raise viz_spec.NotApplicableError(
+        raise viz_registry.NotApplicableError(
             "no plot could be drawn for this report: "
             + "; ".join(f"{stem}: {reason}" for stem, reason in first_reasons)
         )
@@ -297,14 +298,14 @@ def filter_choices(ctx: context.DataContext) -> dict[str, Any]:
         "devices": [],
         "nsteps": 0,
     }
-    with contextlib.suppress(viz_spec.NotApplicableError):
+    with contextlib.suppress(viz_registry.NotApplicableError):
         steps = ctx.frame("steps")
         choices["ranks"] = sorted(
             int(rank) for rank in steps["rank"].unique().to_list()
         )
         steps_per_rank = steps.group_by("label", "trial", "rank").len()["len"]
         choices["nsteps"] = max(steps_per_rank.to_list(), default=0)
-    with contextlib.suppress(viz_spec.NotApplicableError):
+    with contextlib.suppress(viz_registry.NotApplicableError):
         devices = ctx.frame("kernels")["device"].unique().to_list()
         choices["devices"] = sorted(int(device) for device in devices)
     return choices
@@ -337,7 +338,7 @@ def build_dashboard(
 
     Raises:
         ImportError: If Plotly is not installed.
-        viz_spec.NotApplicableError: If no plot could be drawn.
+        NotApplicableError: If no plot could be drawn.
     """
     from plotly import offline
 
@@ -386,7 +387,7 @@ def page(
     """
     groups = [
         group
-        for group in viz_spec.GROUPS
+        for group in viz_registry.GROUPS
         if any(card.group == group for card in cards)
     ]
     nav = "".join(_tab_button(group, cards) for group in groups)

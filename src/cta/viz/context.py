@@ -20,7 +20,7 @@ import polars as pl
 
 from cta import models
 from cta.analysis import step_slicing
-from cta.viz import spec
+from cta.viz import registry
 
 SOURCES = (
     "kernels",
@@ -95,10 +95,10 @@ class DataContext:
             The report being plotted.
 
         Raises:
-            spec.NotApplicableError: If the context has no report.
+            NotApplicableError: If the context has no report.
         """
         if self.report is None:
-            raise spec.NotApplicableError(
+            raise registry.NotApplicableError(
                 "this plot needs a trace/report "
                 "(give trace paths or --manifest)"
             )
@@ -116,19 +116,19 @@ class DataContext:
             The table.
 
         Raises:
-            spec.NotApplicableError: If there is no report, the report lacks the
+            NotApplicableError: If there is no report, the report lacks the
                 aspect, or the aspect has no such table.
         """
         report = self.require_report()
         if aspect not in report.aspects:
             available = ", ".join(report.aspects) or "none"
-            raise spec.NotApplicableError(
+            raise registry.NotApplicableError(
                 f"needs the '{aspect}' aspect (have: {available})"
             )
         try:
             return report.aspects[aspect].to_polars(table)
         except KeyError as exc:
-            raise spec.NotApplicableError(str(exc.args[0])) from exc
+            raise registry.NotApplicableError(str(exc.args[0])) from exc
 
     def has_aspect(self, aspect: str) -> bool:
         """Returns whether the report has results for an aspect.
@@ -156,7 +156,7 @@ class DataContext:
             unknown metric gives an empty dict.
 
         Raises:
-            spec.NotApplicableError: If there is no report or it lacks the
+            NotApplicableError: If there is no report or it lacks the
                 aspect.
         """
         summary = self.report_table(aspect)
@@ -186,7 +186,7 @@ class DataContext:
         """Lists (group label, trial index, cache table paths) of every trial.
 
         Raises:
-            spec.NotApplicableError: If there is no report or it has no cached
+            NotApplicableError: If there is no report or it has no cached
                 trace tables.
         """
         report = self.require_report()
@@ -196,7 +196,7 @@ class DataContext:
             for trial, table_paths in enumerate(group_sources):
                 trials.append((group.label, trial, table_paths))
         if not trials:
-            raise spec.NotApplicableError(
+            raise registry.NotApplicableError(
                 "the report has no cached trace tables (re-run the analysis)"
             )
         return trials
@@ -230,7 +230,7 @@ class DataContext:
             Source names, in ``SOURCES`` order.
 
         Raises:
-            spec.NotApplicableError: If there is no report or it has no cached
+            NotApplicableError: If there is no report or it has no cached
                 trace tables.
         """
         self._build_raw()
@@ -251,18 +251,18 @@ class DataContext:
             The filtered table.
 
         Raises:
-            spec.NotApplicableError: If the source is unknown, missing from the
+            NotApplicableError: If the source is unknown, missing from the
                 report, or empty after filtering.
             ValueError: If the ``where`` predicate is invalid SQL.
         """
         if name not in SOURCES:
-            raise spec.NotApplicableError(
+            raise registry.NotApplicableError(
                 f"unknown source '{name}'. Sources: {', '.join(SOURCES)}"
             )
         self._build_raw()
         if name not in self._raw_tables:
             available = ", ".join(self.available()) or "none"
-            raise spec.NotApplicableError(
+            raise registry.NotApplicableError(
                 f"source '{name}' is not in this report "
                 f"(available: {available})"
             )
@@ -285,7 +285,7 @@ class DataContext:
         if options.get("where"):
             table = _sql_filter(table, str(options["where"]))
         if table.is_empty():
-            raise spec.NotApplicableError(
+            raise registry.NotApplicableError(
                 f"source '{name}' is empty after filters"
             )
         return table
@@ -310,7 +310,7 @@ class DataContext:
             The query result.
 
         Raises:
-            spec.NotApplicableError: If DuckDB is not installed, or a raw
+            NotApplicableError: If DuckDB is not installed, or a raw
                 table the query mentions is missing or empty after
                 filtering.
             ValueError: If DuckDB rejects the query.
@@ -355,7 +355,7 @@ class DataContext:
             under their SQL names.
 
         Raises:
-            spec.NotApplicableError: If there is no report or it has no cached
+            NotApplicableError: If there is no report or it has no cached
                 trace tables.
         """
         columns_by_table = {
@@ -562,13 +562,13 @@ def _require_duckdb() -> Any:
     """Imports DuckDB, or says which extra provides it.
 
     Raises:
-        spec.NotApplicableError: DuckDB is not installed, so SQL, ``where``
+        NotApplicableError: DuckDB is not installed, so SQL, ``where``
             filters and the ``custom`` kind cannot run.
     """
     try:
         import duckdb
     except ImportError as exc:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "SQL and 'where' filters need DuckDB: "
             "pip install 'compute-trace-analysis[sql]'"
         ) from exc
@@ -586,7 +586,7 @@ def _sql_filter(df: pl.DataFrame, predicate: str) -> pl.DataFrame:
         The matching rows.
 
     Raises:
-        spec.NotApplicableError: If DuckDB is not installed.
+        NotApplicableError: If DuckDB is not installed.
         ValueError: If DuckDB rejects the predicate.
     """
     duckdb = _require_duckdb()

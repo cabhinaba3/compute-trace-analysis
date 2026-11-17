@@ -17,7 +17,7 @@ import pytest
 from cta import models
 from cta import viz
 from cta.viz import context
-from cta.viz import spec as viz_spec
+from cta.viz import registry as viz_registry
 from cta.viz import suitability
 from cta.viz.kinds import chart_helpers
 from cta.viz.kinds import host_api
@@ -344,8 +344,7 @@ def test_kinds_build_and_draw_on_both_backends(
 
 
 def test_new_kinds_are_registered_with_options() -> None:
-    viz_spec.load_kinds()
-    names = {kind.name for kind in viz_spec.kind_catalog()}
+    names = {kind.name for kind in viz_registry.kind_catalog()}
     expected = {
         "forest",
         "volcano",
@@ -367,8 +366,8 @@ def test_new_kinds_are_registered_with_options() -> None:
     assert expected <= names
     assert "runtime_calls" in context.SOURCES
     for name in sorted(expected):
-        kind = viz_spec.get_kind(name)
-        assert kind.group in viz_spec.GROUPS
+        kind = viz_registry.get_kind(name)
+        assert kind.group in viz_registry.GROUPS
         assert kind.title
 
 
@@ -471,7 +470,7 @@ def test_memcpy_kinds_say_when_there_are_no_copies() -> None:
     ctx = _context({"kernels": [_kernel("base", 0, 1.0)]}, labels=("base",))
     for kind in ("memcpy_bandwidth", "memcpy_sizes", "memcpy_overlap"):
         with pytest.raises(
-            viz_spec.NotApplicableError, match="no memory copies"
+            viz_registry.NotApplicableError, match="no memory copies"
         ):
             viz.build_chart(ctx, kind)
 
@@ -576,7 +575,9 @@ def test_critical_path_reads_the_aspect_summary() -> None:
     assert length.stacked
     assert length.traces[0].y == [80.0, 90.0]
     assert length.traces[1].y == [20.0, 40.0]
-    with pytest.raises(viz_spec.NotApplicableError, match="dag_critical_path"):
+    with pytest.raises(
+        viz_registry.NotApplicableError, match="dag_critical_path"
+    ):
         viz.build_chart(_context(), "critical_path")
 
 
@@ -606,7 +607,7 @@ def test_forest_draws_the_change_with_a_combined_interval() -> None:
 
 def test_forest_needs_exactly_two_groups() -> None:
     ctx = _context(aspects=_aspects(), labels=("a", "b", "c"))
-    with pytest.raises(viz_spec.NotApplicableError, match="two groups"):
+    with pytest.raises(viz_registry.NotApplicableError, match="two groups"):
         viz.build_chart(ctx, "forest")
 
 
@@ -634,7 +635,9 @@ def test_volcano_plots_minus_log_p() -> None:
 def test_volcano_without_p_values_says_so() -> None:
     rows = [_pair_row("step_ms", 10.0, 12.0)]
     ctx = _context(aspects={"demo": _summary(rows)})
-    with pytest.raises(viz_spec.NotApplicableError, match="two or more trials"):
+    with pytest.raises(
+        viz_registry.NotApplicableError, match="two or more trials"
+    ):
         viz.build_chart(ctx, "volcano")
 
 
@@ -689,7 +692,7 @@ def test_runtime_timeline_puts_calls_and_gpu_in_lanes() -> None:
 
 
 def test_runtime_timeline_without_a_call_in_the_window() -> None:
-    with pytest.raises(viz_spec.NotApplicableError, match="window"):
+    with pytest.raises(viz_registry.NotApplicableError, match="window"):
         viz.build_chart(
             _context(_raw()), "runtime_timeline", {"start_ms": 5000}
         )
@@ -705,7 +708,7 @@ def test_sync_waits_count_only_synchronising_calls() -> None:
     no_sync["runtime_calls"] = [
         row for row in no_sync["runtime_calls"] if "Sync" not in row["name"]
     ]
-    with pytest.raises(viz_spec.NotApplicableError, match="synchronising"):
+    with pytest.raises(viz_registry.NotApplicableError, match="synchronising"):
         viz.build_chart(_context(no_sync), "sync_waits")
 
 
@@ -722,7 +725,7 @@ def test_radar_puts_the_baseline_on_a_unit_circle() -> None:
     ratios = dict(zip(cand.x or [], cand.y or [], strict=True))
     assert ratios["demo: step_ms"] == pytest.approx(1.4)
     few = _context(aspects={"demo": _summary([_pair_row("a", 1.0, 2.0)])})
-    with pytest.raises(viz_spec.NotApplicableError, match="three metrics"):
+    with pytest.raises(viz_registry.NotApplicableError, match="three metrics"):
         viz.build_chart(few, "metric_radar")
 
 
@@ -814,7 +817,7 @@ def test_facet_keeps_the_slices_apart() -> None:
 
 def test_facet_with_nothing_drawable_explains_each_slice() -> None:
     ctx = _context({"kernels": [_kernel("base", 0, 1.0)]}, labels=("base",))
-    with pytest.raises(viz_spec.NotApplicableError, match="rank 0"):
+    with pytest.raises(viz_registry.NotApplicableError, match="rank 0"):
         viz.build_chart(ctx, "facet", {"kind": "memcpy_bandwidth"})
 
 

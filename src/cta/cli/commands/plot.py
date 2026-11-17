@@ -61,7 +61,7 @@ def _report_warnings(captured: list[warnings.WarningMessage]) -> None:
 
 def _print_kinds() -> None:
     """Prints the table of plot kinds with their data needs and options."""
-    from cta.viz import spec as viz_spec
+    from cta.viz import registry as viz_registry
 
     kinds_table = table.Table(
         title=(
@@ -72,7 +72,7 @@ def _print_kinds() -> None:
     )
     for column in ("kind", "group", "needs", "options"):
         kinds_table.add_column(column, overflow="fold")
-    for kind_info in viz_spec.kind_catalog():
+    for kind_info in viz_registry.kind_catalog():
         alias = (
             f" ({', '.join(kind_info.aliases)})" if kind_info.aliases else ""
         )
@@ -91,7 +91,7 @@ def _print_kinds() -> None:
     output.console.print(kinds_table)
     output.console.print(
         "[dim]Every kind also accepts: "
-        + ", ".join(viz_spec.COMMON_OPTIONS)
+        + ", ".join(viz_registry.COMMON_OPTIONS)
         + "[/dim]"
     )
 
@@ -110,9 +110,10 @@ def _with_shared_options(
     Returns:
         A new spec whose own options override the shared ones.
     """
+    from cta.viz import registry as viz_registry
     from cta.viz import spec as viz_spec
 
-    declared = viz_spec.get_kind(plot_spec.kind).all_options()
+    declared = viz_registry.get_kind(plot_spec.kind).all_options()
     accepted_shared_options = {
         key: value for key, value in shared_options.items() if key in declared
     }
@@ -368,6 +369,7 @@ def plot_command(
     from cta import engine
     from cta.ingest import manifest as ingest_manifest
     from cta.viz import context
+    from cta.viz import registry as viz_registry
     from cta.viz import spec as viz_spec
 
     if list_kinds:
@@ -473,7 +475,7 @@ def plot_command(
             for key in shared_options
             if specs
             and not any(
-                key in viz_spec.get_kind(plot_spec.kind).all_options()
+                key in viz_registry.get_kind(plot_spec.kind).all_options()
                 for plot_spec in specs
             )
         ]
@@ -560,7 +562,7 @@ def plot_command(
                         ctx, plot_spec, figure_path, style=style, dpi=dpi
                     )
                 _report_warnings(captured)
-            except viz_spec.NotApplicableError as exc:
+            except viz_registry.NotApplicableError as exc:
                 if is_explicit:
                     raise
                 output.console.print(

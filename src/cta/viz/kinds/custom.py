@@ -13,7 +13,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 _AGGREGATIONS = (
@@ -62,54 +62,56 @@ def _aggregation_expr(column: str, aggregation: str) -> pl.Expr:
     return expr_by_aggregation[aggregation].alias(column)
 
 
-@spec.register_plot(
+@registry.register_plot(
     "custom",
     group="custom",
     title="Any table or SQL query",
     needs="a source (raw table, report:<aspect>[.<table>]) or sql",
     options={
-        "source": spec.Opt(
+        "source": registry.Opt(
             "str",
             None,
             "kernels, steps, gpu_metrics, runtime, runtime_calls, network_ops,"
             " ncu_kernels, ncu_findings, jtop, osrt, or"
             " report:<aspect>[.<table>].",
         ),
-        "sql": spec.Opt(
+        "sql": registry.Opt(
             "str",
             None,
             "DuckDB SQL over the named tables (cta plot --list-sources);"
             " overrides source.",
         ),
-        "mark": spec.Opt("str", "line", "How to draw it.", _MARKS),
-        "x": spec.Opt("str", None, "Column on x."),
-        "y": spec.Opt("str", None, "Column on y (values)."),
-        "color": spec.Opt(
+        "mark": registry.Opt("str", "line", "How to draw it.", _MARKS),
+        "x": registry.Opt("str", None, "Column on x."),
+        "y": registry.Opt("str", None, "Column on y (values)."),
+        "color": registry.Opt(
             "str", None, "Column whose values become separate coloured series."
         ),
-        "facet": spec.Opt(
+        "facet": registry.Opt(
             "str", None, "Column whose values become separate panels."
         ),
-        "size": spec.Opt("str", None, "Column that scales scatter markers."),
-        "agg": spec.Opt(
+        "size": registry.Opt(
+            "str", None, "Column that scales scatter markers."
+        ),
+        "agg": registry.Opt(
             "str", None, "Aggregate y per (x, color, facet).", _AGGREGATIONS
         ),
-        "sort": spec.Opt(
+        "sort": registry.Opt(
             "str", None, "Sort bars by y: asc or desc.", ("asc", "desc")
         ),
-        "top_k": spec.Opt(
+        "top_k": registry.Opt(
             "int", None, "Keep the first K x values after sorting."
         ),
-        "xscale": spec.Opt(
+        "xscale": registry.Opt(
             "str", "linear", "linear or log.", ("linear", "log")
         ),
-        "yscale": spec.Opt(
+        "yscale": registry.Opt(
             "str", "linear", "linear or log.", ("linear", "log")
         ),
-        "stack": spec.Opt("bool", False, "Stack bars."),
-        "bins": spec.Opt("int", 30, "Histogram bins."),
-        "xlabel": spec.Opt("str", None, "x axis label."),
-        "ylabel": spec.Opt("str", None, "y axis label."),
+        "stack": registry.Opt("bool", False, "Stack bars."),
+        "bins": registry.Opt("int", 30, "Histogram bins."),
+        "xlabel": registry.Opt("str", None, "x axis label."),
+        "ylabel": registry.Opt("str", None, "y axis label."),
     },
 )
 def custom(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
@@ -126,7 +128,7 @@ def custom(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         A chart with one panel per facet value (one panel without a facet).
 
     Raises:
-        spec.NotApplicableError: Neither `source` nor `sql` is given.
+        NotApplicableError: Neither `source` nor `sql` is given.
         ValueError: A mapped column is missing from the table, or the mark
             lacks a column it needs.
     """
@@ -183,7 +185,7 @@ def _read_source(
             aspect, _, table_name = source[len("report:") :].partition(".")
             return ctx.report_table(aspect, table_name or "summary")
         return ctx.frame(source, options)
-    raise spec.NotApplicableError("custom needs `source` or `sql`")
+    raise registry.NotApplicableError("custom needs `source` or `sql`")
 
 
 def _check_mapping(

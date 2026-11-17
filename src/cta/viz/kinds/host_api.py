@@ -10,7 +10,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 _CLASSES = (
@@ -47,26 +47,26 @@ def _classified(calls: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "runtime_top",
     group="overview",
     title="Time in CUDA runtime or OS calls, by call",
     needs="runtime or osrt table (nsys, Kineto)",
     aliases=("api_top", "api_time"),
     options={
-        "source": spec.Opt(
+        "source": registry.Opt(
             "str",
             "runtime",
             "CUDA runtime calls, or OS runtime calls.",
             ("runtime", "osrt"),
         ),
-        "metric": spec.Opt(
+        "metric": registry.Opt(
             "str",
             "total_ms",
             "Total time, mean time per call, or call count.",
             ("total_ms", "mean_us", "calls"),
         ),
-        "top_k": spec.Opt("int", 15, "Calls with the largest total time."),
+        "top_k": registry.Opt("int", 15, "Calls with the largest total time."),
     },
 )
 def runtime_top(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
@@ -80,7 +80,7 @@ def runtime_top(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         One horizontal grouped-bar panel, the costliest call at the top.
 
     Raises:
-        spec.NotApplicableError: The report has no such API table.
+        NotApplicableError: The report has no such API table.
     """
     table = ctx.frame(options["source"], options)
     totals = table.group_by("label", "name", maintain_order=True).agg(
@@ -140,19 +140,21 @@ def _lanes_for(
     return list(names.values()), names
 
 
-@spec.register_plot(
+@registry.register_plot(
     "runtime_timeline",
     group="timeline",
     title="CUDA API calls and GPU kernels on one timeline",
     needs="runtime_calls table (nsys, Kineto)",
     aliases=("api_timeline", "host_timeline"),
     options={
-        "start_ms": spec.Opt(
+        "start_ms": registry.Opt(
             "float", 0.0, "Window start, in ms since the rank's first event."
         ),
-        "window_ms": spec.Opt("float", 20.0, "Window length in ms."),
-        "threads": spec.Opt("int", 4, "Host threads to draw, busiest first."),
-        "gpu_streams": spec.Opt(
+        "window_ms": registry.Opt("float", 20.0, "Window length in ms."),
+        "threads": registry.Opt(
+            "int", 4, "Host threads to draw, busiest first."
+        ),
+        "gpu_streams": registry.Opt(
             "int", 3, "GPU streams to draw below the threads (0 = none)."
         ),
     },
@@ -176,7 +178,7 @@ def runtime_timeline(
         A one-column grid of timelines.
 
     Raises:
-        spec.NotApplicableError: The report has no runtime-call table, or
+        NotApplicableError: The report has no runtime-call table, or
             the window holds no call.
     """
     calls = _classified(ctx.frame("runtime_calls", options))
@@ -243,7 +245,7 @@ def runtime_timeline(
             )
         )
     if not panels:
-        raise spec.NotApplicableError("no API call falls in the window")
+        raise registry.NotApplicableError("no API call falls in the window")
     return chart_helpers.grid("API calls and kernels", panels, max_cols=1)
 
 
@@ -269,15 +271,17 @@ def _segments(
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "sync_waits",
     group="timeline",
     title="Host time spent waiting on the device",
     needs="runtime_calls table (nsys, Kineto)",
     aliases=("sync", "host_waits"),
     options={
-        "bins": spec.Opt("int", 30, "Bins of the wait-length histogram."),
-        "top_k": spec.Opt("int", 8, "Sync calls to list, longest total first."),
+        "bins": registry.Opt("int", 30, "Bins of the wait-length histogram."),
+        "top_k": registry.Opt(
+            "int", 8, "Sync calls to list, longest total first."
+        ),
     },
 )
 def sync_waits(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
@@ -294,13 +298,15 @@ def sync_waits(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         Two panels: wait lengths, and total wait by call.
 
     Raises:
-        spec.NotApplicableError: The trace has no synchronising call.
+        NotApplicableError: The trace has no synchronising call.
     """
     calls = _classified(ctx.frame("runtime_calls", options)).filter(
         pl.col("api_class") == "sync"
     )
     if calls.is_empty():
-        raise spec.NotApplicableError("the trace has no synchronising calls")
+        raise registry.NotApplicableError(
+            "the trace has no synchronising calls"
+        )
     waits = calls["duration_ns"].to_numpy().astype(float) / 1e3
     bins = max(2, int(options["bins"]))
     edges = np.geomspace(
@@ -367,7 +373,7 @@ def sync_waits(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "runtime_step_mix",
     group="steps",
     title="Host API time per step, by kind of call",
@@ -391,12 +397,12 @@ def runtime_step_mix(
         One stacked-bar panel per group.
 
     Raises:
-        spec.NotApplicableError: No call falls inside a step.
+        NotApplicableError: No call falls inside a step.
     """
     calls = _classified(ctx.frame("runtime_calls", options))
     calls = calls.filter(pl.col("idx").is_not_null())
     if calls.is_empty():
-        raise spec.NotApplicableError("no API call falls inside a step")
+        raise registry.NotApplicableError("no API call falls inside a step")
     panels = []
     for label in chart_helpers.unique_in_order(calls, "label"):
         mine = calls.filter(pl.col("label") == label)

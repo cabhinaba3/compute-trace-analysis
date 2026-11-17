@@ -1,47 +1,39 @@
-"""Kernel-level plot kinds.
-
-Covers the kernel Pareto, family share, baseline-vs-candidate scatter,
-per-kernel drift and the Nsight Compute views (occupancy, throughput, stalls).
-"""
+"""Kernel-level plot kinds: Pareto, family share, top-k, scatter and drift."""
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, cast, TYPE_CHECKING
 
 import numpy as np
 import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz import theme
 from cta.viz.kinds import chart_helpers
 
+if TYPE_CHECKING:
+    from cta import models
+
 _GROUP_BY_COLUMNS = ("canonical_name", "name", "op_family", "scope", "category")
-# Nsight Compute throughput columns and their legend names, in colour order.
-_THROUGHPUT_SERIES = (
-    ("sm_throughput_pct", "SM"),
-    ("dram_throughput_pct", "DRAM"),
-    ("mem_throughput_pct", "memory (max unit)"),
-    ("tensor_pipe_pct", "tensor pipe"),
-)
 
 
-def _group_by_option(default: str) -> spec.Opt:
+def _group_by_option(default: str) -> registry.Opt:
     """Declares the `by` option that picks the column to group kernels by."""
-    return spec.Opt(
+    return registry.Opt(
         "str", default, "Column to group kernels by.", _GROUP_BY_COLUMNS
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "pareto",
     group="timeline",
     title="Kernel Pareto (share and cumulative share)",
     needs="kernels table",
     options={
         "by": _group_by_option("canonical_name"),
-        "top_k": spec.Opt("int", 15, "Entities shown."),
+        "top_k": registry.Opt("int", 15, "Entities shown."),
     },
 )
 def pareto(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
@@ -100,17 +92,19 @@ def pareto(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     return chart_helpers.grid("Kernel Pareto", panels, max_cols=1)
 
 
-@spec.register_plot(
+@registry.register_plot(
     "family_share",
     group="overview",
     title="Time by kernel family / category / scope",
     needs="kernels table",
     options={
         "by": _group_by_option("op_family"),
-        "normalize": spec.Opt(
+        "normalize": registry.Opt(
             "bool", False, "Show 100% stacked shares instead of ms."
         ),
-        "top_k": spec.Opt("int", 8, "Entities kept; the rest become 'other'."),
+        "top_k": registry.Opt(
+            "int", 8, "Entities kept; the rest become 'other'."
+        ),
     },
 )
 def family_share(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
@@ -199,14 +193,16 @@ def family_share(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "kernel_scatter",
     group="compare",
     title="Kernel time: baseline vs candidate",
     needs="kernels table, exactly 2 groups",
     options={
         "by": _group_by_option("canonical_name"),
-        "label_top": spec.Opt("int", 6, "Annotate this many biggest movers."),
+        "label_top": registry.Opt(
+            "int", 6, "Annotate this many biggest movers."
+        ),
     },
 )
 def kernel_scatter(
@@ -225,12 +221,12 @@ def kernel_scatter(
         A one-panel log-log chart.
 
     Raises:
-        spec.NotApplicableError: The report does not have exactly two groups.
+        NotApplicableError: The report does not have exactly two groups.
     """
     kernels = ctx.frame("kernels", options)
     labels = chart_helpers.unique_in_order(kernels, "label")
     if len(labels) != 2:
-        raise spec.NotApplicableError("needs exactly two groups")
+        raise registry.NotApplicableError("needs exactly two groups")
     entity_column = options["by"]
     baseline_ms = _total_ms_per_entity(
         kernels, labels[0], entity_column, "baseline_ms"
@@ -322,13 +318,13 @@ def _total_ms_per_entity(
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "kernel_drift",
     group="drift",
     title="Per-kernel duration drift across steps",
     needs="kernels table with >= 4 steps",
     options={
-        "top_k": spec.Opt("int", 20, "Kernels shown (by total time)."),
+        "top_k": registry.Opt("int", 20, "Kernels shown (by total time)."),
         "by": _group_by_option("canonical_name"),
     },
 )
@@ -347,7 +343,7 @@ def kernel_drift(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         six drifting kernels.
 
     Raises:
-        spec.NotApplicableError: No group has kernels in at least four steps.
+        NotApplicableError: No group has kernels in at least four steps.
     """
     kernels = ctx.frame("kernels", options).filter(pl.col("idx").is_not_null())
     entity_column = options["by"]
@@ -365,7 +361,7 @@ def kernel_drift(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         panels.append(panel)
         notes.extend(drift_notes)
     if not panels:
-        raise spec.NotApplicableError("needs at least 4 steps")
+        raise registry.NotApplicableError("needs at least 4 steps")
     return chart_helpers.grid(
         "Per-kernel duration drift",
         panels,
@@ -476,249 +472,149 @@ def _drift_flag(
     return ""
 
 
-def _longest_kernels(
-    kernels: pl.DataFrame, label: str, count: int
-) -> pl.DataFrame:
-    """Returns the `count` longest profiled kernels of one group.
-
-    Kernel ids restart at 0 in every report, so groups are never pooled.
-    """
-    return (
-        kernels.filter(pl.col("label") == label)
-        .sort("duration_ns", descending=True)
-        .unique(["trial", "kernel_id"], keep="first", maintain_order=True)
-        .head(count)
-    )
+# Per-entity tables `topk` tries in order: (aspect, table, key column, unit).
+_TOPK_SOURCES = (
+    ("kernel_diff", "by_family", "op_family", "ms"),
+    ("layer_fusion", "by_layer", "name", "ms"),
+    ("comm_collectives", "by_comm_type", "comm_type", "MB"),
+    ("os_runtime", "by_syscall", "name", "ms"),
+    ("roofline_diff", "by_kernel", "canonical_name", "us"),
+)
 
 
-def _ranked_kernel_names(kernels: pl.DataFrame) -> list[str]:
-    """Labels bars by truncated kernel name and rank, so names stay unique."""
-    return [
-        f"{str(name)[:26]} #{rank}"
-        for rank, name in enumerate(kernels["canonical_name"].to_list())
-    ]
+# Key column of the kernel_diff tables other than by_kernel.
+_KERNEL_DIFF_KEY_BY_TABLE = {"by_family": "op_family", "by_scope": "scope"}
 
 
-def _marker_sizes(
-    kernels: pl.DataFrame, size_column: str
-) -> list[float] | None:
-    """Scales marker sizes to 6..36 by a column.
-
-    Returns None when sizing is off (``none``), or the column is missing or
-    all null.
-    """
-    if (
-        size_column == "none"
-        or size_column not in kernels.columns
-        or not kernels[size_column].drop_nulls().len()
-    ):
-        return None
-    magnitudes = kernels[size_column].fill_null(0).to_numpy().astype(float)
-    return (6 + 30 * magnitudes / max(magnitudes.max(), 1e-9)).tolist()
-
-
-@spec.register_plot(
-    "occupancy",
-    group="kernels",
-    title="Occupancy vs duration (Nsight Compute)",
-    needs="Nsight Compute data",
+@registry.register_plot(
+    "topk",
+    group="compare",
+    title="Top contributors / hotspots",
+    aliases=("tornado", "top_k", "hotspots"),
+    exported=True,
     options={
-        "x": spec.Opt("str", "occupancy_pct", "ncu column on x."),
-        "y": spec.Opt("str", "duration_ns", "ncu column on y."),
-        "size": spec.Opt(
-            "str",
-            "dram_bytes",
-            "Column that scales the marker (none to disable).",
+        "top_k": registry.Opt("int", 10, "How many entities."),
+        "table": registry.Opt(
+            "str", None, "Table of kernel_diff, e.g. by_kernel or by_scope."
         ),
-        "logy": spec.Opt("bool", True, "Log y axis."),
     },
+    needs="a per-entity report table (kernel_diff, layer_fusion, ...)",
 )
-def occupancy(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
-    """Plots achieved occupancy against duration per profiled kernel.
+def topk(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
+    """Plots the top-K entities by time (one group) or by delta (two groups).
 
-    Points are coloured by kernel family and sized by DRAM traffic (or the
-    `size` column); each group gets its own panel.
+    The entities come from the first per-entity report table that has the
+    needed column; the `table` option puts a kernel_diff table first.
 
     Args:
         ctx: Data access for the report being plotted.
         options: Resolved options of this kind.
 
     Returns:
-        A chart of at most two columns with one panel per group.
+        A one-panel chart of horizontal bars: hotspots for one group, slower
+        and faster entities for a pair.
 
     Raises:
-        spec.NotApplicableError: The x or y column is missing, or no kernel has
-            values in both.
+        NotApplicableError: The report has more than two groups, or no
+            per-entity table has the needed column.
     """
-    kernels = ctx.frame("ncu_kernels", options)
-    x_column, y_column = options["x"], options["y"]
-    for column in (x_column, y_column):
-        if column not in kernels.columns:
-            raise spec.NotApplicableError(
-                f"ncu table has no column '{column}':"
-                f" {', '.join(kernels.columns)}"
-            )
-    families = sorted(kernels["op_family"].unique().to_list())
-    panels = []
-    labels = chart_helpers.unique_in_order(kernels, "label")
-    for panel_index, label in enumerate(labels):
-        traces = []
-        for family_index, family in enumerate(families):
-            family_kernels = kernels.filter(
-                (pl.col("label") == label) & (pl.col("op_family") == family)
-            ).drop_nulls([x_column, y_column])
-            if family_kernels.is_empty():
-                continue
-            kernel_names = [
-                str(name)[:40]
-                for name in family_kernels["canonical_name"].to_list()
-            ]
-            traces.append(
-                ir.Trace(
-                    "scatter",
-                    x=family_kernels[x_column].to_list(),
-                    y=family_kernels[y_column].to_list(),
-                    name=family,
-                    size=_marker_sizes(family_kernels, options["size"]),
-                    style={"ci": family_index, "nolegend": panel_index > 0},
-                    text=kernel_names,
-                    meta={"label": label},
-                )
-            )
-        panels.append(
-            ir.Panel(
-                traces=traces,
-                title=label,
-                xlabel=x_column,
-                ylabel=y_column,
-                yscale="log" if options["logy"] else "linear",
-            )
+    report = ctx.require_report()
+    if len(report.groups) not in (1, 2):
+        raise registry.NotApplicableError(
+            "Tornado / Top-K plot requires 1 trace (hotspots) or 2 traces"
+            " (Baseline vs Candidate)"
         )
-    if not any(panel.traces for panel in panels):
-        raise spec.NotApplicableError("no kernels with those columns")
-    return chart_helpers.grid("Kernel occupancy", panels, max_cols=2)
-
-
-@spec.register_plot(
-    "ncu_util",
-    group="kernels",
-    title="Throughput utilisation per kernel (Nsight Compute)",
-    needs="Nsight Compute data",
-    options={
-        "top_k": spec.Opt("int", 12, "Kernels shown per group (by duration).")
-    },
-)
-def ncu_util(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
-    """Plots throughput (% of peak) of each group's longest kernels.
-
-    Shows SM, DRAM, memory and tensor-pipe throughput side by side, which
-    tells what limits each kernel.
-
-    Args:
-        ctx: Data access for the report being plotted.
-        options: Resolved options of this kind.
-
-    Returns:
-        A chart of at most two columns with one panel per group.
-
-    Raises:
-        spec.NotApplicableError: No throughput column has data.
-    """
-    kernels = ctx.frame("ncu_kernels", options)
-    panels = []
-    labels = chart_helpers.unique_in_order(kernels, "label")
-    for panel_index, label in enumerate(labels):
-        longest = _longest_kernels(kernels, label, int(options["top_k"]))
-        kernel_names = _ranked_kernel_names(longest)
-        traces = []
-        for series_index, (column, series_name) in enumerate(
-            _THROUGHPUT_SERIES
-        ):
-            if (
-                column not in longest.columns
-                or not longest[column].drop_nulls().len()
-            ):
-                continue
-            traces.append(
-                ir.Trace(
-                    "barh",
-                    x=longest[column].fill_null(0).to_list(),
-                    y=kernel_names,
-                    name=series_name,
-                    style={"ci": series_index, "nolegend": panel_index > 0},
-                    meta={"label": label},
-                )
-            )
-        panels.append(
-            ir.Panel(
-                traces=traces, title=label, xlabel="% of peak", invert_y=True
-            )
+    is_single_group = len(report.groups) == 1
+    first_label = report.groups[0].label
+    value_column = first_label if is_single_group else "delta"
+    table, key_column, unit = _topk_table(report, options, value_column)
+    names = [str(name)[:32] for name in table[key_column].to_list()]
+    values = table[value_column].to_list()
+    if is_single_group:
+        hotspot_bars = ir.Trace(
+            "barh",
+            x=values,
+            y=names,
+            name=first_label,
+            style={"ci": 0, "nolegend": True},
         )
-    if not any(panel.traces for panel in panels):
-        raise spec.NotApplicableError("ncu table has no throughput columns")
-    return chart_helpers.grid(
-        "Throughput utilisation (% of peak)", panels, max_cols=2
+        return chart_helpers.single(
+            f"Top hotspots ({first_label})",
+            ir.Panel(
+                traces=[hotspot_bars],
+                xlabel=f"{first_label} [{unit}]",
+                invert_y=True,
+                legend=False,
+            ),
+        )
+    named_values = list(zip(names, values, strict=True))
+    slower = [(name, value) for name, value in named_values if value > 0]
+    faster = [(name, value) for name, value in named_values if value <= 0]
+    traces = [
+        ir.Trace(
+            "barh",
+            x=[value for _, value in bars],
+            y=[name for name, _ in bars],
+            name=series_name,
+            color=color,
+        )
+        for series_name, color, bars in (
+            ("slower", theme.BAD, slower),
+            ("faster", theme.GOOD, faster),
+        )
+        if bars
+    ]
+    candidate_label = report.groups[1].label
+    return chart_helpers.single(
+        "Top contributors to net change",
+        ir.Panel(
+            traces=traces,
+            xlabel=f"Delta ({candidate_label} - {first_label}) [{unit}]",
+            invert_y=True,
+        ),
     )
 
 
-@spec.register_plot(
-    "stalls",
-    group="kernels",
-    title="Warp stall split (Nsight Compute)",
-    needs="Nsight Compute data",
-    options={
-        "top_k": spec.Opt("int", 12, "Kernels shown per group (by duration).")
-    },
-)
-def stalls(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
-    """Plots the memory vs compute share of warp stalls.
-
-    Covers each group's longest kernels as stacked horizontal bars.
+def _topk_table(
+    report: models.Report,
+    options: dict[str, Any],
+    value_column: str,
+) -> tuple[pl.DataFrame, str, str]:
+    """Finds the first per-entity table with rows and the value column.
 
     Args:
-        ctx: Data access for the report being plotted.
-        options: Resolved options of this kind.
+        report: The report being plotted.
+        options: Resolved options of `topk` (reads `table` and `top_k`).
+        value_column: Column the bars show.
 
     Returns:
-        A chart of at most two columns with one panel per group.
+        The table cut to its first `top_k` rows, its key column (the first
+        column when the expected key is missing) and the value unit.
 
     Raises:
-        spec.NotApplicableError: Either stall column is missing or all null.
+        NotApplicableError: No candidate table qualifies.
     """
-    kernels = ctx.frame("ncu_kernels", options)
-    for column in ("stall_mem_pct", "stall_compute_pct"):
+    candidates = list(_TOPK_SOURCES)
+    if options.get("table"):
+        table_name = options["table"]
+        key_column = _KERNEL_DIFF_KEY_BY_TABLE.get(table_name, "canonical_name")
+        candidates = [
+            ("kernel_diff", table_name, key_column, "ms"),
+            *candidates,
+        ]
+    for aspect_name, table_name, key_column, unit in candidates:
         if (
-            column not in kernels.columns
-            or not kernels[column].drop_nulls().len()
+            aspect_name not in report.aspects
+            or table_name not in report.aspects[aspect_name].details
         ):
-            raise spec.NotApplicableError("ncu table has no stall data")
-    panels = []
-    for label in chart_helpers.unique_in_order(kernels, "label"):
-        longest = _longest_kernels(kernels, label, int(options["top_k"]))
-        kernel_names = _ranked_kernel_names(longest)
-        memory_stalls = ir.Trace(
-            "barh",
-            x=longest["stall_mem_pct"].fill_null(0).to_list(),
-            y=kernel_names,
-            name="memory stalls",
-            style={"ci": 1},
-            meta={"label": label},
-        )
-        compute_stalls = ir.Trace(
-            "barh",
-            x=longest["stall_compute_pct"].fill_null(0).to_list(),
-            y=kernel_names,
-            name="compute stalls",
-            style={"ci": 0},
-            meta={"label": label},
-        )
-        panels.append(
-            ir.Panel(
-                traces=[memory_stalls, compute_stalls],
-                title=label,
-                xlabel="% of stall cycles",
-                invert_y=True,
-                stacked=True,
-            )
-        )
-    return chart_helpers.grid("Warp stalls", panels, max_cols=2)
+            continue
+        table = report.aspects[aspect_name].details[table_name]
+        if table.height and value_column in table.columns:
+            table = table.head(int(options["top_k"]))
+            if key_column not in table.columns:
+                key_column = table.columns[0]
+            return table, key_column, unit
+    raise registry.NotApplicableError(
+        f"No entity breakdown table with '{value_column}' available for"
+        " Top-K / tornado plot"
+    )

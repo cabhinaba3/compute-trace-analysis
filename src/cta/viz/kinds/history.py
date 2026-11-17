@@ -16,7 +16,7 @@ import numpy as np
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz import theme
 from cta.viz.kinds import chart_helpers
 
@@ -102,35 +102,37 @@ def _metric_value(
     return None
 
 
-@spec.register_plot(
+@registry.register_plot(
     "history",
     group="drift",
     title="Metric across saved runs (control chart)",
     needs="--history GLOB of report.json files (or option history)",
     options={
-        "history": spec.Opt(
+        "history": registry.Opt(
             "str",
             None,
             "Glob of report.json files, e.g. 'reports/*/report.json'.",
         ),
-        "metric": spec.Opt("str", "mean_step_ms", "Summary metric to track."),
-        "aspect": spec.Opt("str", None, "Restrict to one aspect."),
-        "series": spec.Opt(
+        "metric": registry.Opt(
+            "str", "mean_step_ms", "Summary metric to track."
+        ),
+        "aspect": registry.Opt("str", None, "Restrict to one aspect."),
+        "series": registry.Opt(
             "str",
             None,
             "Group label to track (default: the candidate of a pair, else the"
             " first group).",
         ),
-        "k": spec.Opt(
+        "k": registry.Opt(
             "float", 3.5, "Control limits at median +/- k robust sigmas (MAD)."
         ),
-        "worse": spec.Opt(
+        "worse": registry.Opt(
             "str",
             "higher",
             "Which direction is a regression.",
             ("higher", "lower"),
         ),
-        "order_by": spec.Opt(
+        "order_by": registry.Opt(
             "str",
             "created_at",
             "created_at (file mtime for old reports) or name.",
@@ -154,12 +156,12 @@ def history(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         median and any significant trend.
 
     Raises:
-        spec.NotApplicableError: No history glob is given, or fewer than three
+        NotApplicableError: No history glob is given, or fewer than three
             reports carry the metric.
     """
     pattern = options.get("history") or ctx.history
     if not pattern:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "history needs --history 'reports/*/report.json'"
         )
     runs = load_history(pattern)
@@ -177,7 +179,7 @@ def history(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     ]
     points = [(run, value) for run, value in run_values if value is not None]
     if len(points) < 3:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             f"found {len(points)} report(s) with metric '{metric}' under"
             f" {pattern}; need at least 3"
         )

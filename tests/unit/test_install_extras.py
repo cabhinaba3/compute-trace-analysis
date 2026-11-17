@@ -17,7 +17,7 @@ import pytest
 from cta.cli import output
 from cta.synth import chakra_proto
 from cta.viz import context
-from cta.viz import spec as viz_spec
+from cta.viz import registry as viz_registry
 
 _OPTIONAL = (
     "duckdb",
@@ -100,9 +100,9 @@ def test_sql_and_where_name_the_sql_extra(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(sys.modules, "duckdb", None)
-    with pytest.raises(viz_spec.NotApplicableError, match=r"\[sql\]"):
+    with pytest.raises(viz_registry.NotApplicableError, match=r"\[sql\]"):
         context.DataContext(None).sql("SELECT 1")
-    with pytest.raises(viz_spec.NotApplicableError, match=r"\[sql\]"):
+    with pytest.raises(viz_registry.NotApplicableError, match=r"\[sql\]"):
         context._sql_filter(pl.DataFrame({"a": [1]}), "a > 0")
 
 

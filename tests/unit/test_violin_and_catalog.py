@@ -15,7 +15,7 @@ from cta import viz
 from cta.viz import context
 from cta.viz import ir
 from cta.viz import plots
-from cta.viz import spec as viz_spec
+from cta.viz import registry as viz_registry
 from cta.viz import suitability
 from cta.viz.backends import matplotlib as mpl_backend
 from cta.viz.backends import plotly as plotly_backend
@@ -103,31 +103,31 @@ def test_ir_mark_violin() -> None:
 
 
 def test_catalog_registration_and_aliases() -> None:
-    catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
+    catalog = {kind.name: kind for kind in viz_registry.kind_catalog()}
     assert "violin" in catalog
     assert "boxplot" in catalog
     assert "line_plot" in catalog
 
-    violin_kind = viz_spec.get_kind("violin")
+    violin_kind = viz_registry.get_kind("violin")
     assert violin_kind.name == "violin"
     assert violin_kind.group == "overview"
     assert set(violin_kind.aliases) == {"violinplot", "violin_plot"}
-    assert viz_spec.get_kind("violinplot").name == "violin"
-    assert viz_spec.get_kind("violin_plot").name == "violin"
+    assert viz_registry.get_kind("violinplot").name == "violin"
+    assert viz_registry.get_kind("violin_plot").name == "violin"
 
-    boxplot_kind = viz_spec.get_kind("boxplot")
+    boxplot_kind = viz_registry.get_kind("boxplot")
     assert boxplot_kind.name == "boxplot"
     assert boxplot_kind.group == "overview"
     assert set(boxplot_kind.aliases) == {"box", "box_plot"}
-    assert viz_spec.get_kind("box").name == "boxplot"
-    assert viz_spec.get_kind("box_plot").name == "boxplot"
+    assert viz_registry.get_kind("box").name == "boxplot"
+    assert viz_registry.get_kind("box_plot").name == "boxplot"
 
-    line_kind = viz_spec.get_kind("line_plot")
+    line_kind = viz_registry.get_kind("line_plot")
     assert line_kind.name == "line_plot"
     assert line_kind.group == "timeline"
     assert set(line_kind.aliases) == {"line", "lineplot"}
-    assert viz_spec.get_kind("line").name == "line_plot"
-    assert viz_spec.get_kind("lineplot").name == "line_plot"
+    assert viz_registry.get_kind("line").name == "line_plot"
+    assert viz_registry.get_kind("lineplot").name == "line_plot"
 
 
 def test_matplotlib_violin_rendering_formats(tmp_path: pathlib.Path) -> None:

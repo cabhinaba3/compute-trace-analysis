@@ -10,7 +10,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 _DIRECTIONS = (
@@ -23,12 +23,12 @@ _DIRECTIONS = (
 )
 _ORDER = [name for name, _ in _DIRECTIONS] + ["other"]
 _COMMON = {
-    "direction": spec.Opt(
+    "direction": registry.Opt(
         "str",
         "",
         "Only this direction: H2D, D2H, D2D, P2P, H2H or memset.",
     ),
-    "by": spec.Opt(
+    "by": registry.Opt(
         "str",
         "label",
         "One series per group label, or per label and rank.",
@@ -58,13 +58,13 @@ def _copies(ctx: context.DataContext, options: dict[str, Any]) -> pl.DataFrame:
     """Reads the copy rows of ``kernels`` with a ``direction`` column.
 
     Raises:
-        spec.NotApplicableError: The trace has no copies, or none in the
+        NotApplicableError: The trace has no copies, or none in the
             requested direction.
     """
     kernels = ctx.frame("kernels", options)
     copies = kernels.filter(pl.col("category") == "memcpy")
     if copies.is_empty():
-        raise spec.NotApplicableError("the trace has no memory copies")
+        raise registry.NotApplicableError("the trace has no memory copies")
     names = copies["name"].unique().to_list()
     directions = {name: direction_of(name) for name in names}
     copies = copies.with_columns(
@@ -75,7 +75,7 @@ def _copies(ctx: context.DataContext, options: dict[str, Any]) -> pl.DataFrame:
     if options["direction"]:
         copies = copies.filter(pl.col("direction") == options["direction"])
         if copies.is_empty():
-            raise spec.NotApplicableError(
+            raise registry.NotApplicableError(
                 f"no copies in direction {options['direction']}"
             )
     return copies
@@ -90,7 +90,7 @@ def _series(copies: pl.DataFrame, by: str) -> list[tuple[str, pl.DataFrame]]:
     ]
 
 
-@spec.register_plot(
+@registry.register_plot(
     "memcpy_bandwidth",
     group="overview",
     title="Copy bandwidth, time or volume by direction",
@@ -98,7 +98,7 @@ def _series(copies: pl.DataFrame, by: str) -> list[tuple[str, pl.DataFrame]]:
     aliases=("copy_bandwidth", "memcpy"),
     options={
         **_COMMON,
-        "metric": spec.Opt(
+        "metric": registry.Opt(
             "str",
             "bandwidth",
             "GB/s over the copies, total time, total volume, or call count.",
@@ -122,14 +122,14 @@ def memcpy_bandwidth(
         One grouped-bar panel with a bar per series and direction.
 
     Raises:
-        spec.NotApplicableError: There are no copies to measure.
+        NotApplicableError: There are no copies to measure.
     """
     copies = _copies(ctx, options)
     metric = options["metric"]
     if metric == "bandwidth":
         copies = copies.filter(pl.col("bytes") > 0)
         if copies.is_empty():
-            raise spec.NotApplicableError("no copy records its size")
+            raise registry.NotApplicableError("no copy records its size")
     directions = [
         d for d in _ORDER if d in copies["direction"].unique().to_list()
     ]
@@ -171,7 +171,7 @@ def memcpy_bandwidth(
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "memcpy_sizes",
     group="overview",
     title="Copy sizes",
@@ -179,8 +179,8 @@ def memcpy_bandwidth(
     aliases=("copy_sizes",),
     options={
         **_COMMON,
-        "bins": spec.Opt("int", 24, "Bins, evenly spaced on a log axis."),
-        "weight": spec.Opt(
+        "bins": registry.Opt("int", 24, "Bins, evenly spaced on a log axis."),
+        "weight": registry.Opt(
             "str",
             "calls",
             "Count the calls in each bin, or the bytes they moved.",
@@ -202,11 +202,11 @@ def memcpy_sizes(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         One panel with a step line per series.
 
     Raises:
-        spec.NotApplicableError: No copy records its size.
+        NotApplicableError: No copy records its size.
     """
     copies = _copies(ctx, options).filter(pl.col("bytes") > 0)
     if copies.is_empty():
-        raise spec.NotApplicableError("no copy records its size")
+        raise registry.NotApplicableError("no copy records its size")
     sizes = copies["bytes"].to_numpy().astype(float)
     bins = max(2, int(options["bins"]))
     edges = np.geomspace(
@@ -239,7 +239,7 @@ def memcpy_sizes(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     )
 
 
-@spec.register_plot(
+@registry.register_plot(
     "memcpy_overlap",
     group="overview",
     title="Copy time hidden behind compute",
@@ -265,14 +265,14 @@ def memcpy_overlap(
         time.
 
     Raises:
-        spec.NotApplicableError: There are no copies or no compute kernels.
+        NotApplicableError: There are no copies or no compute kernels.
     """
     copies = _copies(ctx, options)
     compute = ctx.frame("kernels", options).filter(
         pl.col("category") == "compute"
     )
     if compute.is_empty():
-        raise spec.NotApplicableError("the trace has no compute kernels")
+        raise registry.NotApplicableError("the trace has no compute kernels")
     overlapped = np.zeros(copies.height)
     copy_start = copies["t_ms"].to_numpy().astype(float)
     copy_end = copies["end_ms"].to_numpy().astype(float)

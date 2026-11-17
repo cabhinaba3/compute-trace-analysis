@@ -10,6 +10,7 @@ import pathlib
 from typing import Any, TYPE_CHECKING
 
 from cta.viz import context
+from cta.viz import registry as viz_registry
 from cta.viz import spec as viz_spec
 from cta.viz import suitability
 
@@ -45,10 +46,10 @@ def build_chart(
     Raises:
         ValueError: If the kind or an option is unknown, or an option value
             cannot be coerced.
-        viz_spec.NotApplicableError: If the kind cannot be drawn from this data.
+        NotApplicableError: If the kind cannot be drawn from this data.
     """
-    plot_kind = viz_spec.get_kind(kind)
-    resolved = viz_spec.resolve_options(plot_kind, options or {})
+    plot_kind = viz_registry.get_kind(kind)
+    resolved = viz_registry.resolve_options(plot_kind, options or {})
     chart = plot_kind.build(ctx, resolved)
     if resolved.get("title"):
         chart.title = resolved["title"]
@@ -187,7 +188,7 @@ def render_plot(
 
     Raises:
         ValueError: If the kind or an option is invalid.
-        viz_spec.NotApplicableError: If the kind cannot be drawn for this
+        NotApplicableError: If the kind cannot be drawn for this
             report.
     """
     chart, resolved = build_chart(context.DataContext(report), kind, options)
@@ -217,7 +218,7 @@ def render_spec(
 
     Raises:
         ValueError: If the kind or an option is invalid.
-        viz_spec.NotApplicableError: If the kind cannot be drawn from this data.
+        NotApplicableError: If the kind cannot be drawn from this data.
     """
     chart, resolved = build_chart(ctx, spec.kind, spec.options)
     return render_chart(chart, resolved, path, style=style, dpi=dpi)

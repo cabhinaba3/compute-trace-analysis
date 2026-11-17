@@ -21,7 +21,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 
 
 class SuitabilityWarning(UserWarning):
@@ -473,12 +473,12 @@ def known_alternatives(warning: str) -> list[str]:
 
     Returns:
         The names from ``extract_suggested_alternatives`` that
-        ``spec.get_kind`` accepts, in order.
+        ``registry.get_kind`` accepts, in order.
     """
     known = []
     for name in extract_suggested_alternatives(warning):
         try:
-            spec.get_kind(name)
+            registry.get_kind(name)
         except ValueError:
             continue
         known.append(name)

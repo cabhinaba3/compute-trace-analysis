@@ -9,7 +9,7 @@ import polars as pl
 
 from cta.viz import context
 from cta.viz import ir
-from cta.viz import spec
+from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
 _PAIR_COLUMNS = {"metric", "baseline", "candidate", "delta_pct"}
@@ -32,11 +32,11 @@ def _pair_summaries(
         One row per metric, with an ``aspect`` column added.
 
     Raises:
-        spec.NotApplicableError: The report has no two-group summary.
+        NotApplicableError: The report has no two-group summary.
     """
     report = ctx.require_report()
     if len(report.groups) != 2:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "needs exactly two groups (a baseline and a candidate)"
         )
     frames = []
@@ -45,14 +45,14 @@ def _pair_summaries(
         if set(table.columns) >= _PAIR_COLUMNS:
             frames.append(table.with_columns(pl.lit(name).alias("aspect")))
     if not frames:
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "no aspect has a baseline-versus-candidate summary"
         )
     rows = pl.concat(frames, how="diagonal_relaxed")
     if match:
         rows = rows.filter(pl.col("metric").str.contains(match))
     if rows.is_empty():
-        raise spec.NotApplicableError(f"no metric matches '{match}'")
+        raise registry.NotApplicableError(f"no metric matches '{match}'")
     return rows
 
 
@@ -63,21 +63,21 @@ def _optional(rows: pl.DataFrame, column: str, default: Any) -> pl.Expr:
     return pl.lit(default)
 
 
-@spec.register_plot(
+@registry.register_plot(
     "forest",
     group="compare",
     title="Change of every metric, with confidence intervals",
     needs="a two-group report (baseline and candidate)",
     aliases=("forest_plot", "effect_sizes"),
     options={
-        "aspect": spec.Opt("str", "", "Only this aspect (default: all)."),
-        "match": spec.Opt(
+        "aspect": registry.Opt("str", "", "Only this aspect (default: all)."),
+        "match": registry.Opt(
             "str", "", "Only metrics whose name matches this expression."
         ),
-        "top_k": spec.Opt(
+        "top_k": registry.Opt(
             "int", 25, "Metrics with the largest change (0 = all)."
         ),
-        "only_significant": spec.Opt(
+        "only_significant": registry.Opt(
             "bool", False, "Leave out changes that are not significant."
         ),
     },
@@ -97,7 +97,7 @@ def forest(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         A one-panel chart with a lane per metric.
 
     Raises:
-        spec.NotApplicableError: The report has no two-group summary, or
+        NotApplicableError: The report has no two-group summary, or
             nothing is left after the filters.
     """
     rows = _pair_summaries(ctx, options["aspect"], options["match"])
@@ -131,7 +131,7 @@ def forest(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     if options["only_significant"]:
         rows = rows.filter(pl.col("is_significant"))
     if rows.is_empty():
-        raise spec.NotApplicableError("no metric is left to draw")
+        raise registry.NotApplicableError("no metric is left to draw")
     if options["top_k"] > 0:
         rows = rows.sort(pl.col("delta_pct").abs(), descending=True).head(
             options["top_k"]
@@ -181,30 +181,30 @@ def forest(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
     return chart
 
 
-@spec.register_plot(
+@registry.register_plot(
     "volcano",
     group="compare",
     title="Size of the change against its significance",
     needs="a two-group report with two or more trials per group",
     aliases=("volcano_plot",),
     options={
-        "aspect": spec.Opt("str", "", "Only this aspect (default: all)."),
-        "match": spec.Opt(
+        "aspect": registry.Opt("str", "", "Only this aspect (default: all)."),
+        "match": registry.Opt(
             "str", "", "Only metrics whose name matches this expression."
         ),
-        "x": spec.Opt(
+        "x": registry.Opt(
             "str",
             "delta_pct",
             "Size of the change: percent, or Cohen's d.",
             ("delta_pct", "cohens_d"),
         ),
-        "p": spec.Opt(
+        "p": registry.Opt(
             "str",
             "p_welch",
             "Which test's p-value to use.",
             ("p_welch", "p_mannwhitney"),
         ),
-        "labels": spec.Opt(
+        "labels": registry.Opt(
             "int", 8, "Points to name, strongest first (0 = none)."
         ),
     },
@@ -223,13 +223,13 @@ def volcano(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         A one-panel scatter chart.
 
     Raises:
-        spec.NotApplicableError: The report has no two-group summary, or no
+        NotApplicableError: The report has no two-group summary, or no
             metric has a p-value (one trial per group gives none).
     """
     rows = _pair_summaries(ctx, options["aspect"], options["match"])
     x_column, p_column = options["x"], options["p"]
     if x_column not in rows.columns or p_column not in rows.columns:
-        raise spec.NotApplicableError(f"the summaries have no {p_column}")
+        raise registry.NotApplicableError(f"the summaries have no {p_column}")
     rows = rows.filter(
         pl.col(x_column).is_finite(),
         pl.col(p_column).is_not_null(),
@@ -237,7 +237,7 @@ def volcano(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
         pl.col(p_column) > 0,
     )
     if rows.is_empty():
-        raise spec.NotApplicableError(
+        raise registry.NotApplicableError(
             "no metric has a p-value; give each group two or more trials"
         )
     rows = rows.with_columns(

@@ -21,6 +21,7 @@ from cta import models
 from cta import viz
 from cta.cli import app as cli_app
 from cta.viz import context
+from cta.viz import registry as viz_registry
 from cta.viz import spec as viz_spec
 
 REAL_DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data_real"
@@ -128,7 +129,7 @@ def test_registry_documents_every_kind_and_rejects_unknown_options() -> None:
         for kind in kinds_by_name.values()
     )
     with pytest.raises(ValueError, match=r"did you mean 'rolling'"):
-        viz_spec.resolve_options(kinds_by_name["step_trace"], {"rollin": 3})
+        viz_registry.resolve_options(kinds_by_name["step_trace"], {"rollin": 3})
     with pytest.raises(
         ValueError,
         match="Unknown plot kind 'step_tracee'.*Did you mean 'step_trace'",
@@ -152,8 +153,8 @@ def test_spec_file_roundtrip_and_coercion(tmp_path: pathlib.Path) -> None:
         "custom",
     ]
     assert first_kind
-    step_trace_options = viz_spec.resolve_options(
-        viz_spec.get_kind("step_trace"), plot_specs[0].options
+    step_trace_options = viz_registry.resolve_options(
+        viz_registry.get_kind("step_trace"), plot_specs[0].options
     )
     assert step_trace_options["steps"] == (1, 4)
 
@@ -186,7 +187,9 @@ def test_raw_tables_are_per_rank_relative_and_honour_slicing(
     assert sliced_kernels["idx"].unique().sort().to_list() == [1, 2]
     comm_kernels = ctx.frame("kernels", {"where": "category = 'comm'"})
     assert comm_kernels["category"].unique().to_list() == ["comm"]
-    with pytest.raises(viz_spec.NotApplicableError, match="not in this report"):
+    with pytest.raises(
+        viz_registry.NotApplicableError, match="not in this report"
+    ):
         ctx.frame("jtop")
 
 
@@ -269,7 +272,7 @@ def test_inapplicable_plots_raise_not_applicable_which_is_a_value_error(
     for kind in inapplicable_kinds:
         with pytest.raises(ValueError):
             pair.plot(kind=kind)
-    with pytest.raises(viz_spec.NotApplicableError):
+    with pytest.raises(viz_registry.NotApplicableError):
         viz.build_chart(context.DataContext(pair), "power_trace")
 
 
@@ -346,7 +349,9 @@ def test_history_control_chart_flags_the_regression(
     assert (flagged[0].y or [0])[0] == 15.0
     assert "latest 15" in chart.notes
     empty_history = str(tmp_path / "nothing" / "*.json")
-    with pytest.raises(viz_spec.NotApplicableError, match="need at least 3"):
+    with pytest.raises(
+        viz_registry.NotApplicableError, match="need at least 3"
+    ):
         viz.build_chart(
             context.DataContext(None, history=empty_history), "history"
         )
@@ -851,8 +856,7 @@ def test_live_server_answers_filter_queries_over_http(
 
 def test_trace_analysis_catalog_registration() -> None:
     """All five trace analysis kinds are in the catalog."""
-    viz_spec.load_kinds()
-    catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
+    catalog = {kind.name: kind for kind in viz_registry.kind_catalog()}
     expected_kinds = {
         "metric_trace": ("timeline", ("metric_timeseries", "time_series")),
         "metric_dist": ("overview", ("dist", "distribution", "distributions")),
@@ -1035,11 +1039,11 @@ def test_trace_analysis_input_validation_and_errors(
         viz.build_chart(ctx, "metric_trace", {"roolling": 5})
 
     # Missing column raises NotApplicableError
-    with pytest.raises(viz_spec.NotApplicableError, match="not found in"):
+    with pytest.raises(viz_registry.NotApplicableError, match="not found in"):
         viz.build_chart(ctx, "metric_correlation", {"x": "nonexistent_metric"})
 
     # Inapplicable table source raises NotApplicableError
-    with pytest.raises(viz_spec.NotApplicableError):
+    with pytest.raises(viz_registry.NotApplicableError):
         viz.build_chart(ctx, "metric_trace", {"source": "jtop"})
 
 
@@ -1147,7 +1151,7 @@ def test_network_kinds_can_split_by_api_and_filter(
     }
     chart, _ = viz.build_chart(ctx, "network_bandwidth", {"api": "mpi"})
     assert [t.name for t in chart.panels[0].traces] == ["cand"]
-    with pytest.raises(viz_spec.NotApplicableError, match="match"):
+    with pytest.raises(viz_registry.NotApplicableError, match="match"):
         viz.build_chart(ctx, "network_bandwidth", {"api": "ucx"})
 
 
@@ -1180,14 +1184,13 @@ def test_network_matrix_sums_sends_by_rank_pair(
 def test_network_matrix_needs_a_known_peer(
     pair: models.Report,
 ) -> None:
-    with pytest.raises(viz_spec.NotApplicableError, match="peer"):
+    with pytest.raises(viz_registry.NotApplicableError, match="peer"):
         viz.build_chart(_network_context(pair), "network_matrix")
 
 
 def test_queue_depth_catalog_registration() -> None:
     """queue_depth is registered with its aliases and options."""
-    viz_spec.load_kinds()
-    catalog = {kind.name: kind for kind in viz_spec.kind_catalog()}
+    catalog = {kind.name: kind for kind in viz_registry.kind_catalog()}
     assert "queue_depth" in catalog
     kind = catalog["queue_depth"]
     assert kind.group == "timeline"
@@ -1201,7 +1204,7 @@ def test_queue_depth_catalog_registration() -> None:
     assert "devices" in kind.options
     assert "max_events" in kind.options
     for alias in kind.aliases:
-        assert viz_spec.get_kind(alias).name == "queue_depth"
+        assert viz_registry.get_kind(alias).name == "queue_depth"
 
 
 def test_queue_depth_dual_backend_rendering(
@@ -1378,7 +1381,7 @@ def test_suggested_alternatives_are_registered_kinds() -> None:
             suggested.update(re.findall(r"'([a-z_]+)'", tail))
     assert suggested
     for name in suggested:
-        assert viz_spec.get_kind(name).name
+        assert viz_registry.get_kind(name).name
 
 
 def test_dashboard_suggests_only_registered_kinds() -> None:
@@ -1418,7 +1421,7 @@ def test_extended_kinds_on_a_real_report_draw_or_decline(
     ctx = context.DataContext(pair)
     try:
         chart, options = viz.build_chart(ctx, kind)
-    except viz_spec.NotApplicableError:
+    except viz_registry.NotApplicableError:
         return
     assert chart.panels
     viz.render_chart(chart, options, tmp_path / f"{kind}.png")
@@ -1444,5 +1447,5 @@ def test_runtime_calls_reach_the_plots_through_the_cache(
         "cand (rank 0)",
     ]
     for kind in ("memcpy_bandwidth", "sync_waits"):
-        with pytest.raises(viz_spec.NotApplicableError):
+        with pytest.raises(viz_registry.NotApplicableError):
             viz.build_chart(ctx, kind)
