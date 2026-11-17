@@ -71,6 +71,7 @@ struct Op {
   std::uint64_t value = 0;  // a calc's duration, or a send's or recv's bytes
   std::uint64_t peer = 0;
   std::uint64_t tag = 0;
+  std::uint64_t cpu = 0, nic = 0;  // "cpu N" and "nic N", 0 when absent
 };
 
 // "[label:] send <size>[kb|mb|gb|tb|b] to <peer> [tag N] [cpu N] [nic N]", the

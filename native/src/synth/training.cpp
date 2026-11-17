@@ -220,16 +220,22 @@ class ChakraBuilder {
   }
   int allreduce(const std::vector<int>& group, int, std::int64_t bytes, std::uint64_t,
                 std::span<const int> dep) {
-    return group.size() <= 1 ? last(dep) : collective("all_reduce", 0, bytes, dep);
+    return group.size() <= 1 ? last(dep) : collective("all_reduce", 0, bytes, dep, pg_name_of(group));
   }
   int alltoall(const std::vector<int>& group, int, std::int64_t bytes, std::uint64_t,
                std::span<const int> dep) {
-    return group.size() <= 1 ? last(dep) : collective("all_to_all", 6, bytes, dep);
+    return group.size() <= 1 ? last(dep) : collective("all_to_all", 6, bytes, dep, pg_name_of(group));
   }
   std::uint64_t count() const { return next_; }
 
  private:
   static int last(std::span<const int> dep) { return dep.empty() ? -1 : dep[0]; }
+  // The process group's name, the same on every member: "pg_<first>_<stride>_<count>"
+  // (the groups are arithmetic progressions of ranks).
+  static std::string pg_name_of(const std::vector<int>& group) {
+    const int stride = group.size() > 1 ? group[1] - group[0] : 1;
+    return "pg_" + std::to_string(group[0]) + "_" + std::to_string(stride) + "_" + std::to_string(group.size());
+  }
   ChakraProtoMsg::Node& prep_node(const char* name, ChakraProtoMsg::NodeType type, std::span<const int> dep) {
     node_.Clear();
     node_.set_id(next_);
@@ -249,11 +255,15 @@ class ChakraBuilder {
     attr(n, "comm_size", bytes);
     attr(n, "comm_tag", static_cast<std::int64_t>(tag));
   }
-  int collective(const char* name, int comm_type, std::int64_t bytes, std::span<const int> dep) {
+  int collective(const char* name, int comm_type, std::int64_t bytes, std::span<const int> dep,
+                 const std::string& pg_name) {
     auto& n = prep_node(name, ChakraProtoMsg::COMM_COLL_NODE, dep);
     n.set_duration_micros(static_cast<std::uint64_t>(std::max<std::int64_t>(10, bytes / 1000)));
     attr(n, "comm_type", comm_type);
     attr(n, "comm_size", bytes);
+    auto* pg = n.add_attr();
+    pg->set_name("pg_name");
+    pg->set_string_val(pg_name);
     return emit(n);
   }
   int emit(const ChakraProtoMsg::Node& n) {

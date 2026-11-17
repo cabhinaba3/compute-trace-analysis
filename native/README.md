@@ -15,11 +15,12 @@ schema from the submodule.
 CMakeLists.txt            dependencies and the one module target
 cmake/ChakraProto.cmake   protobuf, and C++ generated from Chakra's schema
 src/
-  module.cpp              the NB_MODULE; calls the three bind_* functions
+  module.cpp              the NB_MODULE; calls the four bind_* functions
   bindings/               what Python sees: names, arguments and defaults
     readers.cpp             trace readers
     synth.cpp               synthetic trace generators
     analysis.cpp            the DAG solver and interval helpers
+    sim.cpp                 the simulator: simulate, lower_collectives, schedules
     convert.hpp             column structs to dicts of NumPy arrays, no copies
   util/                   header-only helpers shared by the areas below
     sink.hpp                buffered file or gzip output
@@ -36,6 +37,12 @@ src/
                           (nesting_parents)
   readers/<format>/       namespace cta::readers: one reader per format, with
                           reader.hpp declaring read_<format>() and its columns
+  sim/                    namespace cta::sim: the simulator. graph (ops, edges,
+                          groups), collectives (algorithm schedules and their
+                          contention-free cost), lowering, topology and flow
+                          (max-min fair link sharing), noise, engine (the event
+                          loop and critical path); engine.hpp states the
+                          semantics of every network model
   synth/                  namespace cta::synth: one generator per format
                           (kineto, goal, nsys, chakra, ncu, jtop, trtexec) and
                           the 3D-parallel training graphs
@@ -122,3 +129,32 @@ the same file at many sizes, down to one byte.
 The splitter's inner loop (`Splitter::feed` and `skip_event`) and the event
 parser (`add_event` and the `read_*` helpers) each stay in one source file, so
 the compiler can inline them.
+
+## sim
+
+`simulate()` runs one graph of all ranks: ops in rank order, CSR successor
+lists, and an event queue ordered by (time, event type, id), so a run depends
+only on the ops and parameters, never on the order events were pushed. CPUs
+and NICs are resources with a free-at time and a queue of waiting activities
+(an op starting, a receiver processing a message, a rendezvous data send);
+the activity that has waited longest gets a freed resource. Messages are
+matched per (receiver, sender, tag) in FIFO order, as LogGOPSim does.
+
+Collectives have one description: `build_schedule()` gives a member's
+actions (send, recv, reduce) with their dependencies. Lowering inlines them
+in place of the collective (an entry and an exit NOP carry its edges, and
+the tags of lowered messages have the top bit set so they never match the
+trace's); the analytical level evaluates all members' schedules as a
+contention-free longest path (`evaluate_collective`), or, for very large
+groups, member 0 under a symmetry assumption.
+
+The flow model's `FlowNetwork` re-shares bandwidth by progressive filling,
+but only among the flows connected to the one that started or ended through
+shared links; finish events of flows whose rate changed are superseded, not
+removed, and ignored when they come due.
+
+The critical path is reconstructed afterwards: every op remembers what made
+it ready (a dependency's end, or start for irequires), which activity held
+the resource it waited for, and every message when it arrived and was
+processed; walking back from the last op explains each stretch of time and
+cuts the path into Segment categories that tile [0, makespan] exactly.

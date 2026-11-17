@@ -146,7 +146,7 @@ bool parse_op(std::string_view code, Op& op) {
     c.skip_space();
   }
 
-  std::uint64_t tag = 0, ignored = 0;
+  std::uint64_t tag = 0, cpu = 0, nic = 0;
   if (c.word("send") || c.word("recv")) {
     const bool is_send = lower(code[c.position() - 4]) == 's';
     std::uint64_t size = 0;
@@ -164,21 +164,21 @@ bool parse_op(std::string_view code, Op& op) {
     std::uint64_t peer = 0;
     if (!c.space() || !c.word(is_send ? "to" : "from") || !c.space() || !c.number(peer)) return false;
     c.option("tag", tag);
-    c.option("cpu", ignored);
-    c.option("nic", ignored);
+    c.option("cpu", cpu);
+    c.option("nic", nic);
     if (!c.at_end()) return false;
     if (multiplier != 1 && size > UINT64_MAX / multiplier)
       throw std::invalid_argument("number does not fit in 64 bits in GOAL text");
-    op = {is_send ? OpKind::kSend : OpKind::kRecv, label, size * multiplier, peer, tag};
+    op = {is_send ? OpKind::kSend : OpKind::kRecv, label, size * multiplier, peer, tag, cpu, nic};
     return true;
   }
   if (c.word("calc")) {
     std::uint64_t duration = 0;
     if (!c.space() || !c.number(duration)) return false;
-    c.option("cpu", ignored);
-    c.option("nic", ignored);
+    c.option("cpu", cpu);
+    c.option("nic", nic);
     if (!c.at_end()) return false;
-    op = {OpKind::kCompute, label, duration, 0, 0};
+    op = {OpKind::kCompute, label, duration, 0, 0, cpu, nic};
     return true;
   }
   return false;

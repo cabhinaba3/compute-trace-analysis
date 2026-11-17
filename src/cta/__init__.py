@@ -25,6 +25,10 @@ _LAZY: dict[str, tuple[str, str]] = {
         "cta.aspects.distributed.equivalence",
         "verify_chakra_goal_equivalence",
     ),
+    # Simulation (see cta.sim).
+    "simulate": ("cta.sim.engine", "simulate"),
+    "compare_simulations": ("cta.sim.compare", "compare"),
+    "load_sim_config": ("cta.sim.config", "load_config"),
     # Inputs.
     "detect_format": ("cta.ingest.discovery", "detect_format"),
     "resolve_bundle": ("cta.ingest.discovery", "resolve_bundle"),
@@ -41,6 +45,9 @@ _LAZY: dict[str, tuple[str, str]] = {
     "GateViolation": ("cta.models", "GateViolation"),
     "Report": ("cta.models", "Report"),
     "RunBundle": ("cta.models", "RunBundle"),
+    "SimComparison": ("cta.sim.compare", "SimComparison"),
+    "SimConfig": ("cta.sim.config", "SimConfig"),
+    "SimResult": ("cta.sim.result", "SimResult"),
     "TraceArtifact": ("cta.models", "TraceArtifact"),
     "TrialGroup": ("cta.models", "TrialGroup"),
     # Extension points (see cta.plugins).
@@ -57,6 +64,9 @@ __all__ = [
     "inspect_trace",
     "run_comparison",
     "verify_chakra_goal_equivalence",
+    "simulate",
+    "compare_simulations",
+    "load_sim_config",
     "detect_format",
     "resolve_bundle",
     "resolve_trial_group",
@@ -68,6 +78,9 @@ __all__ = [
     "GateViolation",
     "Report",
     "RunBundle",
+    "SimComparison",
+    "SimConfig",
+    "SimResult",
     "TraceArtifact",
     "TrialGroup",
     "register_adapter",
@@ -100,6 +113,12 @@ if TYPE_CHECKING:
     from cta.models import TrialGroup
     from cta.plugins import register_adapter
     from cta.plugins import register_aspect
+    from cta.sim.compare import compare as compare_simulations
+    from cta.sim.compare import SimComparison
+    from cta.sim.config import load_config as load_sim_config
+    from cta.sim.config import SimConfig
+    from cta.sim.engine import simulate
+    from cta.sim.result import SimResult
     from cta.viz.registry import register_plot
 
 

@@ -20,6 +20,7 @@ from cta.cli.commands import compare
 from cta.cli.commands import inspect
 from cta.cli.commands import plot
 from cta.cli.commands import profile
+from cta.cli.commands import simulate
 from cta.cli.commands import synth
 from cta.cli.commands import verify
 
@@ -28,6 +29,7 @@ COMMANDS = (
     profile,
     compare,
     verify,
+    simulate,
     analyze,
     plot,
     synth,

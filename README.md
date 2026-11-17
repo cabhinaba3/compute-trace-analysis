@@ -37,6 +37,21 @@ cta profile nsys --analyze -- python train.py          # run a vendor profiler w
 
 Add `--out-dir DIR --export markdown,latex,csv,json,pdf` to write reports, and `--format json` to print one. `cta --help` and `cta <command> --help` list everything else.
 
+## Simulate
+
+`cta simulate` replays GOAL schedules and Chakra traces on a model of the machine and compares them, including a Chakra trace against the GOAL schedule made from it:
+
+```bash
+cta simulate run train.goal                                   # LogGOPSim's parameters by default
+cta simulate run chakra_dir/ --preset dgx-h100 --model flow --set topology.kind=fat_tree
+cta simulate compare train.goal chakra_dir/ --labels goal,chakra --out-dir out --plot sim_breakdown,sim_attribution
+cta simulate sweep train.goal --param loggops.G=50GB/s,25GB/s --trials 20 --set noise.frequency=1kHz --set noise.duration=20us
+cta simulate collective ALL_REDUCE --ranks 64 --bytes 256MiB --preset ib-ndr400
+cta simulate lower chakra_dir/ lowered.goal                   # the GOAL schedule the simulator runs
+```
+
+Three network models: `loggops` (LogGOPSim's semantics), `alpha_beta`, and `flow` (messages share the links of a switch, fat tree, torus, ring or dragonfly). Chakra collectives run `lowered` (as their algorithm's messages: ring, recursive doubling, halving-doubling, binomial and double binary trees, direct, hierarchical) or `analytical`; comparing with GOAL runs both. Comparisons attribute each makespan gap to critical-path segments (compute, overhead, latency, transfer, contention, collective) and line runs up phase by phase. `cta simulate settings` lists every setting, `cta simulate presets` the machine presets; settings also come from a TOML file (`--config`, see `cta/sim/config.py`). From Python: `cta.simulate(...)` and `cta.compare_simulations(...)`.
+
 Python:
 
 ```python
@@ -77,9 +92,10 @@ src/cta/
   export/                 Markdown, LaTeX, JSON, CSV and figures; the terminal view
   viz/                    the plot kind registry, data context, kinds and renderers
   profiling/              one runner per vendor profiler (cta profile)
+  sim/                    the simulator: config, graphs, runs, comparisons (cta simulate)
   synth/                  synthetic trace writers (cta synth)
   cli/commands/           one module per command
-native/                   the C++ readers, writers and graph solver (see native/README.md)
+native/                   the C++ readers, writers, graph solver and simulator (see native/README.md)
 tests/unit/               laid out like src/cta; tests/integration runs the CLI end to end
 ```
 

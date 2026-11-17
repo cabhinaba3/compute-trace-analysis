@@ -277,11 +277,17 @@ def _tables(
     return {name: pl.read_parquet(p) for name, p in written.items()}
 
 
+# Node columns added after the Python reader, left out of the digests.
+_NEW_NODE_COLUMNS = ("pg_name", "cpu", "nic")
+
+
 def table_digest(tables: dict[str, pl.DataFrame]) -> str:
     """Returns a hash of the three tables, traffic sorted by rank pair."""
     digest = hashlib.sha256()
     for name in ("nodes", "edges", "traffic"):
         table = tables[name]
+        if name == "nodes":
+            table = table.drop(_NEW_NODE_COLUMNS, strict=False)
         if name == "traffic":
             table = table.sort("src_rank", "dst_rank")
         digest.update(name.encode())
@@ -311,6 +317,18 @@ def test_tables_match_the_python_reader_they_replaced(
         for name, files in _fixtures(tmp_path).items()
     }
     assert actual == GOLDEN
+
+
+def test_pg_name_is_read(tmp_path: pathlib.Path) -> None:
+    files = _fixtures(tmp_path)["training"]
+    nodes = _tables(files, tmp_path / "out")["nodes"]
+    collectives = nodes.filter(pl.col("op_class") == "comm_coll")
+    assert collectives.height > 0
+    assert collectives["pg_name"].str.starts_with("pg_").all()
+    assert (
+        nodes.filter(pl.col("op_class") != "comm_coll")["pg_name"] == ""
+    ).all()
+    assert (nodes["cpu"] == 0).all() and (nodes["nic"] == 0).all()
 
 
 def test_rows_follow_the_rules_of_the_python_reader(

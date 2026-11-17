@@ -138,11 +138,18 @@ def _tables(
     return {name: pl.read_parquet(p) for name, p in written.items()}
 
 
+# Node columns added after the Python reader, left out of the digests (the
+# cpu and nic columns are checked on their own below).
+_NEW_NODE_COLUMNS = ("pg_name", "cpu", "nic")
+
+
 def table_digest(tables: dict[str, pl.DataFrame]) -> str:
     """Returns a hash of the three tables, traffic sorted by rank pair."""
     digest = hashlib.sha256()
     for name in ("nodes", "edges", "traffic"):
         table = tables[name]
+        if name == "nodes":
+            table = table.drop(_NEW_NODE_COLUMNS, strict=False)
         if name == "traffic":
             table = table.sort("src_rank", "dst_rank")
         digest.update(name.encode())
@@ -306,3 +313,21 @@ def test_text_that_is_not_utf8_is_rejected(tmp_path: pathlib.Path) -> None:
 def test_a_missing_file_is_an_error(tmp_path: pathlib.Path) -> None:
     with pytest.raises(RuntimeError, match="cannot open"):
         _native.read_goal(str(tmp_path / "none.goal"), 1, 100)
+
+
+def test_cpu_and_nic_are_kept(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "multi.goal"
+    path.write_text(
+        "num_ranks 2\n"
+        "rank 0 {\n"
+        "l1: calc 100 cpu 1\n"
+        "l2: send 8b to 1 tag 3 cpu 2 nic 1\n"
+        "l2 requires l1\n"
+        "}\n"
+        "rank 1 {\n"
+        "l1: recv 8b from 0 tag 3 nic 1\n"
+        "}\n"
+    )
+    nodes = reader.parse_goal_text(path)[0]
+    assert nodes["cpu"].to_list() == [1, 2, 0]
+    assert nodes["nic"].to_list() == [0, 1, 1]

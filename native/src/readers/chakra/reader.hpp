@@ -9,11 +9,12 @@ namespace cta::readers {
 
 // The nodes and dependencies of a set of .et files, one row per node or edge,
 // files in the order given. Strings are dictionary-coded: `name` and
-// `comm_type` hold indices into `names` and `comm_types`, listed in order of
-// first appearance.
+// `comm_type` and `pg_name` hold indices into `names`, `comm_types` and
+// `pg_names`, listed in order of first appearance.
 struct ChakraColumns {
   std::vector<std::string> names;
   std::vector<std::string> comm_types;
+  std::vector<std::string> pg_names;
 
   // Nodes.
   std::vector<std::uint32_t> rank;
@@ -23,6 +24,7 @@ struct ChakraColumns {
   // 6 storage, 7 data_op.
   std::vector<std::uint8_t> op_class;
   std::vector<std::int32_t> comm_type;
+  std::vector<std::int32_t> pg_name;  // process group (the pg_name attribute), "" if none
   std::vector<std::uint64_t> duration_ns, size_bytes, num_ops;
   std::vector<std::int32_t> src_rank, dst_rank;
   std::vector<std::uint32_t> message_tag;
@@ -37,11 +39,13 @@ struct ChakraColumns {
   void for_each_column(Visit&& visit) {
     visit("names", names);
     visit("comm_types", comm_types);
+    visit("pg_names", pg_names);
     visit("rank", rank);
     visit("node_id", node_id);
     visit("name", name);
     visit("op_class", op_class);
     visit("comm_type", comm_type);
+    visit("pg_name", pg_name);
     visit("duration_ns", duration_ns);
     visit("size_bytes", size_bytes);
     visit("num_ops", num_ops);
