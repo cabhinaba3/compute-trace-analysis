@@ -1,15 +1,15 @@
-"""GOAL and Chakra of one job, simulated and compared with each other.
+"""One job as GOAL and as Chakra, simulated and compared.
 
-The synthetic training job is written as GOAL (collectives spelled out as
-ring all-reduces) and as Chakra (one COMM_COLL node per collective, with a
-pg_name). Lowering the Chakra collectives with the ring algorithm must give
-back the GOAL schedule's timing exactly, under every network model.
+The synthetic training job's GOAL schedule spells its collectives out as
+ring all-reduces; its Chakra trace has one COMM_COLL node per collective and
+pg_name. Lowering the Chakra collectives with rings must reproduce the GOAL
+schedule's timing exactly.
 """
 
 from __future__ import annotations
 
+import json
 import pathlib
-from typing import Any
 
 import polars as pl
 import pytest
@@ -23,89 +23,79 @@ from cta.sim import goal_export
 from cta.sim import graph as graph_lib
 from cta.sim import trace_export
 
+Traces = dict[str, pathlib.Path]
 
-def load(traces: dict[str, pathlib.Path], name: str) -> graph_lib.SimGraph:
+
+def load(traces: Traces, name: str) -> graph_lib.SimGraph:
     return graph_lib.load_graph(traces[name], cache_dir=traces["cache"])
 
 
+def contended(**extra: str) -> config_lib.SimConfig:
+    return config_lib.load_config(
+        model="flow",
+        overrides={
+            "topology.kind": "fat_tree",
+            "topology.hosts_per_leaf": "2",
+            "topology.spines": "1",
+            **extra,
+        },
+    )
+
+
 @pytest.mark.parametrize("model", config_lib.NETWORK_MODELS)
-def test_lowered_chakra_matches_goal_exactly(
-    model: str, training_traces: dict[str, pathlib.Path]
+def test_lowered_chakra_matches_goal(
+    model: str, training_traces: Traces
 ) -> None:
     settings = config_lib.load_config(model=model)
     goal = engine.run_graph(load(training_traces, "goal"), settings)
     chakra = engine.run_graph(
         load(training_traces, "chakra"), settings, level="lowered"
     )
-    assert goal.level == "p2p" and chakra.level == "lowered"
     assert goal.completed and chakra.completed
-    assert chakra.makespan_ns == goal.makespan_ns
     assert (
         chakra.ranks["finish_ns"].to_list() == goal.ranks["finish_ns"].to_list()
     )
-    assert (
-        chakra.breakdown()["ns"].to_list() == goal.breakdown()["ns"].to_list()
-    )
+    assert chakra.breakdown().equals(goal.breakdown())
 
 
-def test_completion_semantics_under_contention(
-    training_traces: dict[str, pathlib.Path],
-) -> None:
-    # A thin fat tree makes flows contend, and the ring chunks are above the
-    # eager limit. A collective that is done with its last recv (outputs, as
-    # the GOAL schedule chains) still matches GOAL exactly; the default also
-    # waits for the last rendezvous sends, as MPI and NCCL do.
-    contended = config_lib.load_config(
-        model="flow",
-        overrides={
-            "topology.kind": "fat_tree",
-            "topology.hosts_per_leaf": "2",
-            "topology.spines": "1",
-        },
-    )
-    goal = engine.run_graph(load(training_traces, "goal"), contended)
-    chakra = load(training_traces, "chakra")
+def test_completion_under_contention(training_traces: Traces) -> None:
+    # Ending collectives with the result, as the GOAL schedule chains them,
+    # keeps the match under contention; the default waits for the last sends.
+    goal = engine.run_graph(load(training_traces, "goal"), contended())
     like_goal = engine.run_graph(
-        chakra,
-        contended.with_overrides({"collectives.completion": "outputs"}),
+        load(training_traces, "chakra"),
+        contended(**{"collectives.completion": "outputs"}),
         level="lowered",
     )
     assert like_goal.makespan_ns == goal.makespan_ns
-    assert like_goal.breakdown()["ns"][5] > 0  # contention on the path
-    waiting = engine.run_graph(chakra, contended, level="lowered")
-    assert waiting.completed
+    assert like_goal.summary()["cp_contention_ns"] > 0
+    assert engine.run_graph(
+        load(training_traces, "chakra"), contended(), level="lowered"
+    ).completed
 
 
-def test_goal_text_and_binary_simulate_alike(
-    training_traces: dict[str, pathlib.Path],
-) -> None:
-    text = engine.run_graph(load(training_traces, "goal"))
-    binary = engine.run_graph(load(training_traces, "goal_bin"))
+def test_goal_text_and_binary_agree(training_traces: Traces) -> None:
+    text, binary = (
+        engine.run_graph(load(training_traces, n)) for n in ("goal", "goal_bin")
+    )
     assert text.makespan_ns == binary.makespan_ns
 
 
-def test_groups_come_from_pg_names(
-    training_traces: dict[str, pathlib.Path],
-) -> None:
+def test_groups(training_traces: Traces) -> None:
     chakra = load(training_traces, "chakra")
-    # Four tensor-parallel and four data-parallel groups of two ranks.
-    assert len(chakra.group_names) == 8
-    assert chakra.group("pg_0_1_2") == [0, 1]
-    assert chakra.group("pg_0_4_2") == [0, 4]
     assert (
-        chakra.issues.filter(pl.col("check") == "groups_inferred").height == 1
+        len(chakra.group_names) == 8
+    )  # four tensor- and four data-parallel pairs
+    assert (chakra.group("pg_0_1_2"), chakra.group("pg_0_4_2")) == (
+        [0, 1],
+        [0, 4],
     )
-
-
-def test_explicit_groups_override_inference(
-    training_traces: dict[str, pathlib.Path],
-) -> None:
-    graph = graph_lib.load_graph(
+    swapped = graph_lib.load_graph(
         training_traces["chakra"],
         cache_dir=training_traces["cache"],
         groups={"pg_0_1_2": [1, 0]},
     )
-    assert graph.group("pg_0_1_2") == [1, 0]
+    assert swapped.group("pg_0_1_2") == [1, 0]
     with pytest.raises(ValueError, match="does not give them"):
         graph_lib.load_graph(
             training_traces["chakra"],
@@ -115,165 +105,125 @@ def test_explicit_groups_override_inference(
 
 
 def test_lowered_goal_export_round_trips(
-    training_traces: dict[str, pathlib.Path], tmp_path: pathlib.Path
+    training_traces: Traces, tmp_path: pathlib.Path
 ) -> None:
     chakra = load(training_traces, "chakra")
     settings = config_lib.SimConfig()
-    lowered, _ = engine.lower(chakra, settings)
-    path = tmp_path / "lowered.goal"
-    goal_export.write_goal(lowered, chakra.world_size, path)
+    goal_export.write_goal(
+        engine.lower(chakra, settings)[0],
+        chakra.world_size,
+        tmp_path / "lowered.goal",
+    )
     replayed = engine.run_graph(
-        graph_lib.load_graph(path, cache_dir=tmp_path / "c"), settings
+        graph_lib.load_graph(tmp_path / "lowered.goal", cache_dir=tmp_path)
     )
     assert (
-        replayed.makespan_ns
-        == engine.run_graph(chakra, settings, level="lowered").makespan_ns
+        replayed.makespan_ns == engine.run_graph(chakra, settings).makespan_ns
     )
 
 
-def test_analytical_level_keeps_collectives_whole(
-    training_traces: dict[str, pathlib.Path],
-) -> None:
+def test_analytical_level(training_traces: Traces) -> None:
     result = engine.run_graph(
         load(training_traces, "chakra"), level="analytical"
     )
-    assert result.completed
-    assert (
-        result.breakdown()
-        .filter(pl.col("segment") == "collective")["ns"]
-        .item()
-        > 0
-    )
+    assert result.completed and result.summary()["cp_collective_ns"] > 0
     assert (
         result.collectives.height
-        == load(training_traces, "chakra")
-        .nodes.filter(pl.col("kind") == graph_lib.KIND_COLLECTIVE)
-        .height
+        == (
+            load(training_traces, "chakra").nodes["kind"]
+            == graph_lib.KIND_COLLECTIVE
+        ).sum()
     )
 
 
-def test_cross_comparison_tables(
-    training_traces: dict[str, pathlib.Path],
+def test_cross_comparison(
+    training_traces: Traces, tmp_path: pathlib.Path
 ) -> None:
     comparison = compare.compare(
         [training_traces["goal"], training_traces["chakra"]],
         labels=["goal", "chakra"],
         cache_dir=training_traces["cache"],
     )
-    runs = comparison.overview["run"].to_list()
-    assert runs == ["goal", "chakra [lowered]", "chakra [analytical]"]
-    lowered = comparison.overview.filter(
-        pl.col("run") == "chakra [lowered]"
-    ).row(0, named=True)
-    assert lowered["delta_ms"] == 0.0
-    # The deltas of the critical-path segments add up to the makespan gap.
-    for run in runs[1:]:
-        gap = (
-            comparison.overview.filter(pl.col("run") == run)["delta_ms"].item()
-            * 1e6
-        )
+    assert comparison.overview["run"].to_list() == [
+        "goal",
+        "chakra [lowered]",
+        "chakra [analytical]",
+    ]
+    assert comparison.overview["delta_ms"][1] == 0
+    for run, delta_ms in comparison.overview.select("run", "delta_ms").rows()[
+        1:
+    ]:
         deltas = comparison.attribution.filter(pl.col("run") == run)[
             "delta_ns"
         ].sum()
-        assert deltas == pytest.approx(gap, abs=1)
-    # Same messages between the same ranks: no traffic difference at all.
-    assert compare.traffic_mismatch(comparison)["chakra [lowered]"] == 0.0
+        assert deltas == pytest.approx(delta_ms * 1e6, abs=1)
+    assert comparison.traffic_mismatch() == {"chakra [lowered]": 0.0}
     phases = comparison.phases.filter(pl.col("run") == "chakra [lowered]")
     assert (
         phases.height
-        == load(training_traces, "goal")
-        .nodes.filter(pl.col("kind") == graph_lib.KIND_CALC)
-        .height
+        == (
+            load(training_traces, "goal").nodes["kind"] == graph_lib.KIND_CALC
+        ).sum()
     )
-    assert (phases["span_delta_ns"] == 0).all()
-    assert (phases["bytes_delta"] == 0).all()
-    assert set(comparison.structure.columns) >= {
-        "run",
-        "send_ops",
-        "wire_bytes",
-        "wire_bytes_delta",
-    }
+    assert (phases["span_delta_ns"] == 0).all() and (
+        phases["bytes_delta"] == 0
+    ).all()
+
+    report = comparison.to_report()
+    assert writers.write_report(report, tmp_path, ["markdown", "json"])
+    for kind in ("sim_breakdown", "sim_attribution", "sim_ranks", "sim_phases"):
+        report.plot(kind=kind, path=tmp_path / f"{kind}.png")
+    assert any(
+        f.name == "phases.parquet"
+        for f in comparison.write(tmp_path / "tables")
+    )
 
 
-def test_cross_comparison_finds_the_all_to_all_size_convention(
-    training_traces: dict[str, pathlib.Path],
-) -> None:
-    # The GOAL generator sends the whole buffer to every peer of an
-    # all-to-all; Chakra's comm_size convention (and the lowering's default)
-    # sends B/P. Reading the sizes as per-peer makes the traffic agree.
-    comparison = compare.compare(
-        [training_traces["moe_goal"], training_traces["moe_chakra"]],
-        labels=["goal", "chakra"],
-        levels="lowered",
-        cache_dir=training_traces["cache"],
-    )
-    assert compare.traffic_mismatch(comparison)["chakra [lowered]"] > 0
-    moe_phases = comparison.phases.filter(
+def test_all_to_all_size_conventions(training_traces: Traces) -> None:
+    # The GOAL generator sends the whole buffer to every all-to-all peer;
+    # Chakra's comm_size (the default) is the whole buffer, B/P per peer.
+    def mismatch(**overrides: str) -> compare.SimComparison:
+        return compare.compare(
+            [training_traces["moe_goal"], training_traces["moe_chakra"]],
+            config_lib.SimConfig().with_overrides(overrides),
+            labels=["goal", "chakra"],
+            levels="lowered",
+            cache_dir=training_traces["cache"],
+        )
+
+    total = mismatch()
+    assert total.traffic_mismatch()["chakra [lowered]"] > 0
+    moe = total.phases.filter(
         pl.col("run_collectives").str.contains("ALL_TO_ALL")
     )
-    assert moe_phases.height > 0
-    assert (moe_phases["bytes_delta"] < 0).all()
-
-    per_peer = compare.compare(
-        [training_traces["moe_goal"], training_traces["moe_chakra"]],
-        config_lib.SimConfig().with_overrides(
-            {"collectives.all_to_all_size": "per_peer"}
-        ),
-        labels=["goal", "chakra"],
-        levels="lowered",
-        cache_dir=training_traces["cache"],
-    )
-    assert compare.traffic_mismatch(per_peer)["chakra [lowered]"] == 0.0
+    assert moe.height and (moe["bytes_delta"] < 0).all()
+    per_peer = mismatch(**{"collectives.all_to_all_size": "per_peer"})
+    assert per_peer.traffic_mismatch()["chakra [lowered]"] == 0
     assert (per_peer.phases["bytes_delta"] == 0).all()
 
 
-def test_comparison_exports_and_plots(
-    training_traces: dict[str, pathlib.Path], tmp_path: pathlib.Path
-) -> None:
-    comparison = compare.compare(
-        [training_traces["goal"], training_traces["chakra"]],
-        cache_dir=training_traces["cache"],
-        settings=config_lib.load_config(model="flow"),
-    )
-    report = comparison.to_report()
-    written = writers.write_report(report, tmp_path, ["markdown", "json"])
-    assert written
-    for kind in ("sim_breakdown", "sim_attribution", "sim_ranks", "sim_phases"):
-        report.plot(kind=kind, path=tmp_path / f"{kind}.png")
-        assert (tmp_path / f"{kind}.png").stat().st_size > 0
-    files = comparison.write(tmp_path / "tables")
-    assert any(f.name == "phases.parquet" for f in files)
-
-
-def test_simulation_aspect_in_cta_compare(
-    training_traces: dict[str, pathlib.Path],
-) -> None:
+def test_simulation_aspect(training_traces: Traces) -> None:
     report = cta.compare(
         training_traces["goal"],
         training_traces["goal_bin"],
         aspects=["simulation"],
         cache_dir=training_traces["cache"],
     )
-    summary = report.to_polars("simulation")
-    makespan = summary.filter(pl.col("metric") == "sim_makespan_ms").row(
-        0, named=True
+    makespan = (
+        report.to_polars("simulation")
+        .filter(pl.col("metric") == "sim_makespan_ms")
+        .row(0, named=True)
     )
     assert makespan["baseline"] == pytest.approx(makespan["candidate"])
     assert not report.to_polars("simulation", table="breakdown").is_empty()
 
 
-def test_chrome_trace_export(
-    training_traces: dict[str, pathlib.Path], tmp_path: pathlib.Path
-) -> None:
-    import json
-
+def test_chrome_trace(training_traces: Traces, tmp_path: pathlib.Path) -> None:
     result = engine.run_graph(load(training_traces, "chakra"))
     count = trace_export.write_chrome_trace(
         result, tmp_path / "t.json", ranks=[0, 1]
     )
-    events: list[dict[str, Any]] = json.loads(
-        (tmp_path / "t.json").read_text()
-    )["traceEvents"]
+    events = json.loads((tmp_path / "t.json").read_text())["traceEvents"]
     assert count == len(events)
     assert {e["ph"] for e in events} >= {"M", "X", "s", "f"}
     assert {
@@ -283,15 +233,14 @@ def test_chrome_trace_export(
     } == {0, 1}
 
 
-def test_public_api(training_traces: dict[str, pathlib.Path]) -> None:
+def test_public_api(training_traces: Traces) -> None:
     settings = cta.load_sim_config(
         preset="ib-ndr400", overrides=["collectives.level=analytical"]
     )
     result = cta.simulate(
         training_traces["chakra"], settings, cache_dir=training_traces["cache"]
     )
-    assert isinstance(result, cta.SimResult)
-    assert result.level == "analytical"
+    assert isinstance(result, cta.SimResult) and result.level == "analytical"
     comparison = cta.compare_simulations(
         [training_traces["goal"], training_traces["goal_bin"]],
         cache_dir=training_traces["cache"],

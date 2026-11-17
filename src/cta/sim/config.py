@@ -1,42 +1,24 @@
-"""Simulation settings, and how presets, TOML files and overrides make them.
+"""Simulation settings.
 
-``load_config`` starts from the defaults (LogGOPSim's own: L=2.5us, o=1.5us,
-g=1us, G=6ns/B, S=65535), applies a preset (``cta.sim.presets``), then a TOML
-file, then ``section.key=value`` overrides, in that order. Every value may
-carry a unit: times ``"1.5us"``, sizes ``"64KiB"``, bandwidths ``"400Gbps"``
-or ``"50GB/s"``, per-byte costs as a number of ns or as a bandwidth
-(``G = "50GB/s"`` is 0.02 ns/B), rates ``"1kHz"``, FLOP rates ``"989TFLOPS"``.
-Plain numbers are nanoseconds, bytes, GB/s, ns per byte, Hz and FLOP/s.
-
-A TOML file mirrors the dataclasses::
+Every setting has a dotted name shared by TOML files, ``--set``, presets and
+the native engine (``native/src/sim/params.hpp``). ``load_config`` applies
+the defaults (LogGOPSim's), a preset, a TOML file and overrides, in that
+order. Values may carry units: times ``"1.5us"``, sizes ``"64KiB"``,
+bandwidths ``"400Gbps"`` or ``"50GB/s"``, per-byte costs as ns or as a
+bandwidth (``loggops.G = "50GB/s"``). Plain numbers are ns, bytes, GB/s and
+Hz. A TOML file nests the names in tables::
 
     model = "flow"
-    preset = "ib-ndr400"        # optional, applied before the rest
-    ranks_per_node = 8
-
-    [loggops]
-    L = "1.2us"
-    G = "50GB/s"
-
+    preset = "dgx-h100"
     [topology]
     kind = "fat_tree"
-    hosts_per_leaf = 32
-
-    [collectives]
-    level = "lowered"
-    algorithms = { ALL_REDUCE = "halving_doubling", ALL_TO_ALL = "ring" }
-
-    [compute]
-    rank_scale = { 3 = 1.25 }   # rank 3 is a 25% straggler
-
-    [noise]
-    frequency = "1kHz"
-    duration = "25us"
+    [compute.rank_scale]
+    3 = 1.25
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 import copy
 import dataclasses
 import difflib
@@ -83,28 +65,29 @@ DEFAULT_ALGORITHMS = {
     "REDUCE_SCATTER_BLOCK": "ring",
     "BARRIER": "recursive_doubling",
 }
-COMPUTE_MODELS = ("recorded", "roofline", "roofline_if_missing")
+
+
+def _suggestion(word: str, options: Iterable[str]) -> str:
+    close = difflib.get_close_matches(word, list(options), n=1)
+    return f" (did you mean {close[0]!r}?)" if close else ""
 
 
 def _choice(*allowed: str) -> Callable[[Any], str]:
-    """Returns a parser that accepts one of ``allowed``."""
-
     def parse(value: Any) -> str:
-        text = str(value)
-        if text not in allowed:
+        if str(value) not in allowed:
             raise ValueError(
-                f"{text!r} is not one of {', '.join(allowed)}"
-                + _suggestion(text, allowed)
+                f"{value!r} is not one of {', '.join(allowed)}"
+                + _suggestion(str(value), allowed)
             )
-        return text
+        return str(value)
 
     return parse
 
 
 def _int(value: Any) -> int:
-    if isinstance(value, bool) or int(value) != float(value):
+    if isinstance(value, bool) or float(value) != int(float(value)):
         raise ValueError(f"expected an integer, got {value!r}")
-    return int(value)
+    return int(float(value))
 
 
 def _float(value: Any) -> float:
@@ -113,26 +96,8 @@ def _float(value: Any) -> float:
     return float(value)
 
 
-def _bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    text = str(value).lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off"):
-        return False
-    raise ValueError(f"expected true or false, got {value!r}")
-
-
 def _optional(parse: Callable[[Any], Any]) -> Callable[[Any], Any]:
-    def parse_optional(value: Any) -> Any:
-        if value is None or (
-            isinstance(value, str) and value.lower() == "none"
-        ):
-            return None
-        return parse(value)
-
-    return parse_optional
+    return lambda v: None if v is None or str(v).lower() == "none" else parse(v)
 
 
 def _ints(value: Any) -> tuple[int, ...]:
@@ -141,334 +106,198 @@ def _ints(value: Any) -> tuple[int, ...]:
     return tuple(_int(v) for v in value)
 
 
-def _suggestion(word: str, options: Iterable[str]) -> str:
-    close = difflib.get_close_matches(word, list(options), n=1)
-    return f" (did you mean {close[0]!r}?)" if close else ""
+def _table(
+    key: Callable[[Any], Any], value: Callable[[Any], Any]
+) -> Callable[[Any], dict[Any, Any]]:
+    return lambda table: {key(k): value(v) for k, v in dict(table).items()}
 
 
-def _field(default: Any, parse: Callable[[Any], Any], help_text: str) -> Any:
-    """A dataclass field whose metadata holds its parser and help text."""
-    if isinstance(default, dict | list):
-        return dataclasses.field(
-            default_factory=lambda: copy.deepcopy(default),
-            metadata={"parse": parse, "help": help_text},
-        )
-    return dataclasses.field(
-        default=default, metadata={"parse": parse, "help": help_text}
-    )
+@dataclasses.dataclass(frozen=True, slots=True)
+class Setting:
+    """A setting's default, parser and help; ``native``: the engine reads it."""
+
+    default: Any
+    parse: Callable[[Any], Any]
+    help: str
+    native: bool = True
 
 
-@dataclasses.dataclass(slots=True)
-class LogGOPSConfig:
-    """LogGOPS parameters (also the host overheads o, O of the flow model).
-
-    The intra_* parameters, when set, apply to ranks of one node. The names
-    are the model's own (L, o, g, G, O, S), hence the noqa marks.
-    """
-
-    L: float = _field(2500.0, units.time_ns, "Network latency.")
-    o: float = _field(1500.0, units.time_ns, "CPU overhead per message.")
-    g: float = _field(1000.0, units.time_ns, "NIC gap between messages.")
-    G: float = _field(6.0, units.ns_per_byte, "NIC gap per byte (1/bandwidth).")
-    O: float = _field(0.0, units.ns_per_byte, "CPU overhead per byte.")  # noqa: E741
-    S: int = _field(65535, units.size_bytes, "Largest eager message.")
-    rendezvous: str = _field(
-        "sync",
-        _choice("sync", "rts_cts"),
-        "Messages above S: 'sync' (LogGOPSim) or 'rts_cts' handshake.",
-    )
-    intra_L: float | None = _field(None, _optional(units.time_ns), "")  # noqa: N815
-    intra_o: float | None = _field(None, _optional(units.time_ns), "")
-    intra_g: float | None = _field(None, _optional(units.time_ns), "")
-    intra_G: float | None = _field(None, _optional(units.ns_per_byte), "")  # noqa: N815
-    intra_O: float | None = _field(None, _optional(units.ns_per_byte), "")  # noqa: N815
+def _intra(name: str, parse: Callable[[Any], Any]) -> Setting:
+    return Setting(None, _optional(parse), f"{name} between ranks of a node.")
 
 
-@dataclasses.dataclass(slots=True)
-class AlphaBetaConfig:
-    """Alpha-beta parameters: a message costs alpha + bytes * beta."""
-
-    alpha: float = _field(5500.0, units.time_ns, "Per-message cost.")
-    beta: float = _field(6.0, units.ns_per_byte, "Per-byte cost.")
-    intra_alpha: float | None = _field(None, _optional(units.time_ns), "")
-    intra_beta: float | None = _field(None, _optional(units.ns_per_byte), "")
+def _local(
+    default: Any, parse: Callable[[Any], Any], help_text: str
+) -> Setting:
+    return Setting(default, parse, help_text, native=False)
 
 
-@dataclasses.dataclass(slots=True)
-class TopologyConfig:
-    """The flow model's topology (see native/src/sim/topology.hpp)."""
-
-    kind: str = _field("switch", _choice(*TOPOLOGIES), "Fabric shape.")
-    link_bandwidth: float = _field(
-        1.0 / 6.0, units.bandwidth, "NIC and fabric link bandwidth."
-    )
-    link_latency: float = _field(1250.0, units.time_ns, "Latency per link.")
-    intra_bandwidth: float = _field(
+SETTINGS: dict[str, Setting] = {
+    "model": Setting("loggops", _choice(*NETWORK_MODELS), "Network model."),
+    "seed": Setting(1, _int, "Seed of noise, degraded links and jitter."),
+    "world_size": Setting(0, _int, "Ranks; 0: as many as the trace has."),
+    "ranks_per_node": Setting(1, _int, "Ranks sharing a node."),
+    "max_events": Setting(0, _int, "Stop after this many events; 0: never."),
+    "loggops.L": Setting(2500.0, units.time_ns, "Latency."),
+    "loggops.o": Setting(1500.0, units.time_ns, "CPU overhead per message."),
+    "loggops.g": Setting(1000.0, units.time_ns, "NIC gap per message."),
+    "loggops.G": Setting(6.0, units.ns_per_byte, "NIC gap per byte."),
+    "loggops.O": Setting(0.0, units.ns_per_byte, "CPU overhead per byte."),
+    "loggops.S": Setting(65535, units.size_bytes, "Largest eager message."),
+    "loggops.intra_L": _intra("L", units.time_ns),
+    "loggops.intra_o": _intra("o", units.time_ns),
+    "loggops.intra_g": _intra("g", units.time_ns),
+    "loggops.intra_G": _intra("G", units.ns_per_byte),
+    "loggops.intra_O": _intra("O", units.ns_per_byte),
+    "alpha_beta.alpha": Setting(5500.0, units.time_ns, "Cost per message."),
+    "alpha_beta.beta": Setting(6.0, units.ns_per_byte, "Cost per byte."),
+    "alpha_beta.intra_alpha": _intra("alpha", units.time_ns),
+    "alpha_beta.intra_beta": _intra("beta", units.ns_per_byte),
+    "topology.kind": Setting("switch", _choice(*TOPOLOGIES), "Flow fabric."),
+    "topology.link_bandwidth": Setting(1 / 6, units.bandwidth, "Link speed."),
+    "topology.link_latency": Setting(1250.0, units.time_ns, "Per link."),
+    "topology.intra_bandwidth": Setting(
         0.0,
         units.bandwidth,
-        "Node switch bandwidth; 0 sends same-node traffic through the fabric.",
-    )
-    intra_latency: float = _field(0.0, units.time_ns, "Node switch latency.")
-    global_bandwidth: float = _field(
-        0.0, units.bandwidth, "Dragonfly global links; 0 = link_bandwidth."
-    )
-    dims: tuple[int, ...] = _field((), _ints, "Torus dimensions, e.g. 4x4x2.")
-    hosts_per_leaf: int = _field(0, _int, "fat_tree: ranks per leaf (16).")
-    spines: int = _field(0, _int, "fat_tree: spine switches (8).")
-    oversubscription: float = _field(1.0, _float, "fat_tree: leaf uplinks.")
-    hosts_per_router: int = _field(0, _int, "dragonfly: ranks per router (4).")
-    routers_per_group: int = _field(
-        0, _int, "dragonfly: routers per group (8)."
-    )
-
-
-@dataclasses.dataclass(slots=True)
-class CollectiveConfig:
-    """How collectives run: lowered to messages or costed analytically."""
-
-    level: str = _field(
-        "lowered", _choice(*COLLECTIVE_LEVELS), "lowered or analytical."
-    )
-    algorithms: dict[str, str] = _field(
-        DEFAULT_ALGORITHMS, _choice(*ALGORITHMS), "Algorithm per type."
-    )
-    cost: str = _field(
-        "model",
-        _choice("model", "recorded"),
-        "analytical: from the model, or the trace's recorded duration.",
-    )
-    completion: str = _field(
+        "Node switch; 0: same-node traffic uses the fabric.",
+    ),
+    "topology.intra_latency": Setting(0.0, units.time_ns, "Node switch."),
+    "topology.global_bandwidth": Setting(
+        0.0, units.bandwidth, "Dragonfly global links; 0: link_bandwidth."
+    ),
+    "topology.oversubscription": Setting(1.0, _float, "Fat-tree uplinks."),
+    "topology.dims": Setting((), _ints, "Torus dimensions, e.g. 4x4x2."),
+    "topology.hosts_per_leaf": Setting(16, _int, "Fat tree."),
+    "topology.spines": Setting(8, _int, "Fat tree."),
+    "topology.hosts_per_router": Setting(4, _int, "Dragonfly."),
+    "topology.routers_per_group": Setting(8, _int, "Dragonfly."),
+    "collectives.level": _local(
+        "lowered", _choice(*COLLECTIVE_LEVELS), "Messages, or costed whole."
+    ),
+    "collectives.groups": _local(
+        None, _optional(str), "JSON file {pg_name: [ranks]}."
+    ),
+    **{
+        f"collectives.algorithms.{name}": Setting(
+            algorithm, _choice(*ALGORITHMS), f"Algorithm of {name}."
+        )
+        for name, algorithm in DEFAULT_ALGORITHMS.items()
+    },
+    "collectives.completion": Setting(
         "all",
         _choice("all", "outputs"),
-        "A member is done after all its actions, last sends included (all, "
-        "as MPI and NCCL), or once it has its result (outputs, as GOAL "
-        "schedules that chain on the last recv).",
-    )
-    all_to_all_size: str = _field(
+        "Done after the last send (MPI, NCCL) or with the result (GOAL).",
+    ),
+    "collectives.all_to_all_size": Setting(
         "total",
         _choice("total", "per_peer"),
-        "ALL_TO_ALL comm_size: the whole send buffer, B/P to each peer "
-        "(total, Chakra's convention), or what each peer gets (per_peer).",
-    )
-    reduce_ns_per_byte: float = _field(
-        0.0, units.ns_per_byte, "Reduction cost per byte (0 = free)."
-    )
-    chunks: int = _field(1, _int, "Pipeline chunks for chained algorithms.")
-    groups: str | None = _field(
-        None,
-        _optional(str),
-        "JSON file {pg_name: [ranks]}; unnamed collectives span all ranks.",
-    )
-
-
-@dataclasses.dataclass(slots=True)
-class ComputeConfig:
-    """How compute ops are timed."""
-
-    model: str = _field(
+        "All-to-all size: the whole buffer, or what each peer gets.",
+    ),
+    "collectives.cost": Setting(
+        "model",
+        _choice("model", "recorded"),
+        "Analytical cost: the model's, or the trace's.",
+    ),
+    "collectives.reduce_ns_per_byte": Setting(
+        0.0, units.ns_per_byte, "Reduction cost."
+    ),
+    "collectives.chunks": Setting(1, _int, "Pipeline chunks."),
+    "compute.model": _local(
         "recorded",
-        _choice(*COMPUTE_MODELS),
-        "recorded, roofline, or roofline_if_missing.",
-    )
-    peak_flops: float = _field(0.0, units.flops, "Roofline peak FLOP/s.")
-    memory_bandwidth: float = _field(
-        0.0, units.bandwidth, "Roofline memory bandwidth."
-    )
-    efficiency: float = _field(1.0, _float, "Fraction of peak reached.")
-    scale: float = _field(1.0, _float, "Multiplies every compute duration.")
-    rank_scale: dict[int, float] = _field({}, _float, "Per-rank factor.")
-    name_scale: dict[str, float] = _field(
-        {}, _float, "Factor for ops whose name matches the regex key."
-    )
-    jitter: float = _field(
-        0.0, _float, "Sigma of mean-1 log-normal noise on durations."
-    )
-
-
-@dataclasses.dataclass(slots=True)
-class NoiseConfig:
-    """OS noise and network degradation."""
-
-    frequency: float = _field(0.0, units.rate_per_second, "Detours per s.")
-    duration: float = _field(0.0, units.time_ns, "Mean detour length.")
-    distribution: str = _field(
+        _choice("recorded", "roofline", "roofline_if_missing"),
+        "Compute durations (cta.sim.compute).",
+    ),
+    "compute.peak_flops": _local(0.0, units.flops, "Roofline."),
+    "compute.memory_bandwidth": _local(0.0, units.bandwidth, "Roofline."),
+    "compute.efficiency": _local(1.0, _float, "Fraction of the roofline."),
+    "compute.scale": _local(1.0, _float, "Scales all compute."),
+    "compute.rank_scale": _local({}, _table(int, float), "Per-rank factor."),
+    "compute.name_scale": _local(
+        {}, _table(str, float), "Factor per op-name regex."
+    ),
+    "compute.jitter": _local(0.0, _float, "Sigma of mean-1 log-normal noise."),
+    "noise.frequency": Setting(0.0, units.rate_per_second, "OS detours/s."),
+    "noise.duration": Setting(0.0, units.time_ns, "Mean detour length."),
+    "noise.distribution": Setting(
         "fixed", _choice("fixed", "exponential"), "Detour lengths."
-    )
-    nic_scale: dict[int, float] = _field(
-        {}, _float, "Per-rank NIC bandwidth factor."
-    )
-    degraded_fraction: float = _field(
-        0.0, _float, "flow: share of links slowed down."
-    )
-    degraded_factor: float = _field(
-        1.0, _float, "flow: their bandwidth factor."
-    )
-
-
-_SECTIONS = {
-    "loggops": LogGOPSConfig,
-    "alpha_beta": AlphaBetaConfig,
-    "topology": TopologyConfig,
-    "collectives": CollectiveConfig,
-    "compute": ComputeConfig,
-    "noise": NoiseConfig,
+    ),
+    "noise.nic_scale": Setting({}, _table(int, float), "Per-rank NIC factor."),
+    "noise.degraded_fraction": Setting(0.0, _float, "Share of slow links."),
+    "noise.degraded_factor": Setting(1.0, _float, "Their bandwidth factor."),
 }
 
 
-@dataclasses.dataclass(slots=True)
-class SimConfig:
-    """Everything a simulation run needs besides the graph."""
+def _flatten(data: Mapping[str, Any], prefix: str = "") -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for key, value in data.items():
+        name = f"{prefix}{key}"
+        if isinstance(value, Mapping) and name not in SETTINGS:
+            out.update(_flatten(value, name + "."))
+        else:
+            out[name] = value
+    return out
 
-    model: str = _field("loggops", _choice(*NETWORK_MODELS), "Network model.")
-    seed: int = _field(1, _int, "Seed of noise and jitter.")
-    world_size: int = _field(0, _int, "Ranks; 0 = as many as the trace has.")
-    ranks_per_node: int = _field(1, _int, "Ranks sharing a node.")
-    max_events: int = _field(0, _int, "Stop after this many events (0 = no).")
-    loggops: LogGOPSConfig = dataclasses.field(default_factory=LogGOPSConfig)
-    alpha_beta: AlphaBetaConfig = dataclasses.field(
-        default_factory=AlphaBetaConfig
-    )
-    topology: TopologyConfig = dataclasses.field(default_factory=TopologyConfig)
-    collectives: CollectiveConfig = dataclasses.field(
-        default_factory=CollectiveConfig
-    )
-    compute: ComputeConfig = dataclasses.field(default_factory=ComputeConfig)
-    noise: NoiseConfig = dataclasses.field(default_factory=NoiseConfig)
+
+class SimConfig(Mapping[str, Any]):
+    """Every setting's value by dotted name; ``with_overrides`` copies."""
+
+    def __init__(self, values: Mapping[str, Any] | None = None) -> None:
+        """Takes parsed values; the other settings keep their defaults."""
+        self._values = {
+            k: copy.deepcopy(s.default) for k, s in SETTINGS.items()
+        }
+        self._values.update(values or {})
+
+    def __getitem__(self, key: str) -> Any:
+        """The value of a setting."""
+        return self._values[key]
+
+    def __iter__(self) -> Iterator[str]:
+        """The setting names."""
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        """The number of settings."""
+        return len(self._values)
 
     def with_overrides(self, overrides: Mapping[str, Any]) -> SimConfig:
-        """Returns a copy with ``section.key`` (or ``key``) values set.
-
-        Dict-valued fields take one more part: ``compute.rank_scale.3``.
+        """Returns a copy with the (dotted or nested) settings parsed and set.
 
         Raises:
             ValueError: An unknown key or a value that does not parse.
         """
-        config = copy.deepcopy(self)
-        for path, value in overrides.items():
-            _set_path(config, path, value)
-        return config
-
-    def to_dict(self) -> dict[str, Any]:
-        """Returns the settings as plain data (for reports and JSON)."""
-        return dataclasses.asdict(self)
+        values = copy.deepcopy(self._values)
+        for key, value in _flatten(overrides).items():
+            table, _, entry = key.rpartition(".")
+            try:
+                if key in SETTINGS:
+                    values[key] = SETTINGS[key].parse(value)
+                elif table in SETTINGS and isinstance(values[table], dict):
+                    parsed = SETTINGS[table].parse({entry: value})
+                    values[table] = {**values[table], **parsed}
+                else:
+                    raise ValueError(
+                        "unknown setting" + _suggestion(key, SETTINGS)
+                    )
+            except (TypeError, ValueError) as error:
+                raise ValueError(f"{key}: {error}") from None
+        return SimConfig(values)
 
     def to_native(self, world_size: int) -> dict[str, Any]:
-        """Returns the flat parameter dict ``cta._native.simulate`` reads."""
-        world = max(world_size, self.world_size)
-        lg, ab, topo = self.loggops, self.alpha_beta, self.topology
-        params: dict[str, Any] = {
-            "model": self.model,
-            "world_size": world,
-            "ranks_per_node": max(1, self.ranks_per_node),
-            "L": lg.L,
-            "o": lg.o,
-            "g": lg.g,
-            "G": lg.G,
-            "O": lg.O,
-            "S": lg.S,
-            "rendezvous": lg.rendezvous,
-            "alpha": ab.alpha,
-            "beta": ab.beta,
-            "topology": topo.kind,
-            "link_bandwidth": topo.link_bandwidth,
-            "link_latency": topo.link_latency,
-            "intra_bandwidth": topo.intra_bandwidth,
-            "intra_latency": topo.intra_latency,
-            "global_bandwidth": topo.global_bandwidth,
-            "dims": list(topo.dims),
-            "hosts_per_leaf": topo.hosts_per_leaf,
-            "spines": topo.spines,
-            "oversubscription": topo.oversubscription,
-            "hosts_per_router": topo.hosts_per_router,
-            "routers_per_group": topo.routers_per_group,
-            "algorithms": [
-                self.collectives.algorithms.get(t, DEFAULT_ALGORITHMS[t])
-                for t in COLLECTIVE_TYPES
-            ],
-            "reduce_ns_per_byte": self.collectives.reduce_ns_per_byte,
-            "chunks": max(1, self.collectives.chunks),
-            "data_completion": self.collectives.completion == "outputs",
-            "all_to_all_per_peer": self.collectives.all_to_all_size
-            == "per_peer",
-            "collective_cost": self.collectives.cost,
-            "noise_frequency": self.noise.frequency / 1e9,
-            "noise_duration": self.noise.duration,
-            "noise_exponential": self.noise.distribution == "exponential",
-            "degraded_fraction": self.noise.degraded_fraction,
-            "degraded_factor": self.noise.degraded_factor,
-            "seed": self.seed,
-            "max_events": self.max_events,
+        """Returns the parameters ``cta._native.simulate`` reads."""
+        params = {
+            k: v
+            for k, v in self._values.items()
+            if SETTINGS[k].native and v is not None
         }
-        for name in ("L", "o", "g", "G", "O"):
-            value = getattr(lg, f"intra_{name}")
-            if value is not None:
-                params[f"intra_{name}"] = value
-        if ab.intra_alpha is not None:
-            params["intra_alpha"] = ab.intra_alpha
-        if ab.intra_beta is not None:
-            params["intra_beta"] = ab.intra_beta
-        if self.noise.nic_scale:
-            ranks = max(world, max(self.noise.nic_scale) + 1)
-            scale = [1.0] * ranks
-            for rank, factor in self.noise.nic_scale.items():
-                scale[rank] = factor
-            params["nic_scale"] = scale
+        params["world_size"] = max(world_size, self["world_size"])
+        params["topology.dims"] = list(self["topology.dims"])
+        scale = self["noise.nic_scale"]
+        ranks = max(params["world_size"], max(scale, default=-1) + 1)
+        params["noise.nic_scale"] = (
+            [scale.get(r, 1.0) for r in range(ranks)] if scale else []
+        )
         return params
-
-
-def _fields(obj: Any) -> dict[str, dataclasses.Field[Any]]:
-    return {f.name: f for f in dataclasses.fields(obj)}
-
-
-def _set_path(config: SimConfig, path: str, value: Any) -> None:
-    """Sets one dotted key on the config, parsing the value."""
-    parts = path.split(".")
-    target: Any = config
-    while True:
-        fields = _fields(target)
-        name = parts[0]
-        if name not in fields:
-            raise ValueError(
-                f"unknown setting {path!r}" + _suggestion(name, fields)
-            )
-        field = fields[name]
-        current = getattr(target, name)
-        if dataclasses.is_dataclass(current):
-            if len(parts) == 1:
-                if not isinstance(value, Mapping):
-                    raise ValueError(f"{path!r} is a section; set its keys")
-                for key, item in value.items():
-                    _set_path(config, f"{path}.{key}", item)
-                return
-            target, parts = current, parts[1:]
-            continue
-        parse = field.metadata.get("parse", lambda v: v)
-        if isinstance(current, dict):
-            key_type = int if name in ("rank_scale", "nic_scale") else str
-            if len(parts) == 1:
-                if not isinstance(value, Mapping):
-                    raise ValueError(f"{path!r} takes a table of values")
-                current.clear()
-                items: list[tuple[Any, Any]] = list(value.items())
-            elif len(parts) == 2:
-                items = [(parts[1], value)]
-            else:
-                raise ValueError(f"unknown setting {path!r}")
-            for key, item in items:
-                if name == "algorithms" and key not in COLLECTIVE_TYPES:
-                    raise ValueError(
-                        f"unknown collective type {key!r}"
-                        + _suggestion(str(key), COLLECTIVE_TYPES)
-                    )
-                current[key_type(key)] = parse(item)
-            return
-        if len(parts) != 1:
-            raise ValueError(f"unknown setting {path!r}")
-        try:
-            setattr(target, name, parse(value))
-        except ValueError as error:
-            raise ValueError(f"{path}: {error}") from None
-        return
 
 
 def load_config(
@@ -478,48 +307,31 @@ def load_config(
     overrides: Mapping[str, Any] | Iterable[str] = (),
     model: str | None = None,
 ) -> SimConfig:
-    """Builds a config: defaults, preset, TOML file, overrides, model.
+    """Builds a config from defaults, a preset, a TOML file, overrides, model.
 
-    Args:
-        path: A TOML file; its top-level ``preset`` key, if any, is applied
-            before its other settings (an explicit ``preset`` argument wins).
-        preset: Name of a preset (``cta simulate presets`` lists them).
-        overrides: ``{"loggops.L": "2us"}`` or ``["loggops.L=2us", ...]``.
-        model: Network model to use, overriding the file and preset.
-
-    Returns:
-        The config.
+    A TOML file's top-level ``preset`` applies unless ``preset`` is given;
+    ``overrides`` is a dict or ``"key=value"`` strings.
 
     Raises:
-        ValueError: Unknown preset, key or unparseable value.
-        FileNotFoundError: ``path`` does not exist.
+        ValueError: An unknown preset, key or unparseable value.
     """
-    from cta.sim import presets  # presets builds on this module
+    from cta.sim import presets
 
     data: dict[str, Any] = {}
     if path is not None:
         with pathlib.Path(path).open("rb") as fh:
             data = tomllib.load(fh)
-    preset_name = preset or data.pop("preset", None)
+    preset = preset or data.get("preset")
     data.pop("preset", None)
-    config = SimConfig()
-    if preset_name:
-        config = presets.apply(config, str(preset_name))
-    config = config.with_overrides(data)
+    config = presets.apply(SimConfig(), preset) if preset else SimConfig()
     if not isinstance(overrides, Mapping):
         overrides = parse_assignments(overrides)
-    config = config.with_overrides(overrides)
-    if model is not None:
-        config = config.with_overrides({"model": model})
-    return config
+    config = config.with_overrides(data).with_overrides(overrides)
+    return config.with_overrides({"model": model}) if model else config
 
 
 def parse_assignments(assignments: Iterable[str]) -> dict[str, str]:
-    """Reads ``key=value`` strings into a dict, in order.
-
-    Raises:
-        ValueError: An item has no ``=``.
-    """
+    """Reads ``key=value`` strings into a dict."""
     out: dict[str, str] = {}
     for item in assignments:
         key, sep, value = item.partition("=")
@@ -527,25 +339,3 @@ def parse_assignments(assignments: Iterable[str]) -> dict[str, str]:
             raise ValueError(f"expected key=value, got {item!r}")
         out[key.strip()] = value.strip()
     return out
-
-
-def describe() -> list[tuple[str, str, str]]:
-    """Returns (key, default, help) for every setting, for ``--help`` text."""
-    rows: list[tuple[str, str, str]] = []
-
-    def walk(obj: Any, prefix: str) -> None:
-        for field in dataclasses.fields(obj):
-            value = getattr(obj, field.name)
-            if dataclasses.is_dataclass(value):
-                walk(value, f"{prefix}{field.name}.")
-            else:
-                rows.append(
-                    (
-                        prefix + field.name,
-                        repr(value),
-                        field.metadata.get("help", ""),
-                    )
-                )
-
-    walk(SimConfig(), "")
-    return rows

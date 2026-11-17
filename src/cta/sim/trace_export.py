@@ -1,9 +1,8 @@
-"""Writes a simulated timeline as Chrome trace JSON (Perfetto, chrome://tracing).
+"""A simulated timeline as Chrome trace JSON (Perfetto, chrome://tracing).
 
-Each rank is a process. Its calcs run on one track per CPU, its sends and
-recvs on a "messages" track and its collectives (analytical level) on a
-"collectives" track; arrows join each message's send to its receiver. The
-critical path is one more process, its segments coloured by category.
+Each rank is a process with a track per CPU, one for messages and one for
+collectives; arrows join each send to its receiver. The critical path is one
+more process.
 """
 
 from __future__ import annotations
@@ -17,9 +16,7 @@ import polars as pl
 
 from cta.sim import result as result_lib
 
-_MESSAGE_TRACK = 1000
-_COLLECTIVE_TRACK = 1001
-_CRITICAL_PID = 1 << 30
+_MESSAGES, _COLLECTIVES, _PATH = 1000, 1001, 1 << 30
 
 
 def chrome_events(
@@ -27,161 +24,92 @@ def chrome_events(
     *,
     ranks: Iterable[int] | None = None,
     max_ops: int = 1_000_000,
-    flows: bool = True,
 ) -> list[dict[str, Any]]:
-    """Returns the trace events of a run.
-
-    Args:
-        result: A run that kept its op table.
-        ranks: Only these ranks; None keeps all.
-        max_ops: Keep at most this many ops (the earliest).
-        flows: Whether to draw an arrow per message.
-
-    Raises:
-        ValueError: The result has no op table.
-    """
+    """The run's trace events (at most ``max_ops`` ops, the earliest)."""
     if result.ops.is_empty():
-        raise ValueError(
-            "the result kept no op table; rerun with keep_ops=True"
-        )
+        raise ValueError("the result kept no op table")
+    us = 1e-3
     ops = result.ops.filter(
-        pl.col("start_ns").is_not_null()
-        & pl.col("end_ns").is_not_null()
-        & (pl.col("kind") != "nop")
+        pl.col("end_ns").is_not_null() & (pl.col("kind") != "nop")
     )
-    keep = None if ranks is None else sorted(set(ranks))
-    if keep is not None:
+    messages = result.messages
+    if ranks is not None:
+        keep = list(ranks)
         ops = ops.filter(pl.col("rank").is_in(keep))
+        messages = messages.filter(
+            pl.col("src").is_in(keep) & pl.col("dst").is_in(keep)
+        )
     ops = ops.sort("start_ns").head(max_ops)
-
-    events: list[dict[str, Any]] = []
-    for rank in sorted(set(ops["rank"].to_list())):
-        events.append(
-            {
-                "ph": "M",
-                "name": "process_name",
-                "pid": rank,
-                "args": {"name": f"rank {rank}"},
-            }
-        )
-        events.append(
-            {
-                "ph": "M",
-                "name": "process_sort_index",
-                "pid": rank,
-                "args": {"sort_index": rank},
-            }
-        )
-        for tid, name in (
-            (_MESSAGE_TRACK, "messages"),
-            (_COLLECTIVE_TRACK, "collectives"),
-        ):
-            events.append(
-                {
-                    "ph": "M",
-                    "name": "thread_name",
-                    "pid": rank,
-                    "tid": tid,
-                    "args": {"name": name},
-                }
-            )
-    for row in ops.iter_rows(named=True):
-        kind = row["kind"]
-        tid = (
-            int(row["cpu"])
-            if kind == "calc"
-            else _COLLECTIVE_TRACK
-            if kind == "collective"
-            else _MESSAGE_TRACK
-        )
-        args: dict[str, Any] = {"op": row["op"], "node_id": row["node_id"]}
-        if kind != "calc":
-            args.update({"bytes": row["bytes"], "peer": row["peer"]})
-        if row["role"] != "original":
-            args["lowered_from"] = row["origin"]
-        events.append(
-            {
-                "ph": "X",
-                "name": row["name"]
-                if row["role"] == "original"
-                else f"{row['name']}:{kind}",
-                "cat": kind,
-                "pid": row["rank"],
-                "tid": tid,
-                "ts": row["start_ns"] / 1000.0,
-                "dur": (row["end_ns"] - row["start_ns"]) / 1000.0,
-                "args": args,
-            }
-        )
-    if flows and not result.messages.is_empty():
-        messages = result.messages.filter(pl.col("done_ns").is_not_null())
-        if keep is not None:
-            messages = messages.filter(
-                pl.col("src").is_in(keep)
-                & pl.col("dst").cast(pl.UInt32).is_in(keep)
-            )
-        for row in messages.head(max_ops).iter_rows(named=True):
-            common = {
-                "name": "message",
-                "cat": "message",
-                "id": int(row["send"]),
-            }
-            events.append(
-                {
-                    **common,
-                    "ph": "s",
-                    "pid": row["src"],
-                    "tid": _MESSAGE_TRACK,
-                    "ts": row["start_ns"] / 1000.0,
-                }
-            )
-            events.append(
-                {
-                    **common,
-                    "ph": "f",
-                    "bp": "e",
-                    "pid": int(row["dst"]),
-                    "tid": _MESSAGE_TRACK,
-                    "ts": row["done_ns"] / 1000.0,
-                }
-            )
-    events.append(
-        {
-            "ph": "M",
-            "name": "process_name",
-            "pid": _CRITICAL_PID,
-            "args": {"name": "critical path"},
+    kind = pl.col("kind")
+    events = ops.select(
+        ph=pl.lit("X"),
+        name=pl.when(pl.col("role") == "original")
+        .then("name")
+        .otherwise(pl.format("{}:{}", "name", kind)),
+        cat=kind,
+        pid="rank",
+        tid=pl.when(kind == "calc")
+        .then("cpu")
+        .when(kind == "collective")
+        .then(_COLLECTIVES)
+        .otherwise(_MESSAGES),
+        ts=pl.col("start_ns") * us,
+        dur=(pl.col("end_ns") - pl.col("start_ns")) * us,
+        args=pl.struct("op", "node_id", "bytes", "peer", "origin"),
+    ).to_dicts()
+    for row in messages.head(max_ops).iter_rows(named=True):
+        flow = {
+            "name": "message",
+            "cat": "message",
+            "id": row["send"],
+            "tid": _MESSAGES,
         }
-    )
-    for row in result.critical_path.iter_rows(named=True):
         events.append(
-            {
-                "ph": "X",
-                "name": row["segment"],
-                "cat": "critical_path",
-                "pid": _CRITICAL_PID,
-                "tid": 0,
-                "ts": row["start_ns"] / 1000.0,
-                "dur": row["duration_ns"] / 1000.0,
-                "args": {
-                    "op": row["op"],
-                    "rank": row["rank"],
-                    "name": row["name"],
-                },
+            flow | {"ph": "s", "pid": row["src"], "ts": row["start_ns"] * us}
+        )
+        events.append(
+            flow
+            | {
+                "ph": "f",
+                "bp": "e",
+                "pid": row["dst"],
+                "ts": row["done_ns"] * us,
             }
         )
+    events += result.critical_path.select(
+        ph=pl.lit("X"),
+        name="segment",
+        cat=pl.lit("critical_path"),
+        pid=pl.lit(_PATH),
+        tid=pl.lit(0),
+        ts=pl.col("start_ns") * us,
+        dur=pl.col("duration_ns") * us,
+        args=pl.struct("op", "rank", "name"),
+    ).to_dicts()
+    names = [(_PATH, None, "critical path")] + [
+        (rank, tid, label)
+        for rank in ops["rank"].unique().to_list()
+        for tid, label in (
+            (None, f"rank {rank}"),
+            (_MESSAGES, "messages"),
+            (_COLLECTIVES, "collectives"),
+        )
+    ]
+    for pid, tid, label in names:
+        meta = {
+            "ph": "M",
+            "pid": pid,
+            "name": "process_name" if tid is None else "thread_name",
+            "args": {"name": label},
+        }
+        events.append(meta if tid is None else meta | {"tid": tid})
     return events
 
 
 def write_chrome_trace(
-    result: result_lib.SimResult,
-    path: str | pathlib.Path,
-    **options: Any,
+    result: result_lib.SimResult, path: str | pathlib.Path, **options: Any
 ) -> int:
-    """Writes the run's trace events to ``path``; returns how many.
-
-    Accepts the options of ``chrome_events``.
-    """
+    """Writes ``chrome_events`` to ``path``; returns how many."""
     events = chrome_events(result, **options)
     pathlib.Path(path).write_text(
         json.dumps({"traceEvents": events, "displayTimeUnit": "ns"})

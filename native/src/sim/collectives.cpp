@@ -14,10 +14,6 @@ using u64 = std::uint64_t;
 
 constexpr std::array<const char*, kNumAlgorithms> kAlgorithmNames = {
     "ring", "recursive_doubling", "halving_doubling", "binomial_tree", "double_binary_tree", "direct", "hierarchical"};
-constexpr std::array<const char*, kNumCollTypes> kCollTypeNames = {
-    "ALL_REDUCE", "REDUCE",    "ALL_GATHER",     "GATHER",
-    "SCATTER",    "BROADCAST", "ALL_TO_ALL",     "REDUCE_SCATTER",
-    "REDUCE_SCATTER_BLOCK",    "BARRIER"};
 
 // Chunk c of a buffer of `total` bytes cut into `parts` chunks.
 u64 chunk(u64 total, u32 parts, u32 c) { return total / parts + (c < total % parts ? 1 : 0); }
@@ -52,11 +48,10 @@ class Builder {
   Schedule& s_;
 };
 
-// Adds actions in steps. The sends and recvs of a step wait for the data the
-// member got last: the reductions, else the recvs, of the latest step that had
-// any. A reduction waits for the recvs of its own step. Steps without recvs
-// leave that data as it was, so a member that only sends (a broadcast root)
-// starts every send at once and lets its CPU and NIC order them.
+// Adds actions in steps. A step's sends and recvs wait for the latest step's
+// reductions, else its recvs; a reduction waits for its own step's recvs.
+// Steps that only send change nothing, so a broadcast root starts every send
+// at once and its CPU and NIC order them.
 class Steps {
  public:
   Steps(Schedule& s, bool reduce) : b_(s), reduce_(reduce) {}
@@ -79,8 +74,8 @@ class Steps {
   std::vector<u32> prev_, recvs_, reduces_;
 };
 
-// --- Rings over a list of positions; `idx` is this member's place in it and
-// sizes[c] the size of chunk c (one chunk per member of the ring).
+// Rings over `ring` (positions); `idx` is this member's place in it and
+// sizes[c] the size of chunk c.
 
 void ring_reduce_scatter(Steps& st, std::span<const u32> ring, u32 idx, std::span<const u64> sizes) {
   const u32 n = static_cast<u32>(ring.size());
@@ -121,7 +116,6 @@ std::vector<u64> chunks_of(u64 total, u32 parts) {
   return v;
 }
 
-// --- Algorithms. Each builds member `me` of a group of spec.size members.
 
 void ring_algorithm(const CollSpec& s, u32 me, Steps& st) {
   const u32 p = s.size;
@@ -177,7 +171,7 @@ void ring_algorithm(const CollSpec& s, u32 me, Steps& st) {
 }
 
 // Members past the largest power of two hand their buffer to a partner and get
-// the result back; `core` runs on the power-of-two members.
+// the result back; `core` runs on the others.
 template <typename Core>
 void with_fold(const CollSpec& s, u32 me, Steps& st, Core&& core) {
   const u32 p2 = floor_pow2(s.size), rem = s.size - p2;
@@ -240,8 +234,7 @@ void recursive_doubling(const CollSpec& s, u32 me, Steps& st) {
   }
 }
 
-// Recursive halving (reduce-scatter) and, for all-reduce, recursive doubling
-// back (all-gather), on `p2` (a power of two) members.
+// Recursive halving, then for all-reduce recursive doubling, on p2 = 2^k members.
 void halving_doubling_core(const CollSpec& s, u32 me, u32 p2, Steps& st, bool gather_back) {
   const auto sizes = chunks_of(s.bytes, p2);
   std::vector<u64> prefix(p2 + 1, 0);
@@ -311,7 +304,7 @@ void binomial_reduce(const CollSpec& s, u32 me, u32 root, u64 bytes, Steps& st) 
 
 void binomial_tree(const CollSpec& s, u32 me, Steps& st) {
   const u32 p = s.size, root = s.root % p, v = mod_sub(me, root, p);
-  // Bytes of the chunks of the virtual ranks [lo, hi) (gather and scatter).
+  // Bytes of the chunks of virtual ranks [lo, hi).
   auto subtree = [&](u32 lo, u32 hi) {
     u64 total = 0;
     for (u32 u = lo; u < std::min(hi, p); ++u) total += chunk(s.bytes, p, (u + root) % p);
@@ -380,8 +373,7 @@ TreeLinks btree(int n, int rank) {
   t.down1 = down1;
   return t;
 }
-// The second tree of ncclGetDtree: mirrored for an even size, shifted by one
-// for an odd one, so most members are leaves in one tree and inner in the other.
+// ncclGetDtree's second tree: mirrored for an even size, shifted for an odd one.
 TreeLinks second_tree(int n, int rank) {
   const bool even = n % 2 == 0;
   const int shifted = even ? n - 1 - rank : (rank - 1 + n) % n;
@@ -490,7 +482,7 @@ void hierarchical(const CollSpec& s, u32 me, Steps& st) {
   std::vector<u32> intra(m), inter(nodes);
   for (u32 l = 0; l < m; ++l) intra[l] = node * m + l;
   for (u32 j = 0; j < nodes; ++j) inter[j] = j * m + local;
-  // Bytes of the chunks of positions {j * m + l: j}, the block local index l owns.
+  // Bytes of the chunks of positions {j m + l}, the block of local index l.
   auto block = [&](u32 l) {
     u64 total = 0;
     for (u32 j = 0; j < nodes; ++j) total += chunk(s.bytes, p, j * m + l);
@@ -529,7 +521,6 @@ void hierarchical(const CollSpec& s, u32 me, Steps& st) {
   }
 }
 
-// Numbers each member's messages per peer and direction, in action order.
 void number_messages(Schedule& s) {
   std::unordered_map<u32, u32> sent, received;
   for (Action& a : s.actions) {
@@ -544,19 +535,10 @@ std::uint64_t message_key(u32 src, u32 dst, u32 seq, u32 p) {
 
 }  // namespace
 
-const char* algorithm_name(Algorithm a) { return kAlgorithmNames.at(static_cast<std::size_t>(a)); }
-const char* coll_type_name(CollType t) { return kCollTypeNames.at(static_cast<std::size_t>(t)); }
-
 Algorithm parse_algorithm(std::string_view name) {
   for (int i = 0; i < kNumAlgorithms; ++i)
     if (name == kAlgorithmNames[i]) return static_cast<Algorithm>(i);
   throw std::invalid_argument("unknown collective algorithm '" + std::string(name) + "'");
-}
-
-void Schedule::clear() {
-  actions.clear();
-  deps.clear();
-  outputs.clear();
 }
 
 std::vector<std::uint32_t> Schedule::sinks() const {
@@ -596,7 +578,7 @@ bool supports(CollType type, Algorithm algorithm, std::uint32_t size, std::uint3
   return false;
 }
 
-Algorithm default_algorithm(CollType type) {
+static Algorithm default_algorithm(CollType type) {
   switch (type) {
     case CollType::kAllReduce:
     case CollType::kAllGather:
@@ -620,12 +602,15 @@ Algorithm resolve_algorithm(CollType type, Algorithm wanted, std::uint32_t size,
 }
 
 void build_schedule(const CollSpec& spec, std::uint32_t me, Schedule& out) {
-  out.clear();
+  out.actions.clear();
+  out.deps.clear();
+  out.outputs.clear();
   if (me >= spec.size) throw std::invalid_argument("collective member out of range");
   if (spec.size <= 1) return;
   if (!supports(spec.type, spec.algorithm, spec.size, spec.node_size))
-    throw std::invalid_argument(std::string(algorithm_name(spec.algorithm)) + " does not support " +
-                                coll_type_name(spec.type) + " on " + std::to_string(spec.size) + " members");
+    throw std::invalid_argument(std::string(kAlgorithmNames[static_cast<std::size_t>(spec.algorithm)]) +
+                                " does not support " + kCollTypeNames[static_cast<std::size_t>(spec.type)] + " on " +
+                                std::to_string(spec.size) + " members");
   if (spec.algorithm == Algorithm::kDoubleBinaryTree) {
     double_binary_tree(spec, me, out);
   } else {
@@ -664,7 +649,6 @@ std::vector<Time> evaluate_collective(const CollSpec& spec, std::span<const std:
   Schedule first;
   build_schedule(spec, 0, first);
   if (static_cast<u64>(first.actions.size()) * p > exact_limit) {
-    // Member 0 alone; each message is sent when it is posted.
     std::vector<Time> done(first.actions.size(), 0);
     for (u32 a = 0; a < first.actions.size(); ++a) {
       Time ready = 0;
@@ -681,7 +665,6 @@ std::vector<Time> evaluate_collective(const CollSpec& spec, std::span<const std:
     return finish;
   }
 
-  // Every member, as a longest-path pass over the actions and their messages.
   std::vector<Schedule> all(p);
   all[0] = std::move(first);
   for (u32 m = 1; m < p; ++m) build_schedule(spec, m, all[m]);

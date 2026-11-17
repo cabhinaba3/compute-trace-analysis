@@ -132,29 +132,23 @@ the compiler can inline them.
 
 ## sim
 
-`simulate()` runs one graph of all ranks: ops in rank order, CSR successor
-lists, and an event queue ordered by (time, event type, id), so a run depends
-only on the ops and parameters, never on the order events were pushed. CPUs
-and NICs are resources with a free-at time and a queue of waiting activities
-(an op starting, a receiver processing a message, a rendezvous data send);
-the activity that has waited longest gets a freed resource. Messages are
-matched per (receiver, sender, tag) in FIFO order, as LogGOPSim does.
+`simulate()` runs one graph of all ranks with an event queue ordered by
+(time, event type, id), so a run depends only on its ops and parameters.
+CPUs and NICs are resources with a free-at time and a queue of waiting
+activities (an op starting, or a receiver processing a message); the one that
+has waited longest gets a freed resource. Messages match per (receiver,
+sender, tag) in FIFO order, as in LogGOPSim. `SimParams` lists its settings
+once, under the dotted names of `cta.sim.config`, and the binding parses
+them generically.
 
-Collectives have one description: `build_schedule()` gives a member's
-actions (send, recv, reduce) with their dependencies. Lowering inlines them
-in place of the collective (an entry and an exit NOP carry its edges, and
-the tags of lowered messages have the top bit set so they never match the
-trace's); the analytical level evaluates all members' schedules as a
-contention-free longest path (`evaluate_collective`), or, for very large
-groups, member 0 under a symmetry assumption.
+`build_schedule()` gives one member's actions of a collective. Lowering
+inlines them between an entry and an exit NOP that carry the collective's
+edges; `evaluate_collective()` runs all members' schedules as a
+contention-free longest path for the analytical level.
 
-The flow model's `FlowNetwork` re-shares bandwidth by progressive filling,
-but only among the flows connected to the one that started or ended through
-shared links; finish events of flows whose rate changed are superseded, not
-removed, and ignored when they come due.
-
-The critical path is reconstructed afterwards: every op remembers what made
-it ready (a dependency's end, or start for irequires), which activity held
-the resource it waited for, and every message when it arrived and was
-processed; walking back from the last op explains each stretch of time and
-cuts the path into Segment categories that tile [0, makespan] exactly.
+Topologies only declare their links; routes are shortest paths, with ties
+broken by a hash of (src, dst). `FlowNetwork` re-shares bandwidth by
+progressive filling among the flows connected to the one that started or
+ended. The engine records each message's split points as it runs, and the
+critical path walks back from the last op through them, cutting time into
+Segment categories that tile [0, makespan].
