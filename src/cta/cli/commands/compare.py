@@ -108,6 +108,27 @@ def compare_command(
             ),
         ),
     ] = None,
+    interconnect: Annotated[
+        str | None,
+        typer.Option(
+            "--interconnect",
+            help=(
+                "Price the baseline's communication on this interconnect "
+                "before the 'whatif' aspect predicts, e.g. "
+                "'gpus_per_node=8,inter=5us:50GB/s,algo=ring'."
+            ),
+        ),
+    ] = None,
+    baseline_interconnect: Annotated[
+        str | None,
+        typer.Option(
+            "--baseline-interconnect",
+            help=(
+                "The interconnect the baseline was measured on, so recorded "
+                "communication times scale with --interconnect."
+            ),
+        ),
+    ] = None,
     labels: Annotated[
         str | None,
         typer.Option("--labels", "-l", help="Comma-separated group labels."),
@@ -172,6 +193,8 @@ def compare_command(
                 "devices": tuple(output.split_comma_separated_ints(devices))
                 or None,
                 "predict": predict,
+                "interconnect": interconnect,
+                "baseline_interconnect": baseline_interconnect,
                 "cache_dir": cache_dir,
             }
             for field_name, value in overrides.items():
@@ -203,6 +226,8 @@ def compare_command(
                 ranks=output.split_comma_separated_ints(ranks),
                 devices=output.split_comma_separated_ints(devices),
                 predict=predict,
+                interconnect=interconnect,
+                baseline_interconnect=baseline_interconnect,
                 cache_dir=cache_dir or pathlib.Path(".cta_cache"),
                 labels=output.split_comma_separated(labels),
             )

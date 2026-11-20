@@ -8,15 +8,20 @@ take the same interconnect.
 
 from __future__ import annotations
 
+import json
 import pathlib
+import warnings
 
 import numpy as np
 import polars as pl
 import pytest
 from typer import testing
 
+import cta
 from cta.analysis import interconnect as ic
 from cta.analysis import whatif
+from cta.cli import app as cli_app
+from cta.synth import goal
 from cta.synth import training
 
 MIB = 1 << 20
@@ -161,3 +166,84 @@ def test_recorded_comm_times_are_kept_without_a_baseline_interconnect() -> None:
         repriced = whatif.reprice(model, NET)
 
     assert repriced.graph.weights_ns.tolist() == [1000.0]
+
+
+def test_the_aspect_prices_the_baseline_on_the_interconnect_asked_for(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "t.goal"
+    training.write_goal(path, training.TrainingSpec(dp=4, tp=2, pp=2))
+
+    plain = cta.compare(
+        path,
+        path,
+        aspects=("whatif",),
+        cache_dir=tmp_path / "cache",
+        predict="comm:2x",
+    )
+    slow = cta.compare(
+        path,
+        path,
+        aspects=("whatif",),
+        cache_dir=tmp_path / "cache",
+        predict="comm:2x",
+        interconnect="gpus_per_node=2,intra=1us:100GB/s,inter=5us:2GB/s",
+    )
+
+    def metric(report: cta.Report, name: str) -> dict[str, float]:
+        return (
+            report.aspects["whatif"]
+            .summary.filter(pl.col("metric") == name)
+            .row(0, named=True)
+        )
+
+    # The baseline's own makespan is the measured one either way.
+    assert metric(slow, "whatif_makespan_us")["baseline"] == pytest.approx(
+        metric(plain, "whatif_makespan_us")["baseline"]
+    )
+    # Predicting it on a much slower network gives a longer predicted run.
+    assert (
+        metric(slow, "whatif_residual")["baseline"]
+        > metric(plain, "whatif_residual")["baseline"]
+    )
+
+
+def test_the_whatif_command_reprices_and_rejects_a_bad_spec(
+    tmp_path: pathlib.Path,
+) -> None:
+    path = tmp_path / "t.goal"
+    goal.write_allreduce(path, world_size=4)
+    base = [
+        "whatif",
+        str(path),
+        "--cache-dir",
+        str(tmp_path / "c"),
+        "--format",
+        "json",
+        "--speed",
+        "comm:2x",
+    ]
+
+    plain = cli_runner.invoke(cli_app.app, base)
+    slow = cli_runner.invoke(
+        cli_app.app,
+        [*base, "--interconnect", "gpus_per_node=1,inter=50us:0.1GB/s"],
+    )
+    bad = cli_runner.invoke(cli_app.app, [*base, "--interconnect", "speed=3"])
+
+    assert plain.exit_code == 0 and slow.exit_code == 0
+    plain_ms = json.loads(plain.stdout)["scenarios"][0]["makespan_ns"]
+    slow_ms = json.loads(slow.stdout)["scenarios"][0]["makespan_ns"]
+    assert slow_ms > plain_ms
+    assert bad.exit_code == 2
+
+
+def test_no_warning_without_an_interconnect(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "t.goal"
+    goal.write_allreduce(path, world_size=4)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        cta.compare(
+            path, path, aspects=("whatif",), cache_dir=tmp_path / "cache"
+        )

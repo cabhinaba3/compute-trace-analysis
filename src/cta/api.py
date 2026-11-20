@@ -33,6 +33,8 @@ def _config(
     ranks: Sequence[int] | None,
     devices: Sequence[int] | None,
     predict: str | None,
+    interconnect: str | None,
+    baseline_interconnect: str | None,
     cache_dir: str | pathlib.Path,
     gates: dict[str, float] | None = None,
     allow_missing_gates: bool = False,
@@ -50,6 +52,8 @@ def _config(
         ranks=tuple(ranks) if ranks else None,
         devices=tuple(devices) if devices else None,
         predict=predict,
+        interconnect=interconnect,
+        baseline_interconnect=baseline_interconnect,
         cache_dir=pathlib.Path(cache_dir),
     )
 
@@ -84,6 +88,8 @@ def analyze(
     ranks: Sequence[int] | None = None,
     devices: Sequence[int] | None = None,
     predict: str | None = None,
+    interconnect: str | None = None,
+    baseline_interconnect: str | None = None,
     cache_dir: str | pathlib.Path = ".cta_cache",
     label: str | None = None,
 ) -> models.Report:
@@ -103,6 +109,9 @@ def analyze(
         devices: Analyse only these GPU devices; None or empty means all.
         predict: A what-if scenario for the ``whatif`` aspect (see
             ``AnalysisConfig``).
+        interconnect: Interconnect the ``whatif`` aspect prices the baseline's
+            communication on (see ``AnalysisConfig``).
+        baseline_interconnect: The interconnect the baseline was measured on.
         cache_dir: Directory of the Parquet ingest cache.
         label: Label of the group; defaults to the bundle's label.
 
@@ -125,6 +134,8 @@ def analyze(
         ranks=ranks,
         devices=devices,
         predict=predict,
+        interconnect=interconnect,
+        baseline_interconnect=baseline_interconnect,
         cache_dir=cache_dir,
     )
     return engine.run_comparison((group,), config)
@@ -145,6 +156,8 @@ def compare(
     ranks: Sequence[int] | None = None,
     devices: Sequence[int] | None = None,
     predict: str | None = None,
+    interconnect: str | None = None,
+    baseline_interconnect: str | None = None,
     cache_dir: str | pathlib.Path = ".cta_cache",
     labels: Sequence[str] | None = None,
 ) -> models.Report:
@@ -172,6 +185,9 @@ def compare(
         devices: Analyse only these GPU devices; None or empty means all.
         predict: A what-if scenario for the ``whatif`` aspect (see
             ``AnalysisConfig``).
+        interconnect: Interconnect the ``whatif`` aspect prices the baseline's
+            communication on (see ``AnalysisConfig``).
+        baseline_interconnect: The interconnect the baseline was measured on.
         cache_dir: Directory of the Parquet ingest cache.
         labels: Labels for the inputs, in order; inputs past the end of
             the list keep their default label.
@@ -204,6 +220,8 @@ def compare(
         ranks=ranks,
         devices=devices,
         predict=predict,
+        interconnect=interconnect,
+        baseline_interconnect=baseline_interconnect,
         cache_dir=cache_dir,
     )
     return engine.run_comparison(_with_distinct_labels(groups), config)

@@ -62,6 +62,29 @@ def whatif_command(
         int,
         typer.Option("--top", min=1, help="Groups to keep in the sweep."),
     ] = 24,
+    interconnect: Annotated[
+        str | None,
+        typer.Option(
+            "--interconnect",
+            help=(
+                "Price the communication on this interconnect first, e.g. "
+                "'gpus_per_node=8,intra=1us:300GB/s,inter=5us:50GB/s,"
+                "algo=ring,group.ALL_REDUCE=64'. Ops with no recorded time "
+                "take its cost."
+            ),
+        ),
+    ] = None,
+    baseline_interconnect: Annotated[
+        str | None,
+        typer.Option(
+            "--baseline-interconnect",
+            help=(
+                "The interconnect the trace was measured on: recorded "
+                "communication times are scaled by how much --interconnect "
+                "costs against it (without it they stay as recorded)."
+            ),
+        ),
+    ] = None,
     threads: Annotated[
         int,
         typer.Option(
@@ -88,6 +111,7 @@ def whatif_command(
     Solves the run's execution graph again with the changed op times, so a
     run's critical path answers where speeding something up pays off.
     """
+    from cta.analysis import interconnect as interconnect_model
     from cta.analysis import whatif
 
     if output_format not in ("rich", "json"):
@@ -99,6 +123,14 @@ def whatif_command(
         scenarios = [whatif.parse_scenario(text) for text in speed or []]
         sweep_factors = whatif.parse_factors(factors)
         model = whatif.load_model(trace, cache_dir=cache_dir)
+        if interconnect:
+            model = whatif.reprice(
+                model,
+                interconnect_model.parse(interconnect),
+                interconnect_model.parse(baseline_interconnect)
+                if baseline_interconnect
+                else None,
+            )
         run = whatif.run_scenarios(
             model, scenarios, threads=threads, memory_budget_bytes=budget
         )

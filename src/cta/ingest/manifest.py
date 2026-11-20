@@ -125,6 +125,16 @@ def load_manifest(
             if config_section.get("predict")
             else None
         ),
+        interconnect=(
+            str(config_section["interconnect"])
+            if config_section.get("interconnect")
+            else None
+        ),
+        baseline_interconnect=(
+            str(config_section["baseline_interconnect"])
+            if config_section.get("baseline_interconnect")
+            else None
+        ),
         cache_dir=cache_dir,
     )
     return tuple(groups), config

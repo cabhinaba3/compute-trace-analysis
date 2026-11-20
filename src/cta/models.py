@@ -99,6 +99,13 @@ class AnalysisConfig:
             ``cta.analysis.whatif``) that the ``whatif`` aspect applies to the
             baseline and compares with the measured candidates; None applies
             none.
+        interconnect: An interconnect (``cta.analysis.interconnect.parse``,
+            such as ``"gpus_per_node=8,inter=5us:50GB/s,algo=ring"``) on
+            which the ``whatif`` aspect prices the baseline's communication
+            before predicting the candidates; None leaves it as recorded.
+        baseline_interconnect: The interconnect the baseline was measured
+            on, so recorded communication times are scaled by how much
+            ``interconnect`` costs against it; None keeps them as recorded.
         cache_dir: Directory of the Parquet ingest cache.
     """
 
@@ -114,6 +121,8 @@ class AnalysisConfig:
     devices: tuple[int, ...] | None = None
     scope_depth: int | None = None
     predict: str | None = None
+    interconnect: str | None = None
+    baseline_interconnect: str | None = None
     cache_dir: pathlib.Path = dataclasses.field(
         default_factory=lambda: pathlib.Path(".cta_cache")
     )

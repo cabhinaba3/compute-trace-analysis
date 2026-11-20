@@ -8,6 +8,7 @@ import polars as pl
 
 from cta import models
 from cta import plugins
+from cta.analysis import interconnect
 from cta.analysis import stats
 from cta.analysis import whatif
 from cta.aspects.distributed import graph_tables
@@ -68,6 +69,18 @@ class WhatIfAspect(plugins.Aspect):
             if config.predict
             else None
         )
+        new_net = (
+            interconnect.parse(config.interconnect)
+            if config.interconnect
+            else None
+        )
+        base_net = (
+            interconnect.parse(config.baseline_interconnect)
+            if config.baseline_interconnect
+            else None
+        )
+        if scenario is None and new_net is not None:
+            scenario = whatif.Scenario("repriced", ())
         labels = [group.label for group in groups]
         trials: list[dict[str, list[float]]] = []
         details: dict[str, pl.DataFrame] = {}
@@ -80,13 +93,32 @@ class WhatIfAspect(plugins.Aspect):
                 nodes, edges, _ = graph_tables.read_graph_tables(table_paths)
                 model = whatif.build_model(nodes, edges)
                 is_baseline = index == 0
+                # With no new interconnect the baseline and the scenario
+                # share one solve; with one, the scenario runs on the
+                # repriced graph and the baseline's own makespan stays the
+                # measured one.
+                reprices = is_baseline and new_net is not None
                 run = whatif.run_scenarios(
-                    model, [scenario] if scenario and is_baseline else []
+                    model,
+                    [scenario]
+                    if scenario and is_baseline and not reprices
+                    else [],
                 )
                 makespan_us = run.table["makespan_ns"].to_numpy() / 1e3
                 values["whatif_makespan_us"].append(float(makespan_us[0]))
                 if scenario is None:
                     pass
+                elif reprices:
+                    assert new_net is not None
+                    predicted = whatif.run_scenarios(
+                        whatif.reprice(model, new_net, base_net), [scenario]
+                    )
+                    predicted_us = (
+                        predicted.table["makespan_ns"].to_numpy() / 1e3
+                    )
+                    values["whatif_residual"].append(float(predicted_us[1]))
+                    if trial_index == 0:
+                        details["predicted"] = predicted.table
                 elif is_baseline:
                     values["whatif_residual"].append(float(makespan_us[1]))
                     if trial_index == 0:
