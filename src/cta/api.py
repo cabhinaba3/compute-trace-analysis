@@ -32,6 +32,7 @@ def _config(
     scope_depth: int | None,
     ranks: Sequence[int] | None,
     devices: Sequence[int] | None,
+    predict: str | None,
     cache_dir: str | pathlib.Path,
     gates: dict[str, float] | None = None,
     allow_missing_gates: bool = False,
@@ -48,6 +49,7 @@ def _config(
         scope_depth=scope_depth,
         ranks=tuple(ranks) if ranks else None,
         devices=tuple(devices) if devices else None,
+        predict=predict,
         cache_dir=pathlib.Path(cache_dir),
     )
 
@@ -81,6 +83,7 @@ def analyze(
     scope_depth: int | None = None,
     ranks: Sequence[int] | None = None,
     devices: Sequence[int] | None = None,
+    predict: str | None = None,
     cache_dir: str | pathlib.Path = ".cta_cache",
     label: str | None = None,
 ) -> models.Report:
@@ -98,6 +101,8 @@ def analyze(
             ``AnalysisConfig``).
         ranks: Analyse only these ranks; None or empty means all.
         devices: Analyse only these GPU devices; None or empty means all.
+        predict: A what-if scenario for the ``whatif`` aspect (see
+            ``AnalysisConfig``).
         cache_dir: Directory of the Parquet ingest cache.
         label: Label of the group; defaults to the bundle's label.
 
@@ -119,6 +124,7 @@ def analyze(
         scope_depth=scope_depth,
         ranks=ranks,
         devices=devices,
+        predict=predict,
         cache_dir=cache_dir,
     )
     return engine.run_comparison((group,), config)
@@ -138,6 +144,7 @@ def compare(
     scope_depth: int | None = None,
     ranks: Sequence[int] | None = None,
     devices: Sequence[int] | None = None,
+    predict: str | None = None,
     cache_dir: str | pathlib.Path = ".cta_cache",
     labels: Sequence[str] | None = None,
 ) -> models.Report:
@@ -163,6 +170,8 @@ def compare(
             ``AnalysisConfig``).
         ranks: Analyse only these ranks; None or empty means all.
         devices: Analyse only these GPU devices; None or empty means all.
+        predict: A what-if scenario for the ``whatif`` aspect (see
+            ``AnalysisConfig``).
         cache_dir: Directory of the Parquet ingest cache.
         labels: Labels for the inputs, in order; inputs past the end of
             the list keep their default label.
@@ -194,6 +203,7 @@ def compare(
         scope_depth=scope_depth,
         ranks=ranks,
         devices=devices,
+        predict=predict,
         cache_dir=cache_dir,
     )
     return engine.run_comparison(_with_distinct_labels(groups), config)

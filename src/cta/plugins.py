@@ -251,6 +251,7 @@ ASPECTS: Registry[Aspect] = Registry(
         "cta.aspects.edge.energy",
         "cta.aspects.hta",
         "cta.aspects.network",
+        "cta.aspects.whatif",
     ),
 )
 

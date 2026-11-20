@@ -66,6 +66,16 @@ def analyze_command(
             help="Analyse only these GPU devices, e.g. 0 (default: all).",
         ),
     ] = None,
+    predict: Annotated[
+        str | None,
+        typer.Option(
+            "--predict",
+            help=(
+                "What-if scenario for the 'whatif' aspect, e.g. 'comm:1.6x' "
+                "(rules joined by ';'); gate it with 'whatif_residual:5%'."
+            ),
+        ),
+    ] = None,
     label: Annotated[
         str | None,
         typer.Option(
@@ -110,6 +120,7 @@ def analyze_command(
             scope_depth=scope_depth,
             ranks=output.split_comma_separated_ints(ranks),
             devices=output.split_comma_separated_ints(devices),
+            predict=predict,
             cache_dir=cache_dir,
             label=label,
         )

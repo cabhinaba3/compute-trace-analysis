@@ -95,6 +95,10 @@ class AnalysisConfig:
         scope_depth: Scope level kernels are attributed to. None uses the
             innermost scope; N >= 1 uses the N-th enclosing level, counted
             from the outermost.
+        predict: A what-if scenario (rules joined by ``;``, see
+            ``cta.analysis.whatif``) that the ``whatif`` aspect applies to the
+            baseline and compares with the measured candidates; None applies
+            none.
         cache_dir: Directory of the Parquet ingest cache.
     """
 
@@ -109,6 +113,7 @@ class AnalysisConfig:
     ranks: tuple[int, ...] | None = None
     devices: tuple[int, ...] | None = None
     scope_depth: int | None = None
+    predict: str | None = None
     cache_dir: pathlib.Path = dataclasses.field(
         default_factory=lambda: pathlib.Path(".cta_cache")
     )

@@ -98,6 +98,16 @@ def compare_command(
             help="Analyse only these GPU devices, e.g. 0 (default: all).",
         ),
     ] = None,
+    predict: Annotated[
+        str | None,
+        typer.Option(
+            "--predict",
+            help=(
+                "What-if scenario for the 'whatif' aspect, e.g. 'comm:1.6x' "
+                "(rules joined by ';'); gate it with 'whatif_residual:5%'."
+            ),
+        ),
+    ] = None,
     labels: Annotated[
         str | None,
         typer.Option("--labels", "-l", help="Comma-separated group labels."),
@@ -161,6 +171,7 @@ def compare_command(
                 or None,
                 "devices": tuple(output.split_comma_separated_ints(devices))
                 or None,
+                "predict": predict,
                 "cache_dir": cache_dir,
             }
             for field_name, value in overrides.items():
@@ -191,6 +202,7 @@ def compare_command(
                 scope_depth=scope_depth,
                 ranks=output.split_comma_separated_ints(ranks),
                 devices=output.split_comma_separated_ints(devices),
+                predict=predict,
                 cache_dir=cache_dir or pathlib.Path(".cta_cache"),
                 labels=output.split_comma_separated(labels),
             )

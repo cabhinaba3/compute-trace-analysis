@@ -120,6 +120,11 @@ def load_manifest(
         ranks=_optional_int_tuple(config_section, "ranks"),
         devices=_optional_int_tuple(config_section, "devices"),
         scope_depth=_optional_int(config_section, "scope_depth"),
+        predict=(
+            str(config_section["predict"])
+            if config_section.get("predict")
+            else None
+        ),
         cache_dir=cache_dir,
     )
     return tuple(groups), config
