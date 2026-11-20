@@ -30,6 +30,7 @@ import math
 import pathlib
 import re
 import time
+import warnings
 
 import numpy as np
 import polars as pl
@@ -37,6 +38,7 @@ import polars as pl
 from cta import _native as native
 from cta.analysis import alignment
 from cta.analysis import dag
+from cta.analysis import interconnect
 
 DEFAULT_FACTORS = (1.1, 1.25, 1.5, 2.0, 4.0, math.inf)
 
@@ -344,6 +346,71 @@ def load_model(
             f"'{source}' holds no execution graph (Chakra or GOAL)"
         ) from None
     return build_model(nodes, edges)
+
+
+def reprice(
+    model: WhatIfModel,
+    new: interconnect.Interconnect,
+    base: interconnect.Interconnect | None = None,
+) -> WhatIfModel:
+    """Prices the graph's communication on another interconnect.
+
+    A communication op with no recorded time (GOAL) takes the cost ``new``
+    gives it. A recorded one keeps what the measurement holds (overheads,
+    contention, a protocol the model does not know) and is scaled by how much
+    ``new`` costs against ``base``, the interconnect the run was measured on;
+    without ``base`` the recorded times are left as they are. With the default
+    interconnect the weights are exactly the ones ``prepare_dag`` gave.
+
+    Args:
+        model: The prepared graph.
+        new: The interconnect to price the communication on.
+        base: The interconnect the recorded times were measured on.
+
+    Returns:
+        A model of the same graph with new communication times. Rules and
+        sweeps work on it as on any other.
+
+    Warns:
+        RuntimeWarning: A collective type has no group size, so every rank of
+            the graph is assumed, or recorded times are kept for want of a
+            ``base``.
+    """
+    nodes = model.nodes
+    weights = model.graph.weights_ns.copy()
+    is_comm = model.graph.is_comm
+    recorded = nodes["duration_ns"].to_numpy().astype(np.float64) > 0.0
+    cost_new, defaulted = interconnect.node_cost_ns(nodes, new)
+    unrecorded = is_comm & ~recorded
+    weights[unrecorded] = cost_new[unrecorded]
+    scaled = is_comm & recorded
+    if scaled.any():
+        if base is None:
+            warnings.warn(
+                "The communication ops have recorded times and no baseline "
+                "interconnect was given, so they keep them.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            cost_base, base_defaulted = interconnect.node_cost_ns(nodes, base)
+            defaulted = sorted(set(defaulted) | set(base_defaulted))
+            ratio = np.divide(
+                cost_new,
+                cost_base,
+                out=np.ones_like(cost_new),
+                where=cost_base > 0,
+            )
+            weights[scaled] = weights[scaled] * ratio[scaled]
+    if defaulted:
+        warnings.warn(
+            f"No group size for {', '.join(defaulted)}: assuming every rank "
+            "of the graph (set group.<TYPE>=<ranks> in the interconnect).",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    graph = dataclasses.replace(model.graph, weights_ns=weights)
+    return dataclasses.replace(model, graph=graph)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
