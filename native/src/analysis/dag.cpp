@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "analysis/graph_csr.hpp"
+
 namespace cta::analysis {
 
 DagResult solve_dag(const double* weights, const bool* is_comm, const bool* is_compute,
@@ -16,36 +18,9 @@ DagResult solve_dag(const double* weights, const bool* is_comm, const bool* is_c
   if (n > std::numeric_limits<std::uint32_t>::max()) throw std::invalid_argument("too many vertices");
 
   // --- Edges grouped by source; each row sorted and free of repeats.
-  std::vector<std::uint64_t> row_ptr(n + 1, 0);
-  for (std::size_t i = 0; i < m; ++i) {
-    if (edge_src[i] >= n || edge_dst[i] >= n) throw std::invalid_argument("edge names a vertex outside the graph");
-    ++row_ptr[edge_src[i] + 1];
-  }
-  for (std::size_t u = 0; u < n; ++u) row_ptr[u + 1] += row_ptr[u];
-  std::vector<std::uint32_t> successors(m);
-  {
-    std::vector<std::uint64_t> cursor(row_ptr.begin(), row_ptr.end() - 1);
-    for (std::size_t i = 0; i < m; ++i) successors[cursor[edge_src[i]]++] = edge_dst[i];
-  }
-  {
-    std::uint64_t write = 0;
-    std::uint64_t row_begin = 0;
-    for (std::size_t u = 0; u < n; ++u) {
-      const std::uint64_t row_end = row_ptr[u + 1];
-      auto first = successors.begin() + static_cast<std::ptrdiff_t>(row_begin);
-      auto last = successors.begin() + static_cast<std::ptrdiff_t>(row_end);
-      std::sort(first, last);
-      last = std::unique(first, last);
-      const std::uint64_t kept = static_cast<std::uint64_t>(last - first);
-      if (write != row_begin) std::copy(first, last, successors.begin() + static_cast<std::ptrdiff_t>(write));
-      row_begin = row_end;
-      row_ptr[u] = write;
-      write += kept;
-    }
-    row_ptr[n] = write;
-    successors.resize(write);
-    successors.shrink_to_fit();
-  }
+  SuccessorGraph graph = build_successor_graph(n, edge_src, edge_dst, m);
+  const std::vector<std::uint64_t>& row_ptr = graph.row_ptr;
+  const std::vector<std::uint32_t>& successors = graph.successors;
   result.num_edges = row_ptr[n];
 
   // --- Forward pass: Kahn's algorithm, FIFO, with the longest-path DP.
