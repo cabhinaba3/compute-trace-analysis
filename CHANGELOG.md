@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Optimization advisor (`Report.recommendations`)
+- `cta analyze` and `cta compare` now rank optimization advice for every group, in the terminal, in Markdown (`## Optimization Advice`) and in the JSON export (`recommendations`). Each item has a `priority` (1 is the largest ceiling), the action, a ceiling (the most it could save, in ms per step and as a share of the step) and the numbers behind it. New module `cta.advisor`, new dataclass `cta.Recommendation`, new field `Report.recommendations` (empty when nothing is worth more than 2% of a step). `diagnose_bottleneck_shifts` is unchanged.
+- Three rules read a GPU timeline (nsys or Kineto; any adapter that writes `kernels` and `steps`):
+  - `launch_bound`: short gaps (under 100 us) between kernels, most of them tiny (under 10 us) or a median kernel under 20 us. Advice: CUDA/HIP graphs, `torch.compile`. Ceiling: the time in those gaps.
+  - `exposed_comm`: communication kernels with no compute running beside them. Advice: bucketing when the calls are many and small (or many, when the trace records no size, as nsys does for NCCL), else overlap. Ceiling: the exposed time.
+  - `exposed_copies`: host-to-device and device-to-host copies with no compute beside them. Advice follows the evidence: copies a Kineto trace names `Pageable` get "pin the host memory"; otherwise (nsys names carry no memory kind) it is "issue the copy early on a side stream with `non_blocking=True`", with pinning only as a condition. Evidence: copies and MB per step and achieved GB/s.
+  - A trace whose GPU is almost always idle for long stretches (the host is the bottleneck) gets none of these: gaps over 100 us are not launch gaps, and host stalls are not covered.
+- These ceilings are `measured-removal`: the loss is measured on the timeline and taken out on paper, which is an upper bound and not a prediction (removing a collective's exposed time does not make it free). They are not what-if results: `whatif` only solves Chakra and GOAL graphs. Each is the largest over the (rank, device) timelines, per step of that rank, over the steps `--warmup-steps`, `--max-steps`, `--ranks` and `--devices` keep; trials of a group are averaged.
+- With the `whatif` aspect on (`--aspects whatif`, off by default because solving big graphs takes time), the baseline group of a Chakra or GOAL run also gets one recommendation per op family whose removal shortens the critical path by 2% or more, with the `whatif-removal` basis, measured in ms of the whole graph's critical path.
+- Checked on the real captures in `tests/data_real`: the single-GPU nsys fp16 and fp32 captures (launch-bound first, copies at 38 and 45 GB/s), and the two-rank Kineto trace, whose exposed-communication ceiling is at least the `overlap` aspect's total divided by timelines and kept steps (both are tests, skipped without the captures); the multi-GPU and per-rank nsys captures, which are over 99% idle, get no advice. The graph path was run on a generated 1.4 M-node GOAL graph. On 16 ranks of Kineto the advisor adds 0.1 s to a 0.3 s cached analysis.
+
 ### Plugin seams
 - `cta list` now also lists the export formats and plot kinds, including those a plugin registers. It showed only trace formats and aspects, so two of the four plugin registries could not be inspected.
 

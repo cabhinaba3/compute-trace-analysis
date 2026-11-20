@@ -10,6 +10,7 @@ from collections.abc import Sequence
 import pathlib
 from typing import Literal
 
+from cta import advisor
 from cta import diagnosis
 from cta import gating
 from cta import models
@@ -95,8 +96,8 @@ def run_comparison(
 
     Ingests every artifact, runs each applicable aspect and keeps the
     results that have a non-empty summary or any details table. Then it
-    diagnoses bottleneck regimes and, with two or more groups, evaluates
-    the regression gates.
+    diagnoses bottleneck regimes, recommends optimizations and, with two or
+    more groups, evaluates the regression gates.
 
     Args:
         groups: The groups to analyse; the first one is the baseline.
@@ -142,6 +143,7 @@ def run_comparison(
     else:
         mode = "multi"
     diagnoses = diagnosis.diagnose_bottleneck_shifts(group_tuple, results)
+    recommendations = advisor.advise(group_tuple, tables, config, results)
     violations: list[models.GateViolation] = []
     if len(group_tuple) >= 2:
         missing = gating.missing_gate_metrics(results, config.gates)
@@ -158,6 +160,7 @@ def run_comparison(
         groups=group_tuple,
         aspects=results,
         diagnoses=diagnoses,
+        recommendations=recommendations,
         violations=violations,
         sources=tables,
         config=config,

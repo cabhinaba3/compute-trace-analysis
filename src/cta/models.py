@@ -165,6 +165,47 @@ class BottleneckShift:
     summary: str
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class Recommendation:
+    """One optimization the evidence in a trace supports.
+
+    The ceiling is the most the change could save, not a prediction: it is
+    the time the trace shows being lost, taken out as a whole. How it was
+    measured is in ``basis``.
+
+    Attributes:
+        group_label: Label of the group the advice is for.
+        priority: Position among the group's recommendations, 1 being the
+            one with the largest ceiling.
+        rule: Which rule found it (``launch_bound``, ``exposed_comm``,
+            ``exposed_copies``, or ``whatif:<op family>``).
+        title: What is wrong, in one line.
+        action: What to try.
+        ceiling_ms: The most it could save, in ms per step (``per`` is
+            ``"step"``) or for the whole recorded graph (``"run"``).
+        ceiling_pct: ``ceiling_ms`` as a percentage of the step, or of the
+            graph's critical path.
+        per: ``"step"`` or ``"run"``.
+        basis: ``"measured-removal"``: the loss was measured on the timeline
+            (idle gaps, communication or copies that no compute covers) and
+            removed on paper. ``"whatif-removal"``: the op family's time was
+            set to zero in the execution graph and the critical path solved
+            again (``cta whatif``).
+        evidence: The numbers behind it, by name.
+    """
+
+    group_label: str
+    priority: int
+    rule: str
+    title: str
+    action: str
+    ceiling_ms: float
+    ceiling_pct: float
+    per: str
+    basis: str
+    evidence: dict[str, float | str]
+
+
 @dataclasses.dataclass(slots=True)
 class AspectResult:
     """The output of one comparison aspect.
@@ -231,6 +272,8 @@ class Report:
         groups: The analysed groups; the first one is the baseline.
         aspects: Aspect results keyed by aspect name.
         diagnoses: Bottleneck regime of each candidate versus the baseline.
+        recommendations: Optimization advice of every group, ranked within
+            each group by its ceiling (see ``Recommendation``).
         violations: Regression gates that failed.
         sources: Plot inputs, not part of the exported report. Per group id,
             one map of table name -> cached Parquet path per trial.
@@ -246,6 +289,9 @@ class Report:
         default_factory=dict, repr=False
     )
     config: AnalysisConfig | None = dataclasses.field(default=None, repr=False)
+    recommendations: list[Recommendation] = dataclasses.field(
+        default_factory=list
+    )
 
     def aspect(self, name: str) -> AspectResult:
         """Returns the result of one aspect.

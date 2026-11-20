@@ -5,6 +5,7 @@ Registers the ``json`` and ``csv`` export formats.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as datetime_module
 import json
 import pathlib
@@ -63,6 +64,9 @@ def report_to_dict(report: models.Report) -> dict[str, Any]:
         "mode": report.mode,
         "groups": [group.label for group in report.groups],
         "diagnoses": [shift.summary for shift in report.diagnoses],
+        "recommendations": [
+            dataclasses.asdict(rec) for rec in report.recommendations
+        ],
         "violations": [violation.message for violation in report.violations],
         "aspects": {
             name: result.summary.to_dicts()

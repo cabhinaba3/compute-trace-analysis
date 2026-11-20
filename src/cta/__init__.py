@@ -39,6 +39,7 @@ _LAZY: dict[str, tuple[str, str]] = {
         "EquivalenceVerdict",
     ),
     "GateViolation": ("cta.models", "GateViolation"),
+    "Recommendation": ("cta.models", "Recommendation"),
     "Report": ("cta.models", "Report"),
     "RunBundle": ("cta.models", "RunBundle"),
     "TraceArtifact": ("cta.models", "TraceArtifact"),
@@ -66,6 +67,7 @@ __all__ = [
     "BottleneckShift",
     "EquivalenceVerdict",
     "GateViolation",
+    "Recommendation",
     "Report",
     "RunBundle",
     "TraceArtifact",
@@ -94,6 +96,7 @@ if TYPE_CHECKING:
     from cta.models import AspectResult
     from cta.models import BottleneckShift
     from cta.models import GateViolation
+    from cta.models import Recommendation
     from cta.models import Report
     from cta.models import RunBundle
     from cta.models import TraceArtifact

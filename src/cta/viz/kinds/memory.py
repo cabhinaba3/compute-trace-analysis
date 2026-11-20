@@ -2,26 +2,18 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 import numpy as np
 import polars as pl
 
+from cta.analysis import copies as copies_by_name
 from cta.viz import context
 from cta.viz import ir
 from cta.viz import registry
 from cta.viz.kinds import chart_helpers
 
-_DIRECTIONS = (
-    ("memset", re.compile(r"memset", re.I)),
-    ("H2D", re.compile(r"htod|h2d", re.I)),
-    ("D2H", re.compile(r"dtoh|d2h", re.I)),
-    ("D2D", re.compile(r"dtod|d2d", re.I)),
-    ("P2P", re.compile(r"ptop|p2p|peer", re.I)),
-    ("H2H", re.compile(r"htoh|h2h", re.I)),
-)
-_ORDER = [name for name, _ in _DIRECTIONS] + ["other"]
+_ORDER = copies_by_name.DIRECTION_NAMES
 _COMMON = {
     "direction": registry.Opt(
         "str",
@@ -48,10 +40,7 @@ def direction_of(name: str) -> str:
         ``H2D``, ``D2H``, ``D2D``, ``P2P``, ``H2H`` or ``memset``; ``other``
         when the name says none of them.
     """
-    for direction, pattern in _DIRECTIONS:
-        if pattern.search(name):
-            return direction
-    return "other"
+    return copies_by_name.direction_of(name)
 
 
 def _copies(ctx: context.DataContext, options: dict[str, Any]) -> pl.DataFrame:

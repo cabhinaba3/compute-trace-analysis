@@ -17,6 +17,40 @@ def _format_cell(value: object) -> str:
     return str(value)
 
 
+def format_recommendations(
+    recommendations: list[models.Recommendation],
+) -> list[str]:
+    """Formats recommendations as Markdown lines, grouped by group label.
+
+    Args:
+        recommendations: The report's recommendations, ranked within groups.
+
+    Returns:
+        The lines, ending with a blank line.
+    """
+    lines: list[str] = []
+    current = None
+    for rec in recommendations:
+        if rec.group_label != current:
+            current = rec.group_label
+            lines.append(f"### {current}")
+        unit = "ms/step" if rec.per == "step" else "ms of the critical path"
+        lines.append(
+            f"{rec.priority}. **{rec.title}**: up to {rec.ceiling_ms:.3g} "
+            f"{unit} ({rec.ceiling_pct:.1f}%, {rec.basis}). {rec.action}"
+        )
+        evidence = ", ".join(
+            f"{name}={value:.4g}"
+            if isinstance(value, float)
+            else f"{name}={value}"
+            for name, value in rec.evidence.items()
+        )
+        if evidence:
+            lines.append(f"   - evidence: {evidence}")
+    lines.append("")
+    return lines
+
+
 def export_markdown(
     report: models.Report, path: pathlib.Path | None = None
 ) -> str:
@@ -46,6 +80,9 @@ def export_markdown(
         for shift in report.diagnoses:
             lines.append(f"- {shift.summary}")
         lines.append("")
+    if report.recommendations:
+        lines.append("## Optimization Advice")
+        lines.extend(format_recommendations(report.recommendations))
     if report.violations:
         lines.append("## Regression Gate Violations")
         for violation in report.violations:

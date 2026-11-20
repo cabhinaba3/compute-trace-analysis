@@ -81,6 +81,15 @@ def render_terminal_report(
         )
         console.print(f"[{color}]• {shift.summary}[/{color}]")
 
+    for rec in report.recommendations:
+        unit = "ms/step" if rec.per == "step" else "ms of the run"
+        console.print(
+            f"[cyan]→ {rec.group_label} #{rec.priority}:[/] {rec.title} "
+            f"(up to {rec.ceiling_ms:.3g} {unit}, {rec.ceiling_pct:.1f}%) "
+            f"{rec.action}",
+            highlight=False,
+        )
+
     for aspect in report.aspects.values():
         summary = aspect.summary
         if summary.is_empty():
