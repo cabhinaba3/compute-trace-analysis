@@ -47,6 +47,86 @@ class DagStats:
     zero_slack_ratio: float
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class DagGraph:
+    """An execution graph as the native solvers take it.
+
+    Vertex ``i`` is row ``i`` of the node table it was built from.
+
+    Attributes:
+        num_nodes: Number of vertices.
+        weights_ns: Time of each vertex: the recorded duration, or a nominal
+            400GbE cost for a communication op without one.
+        is_comm: Whether each vertex is a communication op.
+        is_compute: Whether each vertex is a compute op.
+        size_bytes: Bytes moved by each vertex.
+        edge_src: Source vertex of each edge (an edge can repeat).
+        edge_dst: Destination vertex of each edge.
+    """
+
+    num_nodes: int
+    weights_ns: np.ndarray
+    is_comm: np.ndarray
+    is_compute: np.ndarray
+    size_bytes: np.ndarray
+    edge_src: np.ndarray
+    edge_dst: np.ndarray
+
+
+def prepare_dag(nodes: pl.DataFrame, edges: pl.DataFrame) -> DagGraph:
+    """Turns the node and edge tables into arrays for the native solvers.
+
+    The graph spans all ranks: intra-rank dependency edges plus inter-rank
+    links that pair the k-th send with the k-th receive of each
+    (src_rank, dst_rank, message_tag) channel. Comm ops without a recorded
+    duration are weighted with a nominal 400GbE LogGP cost; a send/recv pair
+    splits that cost between its two ends.
+
+    Args:
+        nodes: One row per op; see ``solve_distributed_dag``.
+        edges: One row per intra-rank dependency; see
+            ``solve_distributed_dag``.
+
+    Returns:
+        The graph; empty for a table without nodes.
+    """
+    num_nodes = nodes.height
+    if num_nodes == 0:
+        empty = np.empty(0)
+        return DagGraph(
+            0,
+            empty.astype(np.float64),
+            empty.astype(np.bool_),
+            empty.astype(np.bool_),
+            empty.astype(np.int64),
+            empty.astype(np.uint32),
+            empty.astype(np.uint32),
+        )
+    # Contiguous global vertex ids 0..N-1 across all ranks.
+    indexed = nodes.with_row_index("vid")
+    edge_src, edge_dst = _global_edges(indexed, edges)
+
+    op_class = indexed["op_class"]
+    is_comm = op_class.str.starts_with("comm_").fill_null(False).to_numpy()
+    is_compute = (op_class == "compute").fill_null(False).to_numpy()
+    is_p2p = (
+        op_class.is_in(["comm_send", "comm_recv"]).fill_null(False).to_numpy()
+    )
+    duration_ns = (
+        indexed["duration_ns"].to_numpy().astype(np.float64, copy=False)
+    )
+    size_bytes = indexed["size_bytes"].to_numpy().astype(np.int64, copy=False)
+    return DagGraph(
+        num_nodes=num_nodes,
+        weights_ns=_node_weights_ns(duration_ns, is_comm, is_p2p, size_bytes),
+        is_comm=np.ascontiguousarray(is_comm),
+        is_compute=np.ascontiguousarray(is_compute),
+        size_bytes=np.ascontiguousarray(size_bytes),
+        edge_src=np.ascontiguousarray(edge_src, dtype=np.uint32),
+        edge_dst=np.ascontiguousarray(edge_dst, dtype=np.uint32),
+    )
+
+
 def solve_distributed_dag(nodes: pl.DataFrame, edges: pl.DataFrame) -> DagStats:
     """Computes the critical path and slack of a multi-rank execution graph.
 
@@ -75,33 +155,18 @@ def solve_distributed_dag(nodes: pl.DataFrame, edges: pl.DataFrame) -> DagStats:
     Returns:
         The graph statistics; all zero for a graph without nodes.
     """
-    num_nodes = nodes.height
+    graph = prepare_dag(nodes, edges)
+    num_nodes = graph.num_nodes
     if num_nodes == 0:
         return DagStats(0, 0, 0, 0.0, 0.0, 0.0, 0, 0.0, 0.0)
 
-    # Contiguous global vertex ids 0..N-1 across all ranks.
-    indexed = nodes.with_row_index("vid")
-    edge_src, edge_dst = _global_edges(indexed, edges)
-
-    op_class = indexed["op_class"]
-    is_comm = op_class.str.starts_with("comm_").fill_null(False).to_numpy()
-    is_compute = (op_class == "compute").fill_null(False).to_numpy()
-    is_p2p = (
-        op_class.is_in(["comm_send", "comm_recv"]).fill_null(False).to_numpy()
-    )
-    duration_ns = (
-        indexed["duration_ns"].to_numpy().astype(np.float64, copy=False)
-    )
-    size_bytes = indexed["size_bytes"].to_numpy().astype(np.int64, copy=False)
-    weights_ns = _node_weights_ns(duration_ns, is_comm, is_p2p, size_bytes)
-
     solved = native.solve_dag(
-        weights_ns,
-        np.ascontiguousarray(is_comm),
-        np.ascontiguousarray(is_compute),
-        np.ascontiguousarray(size_bytes),
-        np.ascontiguousarray(edge_src, dtype=np.uint32),
-        np.ascontiguousarray(edge_dst, dtype=np.uint32),
+        graph.weights_ns,
+        graph.is_comm,
+        graph.is_compute,
+        graph.size_bytes,
+        graph.edge_src,
+        graph.edge_dst,
     )
     if solved["unordered"]:
         warnings.warn(
