@@ -33,6 +33,8 @@ cta compare baseline.json.gz candidate.json.gz --labels Baseline,Candidate --war
 cta compare a b --aspects network,kernels             # pick aspects; `cta list` shows them
 cta compare a b --gate "mean_step_ms:+5%"              # exit code 2 if a metric regresses by more than 5%
 cta profile nsys --analyze -- python train.py          # run a vendor profiler with the flags CTA needs
+cta whatif run.et --speed "comm:2x"                      # predict the run with communication twice as fast (Chakra, GOAL)
+cta whatif run.et                                      # which op families are worth speeding up, and by how much
 ```
 
 Add `--out-dir DIR --export markdown,latex,csv,json,pdf` to write reports, and `--format json` to print one. `cta --help` and `cta <command> --help` list everything else.
