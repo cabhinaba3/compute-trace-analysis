@@ -22,6 +22,7 @@ from cta.cli.commands import plot
 from cta.cli.commands import profile
 from cta.cli.commands import synth
 from cta.cli.commands import verify
+from cta.cli.commands import whatif
 
 COMMANDS = (
     cache,
@@ -33,6 +34,7 @@ COMMANDS = (
     synth,
     inspect,
     catalog,
+    whatif,
 )
 
 app = typer.Typer(
