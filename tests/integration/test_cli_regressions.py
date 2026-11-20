@@ -117,6 +117,39 @@ def test_version_single_sourced() -> None:
     assert codemeta["version"] == cta.__version__
 
 
+def test_list_shows_export_formats_and_plot_kinds() -> None:
+    result = cli_runner.invoke(cli_app.app, ["list"])
+    assert result.exit_code == 0
+    compact_output = re.sub(r"\s+", "", result.output)
+    for token in ("Exportformats", "markdown", "Plotkinds", "breakdown"):
+        assert token in compact_output
+
+
+def test_list_includes_plugin_export_formats_and_plot_kinds() -> None:
+    from cta.export import writers
+    from cta.viz import registry as viz_registry
+
+    @writers.register_writer("zz_test_format")
+    def _writer(report, out_dir):  # noqa: ANN001, ANN202
+        return {}
+
+    @viz_registry.register_plot(
+        "zz_test_kind", group="custom", title="ZZ test kind"
+    )
+    def _kind(ctx, opts):  # noqa: ANN001, ANN202
+        raise NotImplementedError
+
+    try:
+        result = cli_runner.invoke(cli_app.app, ["list"])
+    finally:
+        del writers.WRITERS._items["zz_test_format"]
+        del viz_registry.PLOT_KINDS._items["zz_test_kind"]
+
+    compact_output = re.sub(r"\s+", "", result.output)
+    assert "zz_test_format" in compact_output
+    assert "zz_test_kind" in compact_output
+
+
 def test_list_shows_formats_and_aspects() -> None:
     result = cli_runner.invoke(cli_app.app, ["list"])
     assert result.exit_code == 0

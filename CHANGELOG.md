@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Plugin seams
+- `cta list` now also lists the export formats and plot kinds, including those a plugin registers. It showed only trace formats and aspects, so two of the four plugin registries could not be inspected.
+
 ### Restructured package (breaking)
 - The package lives in `src/cta`, and `cta.core` is gone. The data model is `cta.models`, the registries `cta.plugins`, the SDK entry points `cta.api`, the engine `cta.engine`, the gates `cta.gating`, the shared table schemas `cta.table_schemas`. Discovery, manifests and the cache are in `cta.ingest`; alignment, intervals, DAGs, statistics, step slicing and network arithmetic in `cta.analysis`. `cta.exporters` is `cta.export`, `cta.profile` is `cta.profiling`, and the CLI commands are in `cta.cli.commands`, one module each. Top-level names such as `cta.compare` stay where they were.
 - Renamed classes: `CompareConfig` is `AnalysisConfig`, `ComparisonReport` is `Report`, `RegressionViolation` is `GateViolation`, `ComparisonAspect` is `cta.plugins.Aspect`.

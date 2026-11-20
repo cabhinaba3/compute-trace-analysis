@@ -1,4 +1,4 @@
-"""The ``list`` command: lists the registered trace formats and aspects."""
+"""The ``list`` command: lists what the four plugin registries hold."""
 
 from __future__ import annotations
 
@@ -9,11 +9,13 @@ from cta.cli import output
 
 
 def list_command() -> None:
-    """Lists the registered trace formats and comparison aspects.
+    """Lists the registered trace formats, aspects, export formats and plots.
 
     Plugins are included.
     """
     from cta import plugins
+    from cta.export import writers
+    from cta.viz import registry as viz_registry
 
     formats_table = table.Table(title="Trace formats")
     formats_table.add_column("format")
@@ -30,6 +32,17 @@ def list_command() -> None:
             name, aspect.title, f"{mode}: {', '.join(aspect.required_formats)}"
         )
     output.console.print(aspects_table)
+    export_table = table.Table(title="Export formats (--export)")
+    export_table.add_column("format")
+    for name in sorted(writers.WRITERS):
+        export_table.add_row(name)
+    output.console.print(export_table)
+    plots_table = table.Table(title="Plot kinds (cta plot --kind)")
+    for column in ("kind", "group", "title"):
+        plots_table.add_column(column)
+    for kind in viz_registry.kind_catalog():
+        plots_table.add_row(kind.name, kind.group, kind.title)
+    output.console.print(plots_table)
 
 
 def register(app: typer.Typer) -> None:
