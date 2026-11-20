@@ -35,6 +35,7 @@ cta compare a b --gate "mean_step_ms:+5%"              # exit code 2 if a metric
 cta profile nsys --analyze -- python train.py          # run a vendor profiler with the flags CTA needs
 cta whatif run.et --speed "comm:2x"                      # predict the run with communication twice as fast (Chakra, GOAL)
 cta whatif run.et                                      # which op families are worth speeding up, and by how much
+cta whatif run.goal --interconnect "gpus_per_node=8,intra=1us:300GB/s,inter=5us:50GB/s,algo=ring"   # price the communication on another network
 ```
 
 Add `--out-dir DIR --export markdown,latex,csv,json,pdf` to write reports, and `--format json` to print one. `cta --help` and `cta <command> --help` list everything else.
