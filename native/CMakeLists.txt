@@ -36,3 +36,6 @@ add_subdirectory(src/analysis)  # DAG solver and interval helpers
 add_subdirectory(src/readers)   # trace readers
 add_subdirectory(src/synth)     # synthetic trace generators
 add_subdirectory(src/bindings)  # the Python-visible functions
+
+# No fused multiply-add: what-if answers must not depend on the CPU.
+set_source_files_properties(src/analysis/whatif.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)

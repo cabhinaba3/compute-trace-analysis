@@ -70,6 +70,30 @@ def nesting_parents(starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
     """Returns the enclosing range of each range, -1 for none."""
     ...
 
+class DagPlan:
+    """An execution graph prepared for repeated what-if solving."""
+
+    num_vertices: int
+    num_edges: int
+    unordered: int
+
+    def __init__(
+        self, num_vertices: int, edge_src: np.ndarray, edge_dst: np.ndarray
+    ) -> None: ...
+    def solve(
+        self,
+        weights: np.ndarray,
+        is_comm: np.ndarray,
+        is_compute: np.ndarray,
+        size_bytes: np.ndarray,
+        group: np.ndarray,
+        scale: np.ndarray,
+        threads: int = 0,
+        memory_budget_bytes: int = 0,
+    ) -> dict[str, Any]:
+        """Solves one scenario per row of ``scale`` (scenarios x groups)."""
+        ...
+
 # Synthetic trace writers.
 
 def write_kineto_trace(

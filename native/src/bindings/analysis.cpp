@@ -2,11 +2,15 @@
 #include <nanobind/ndarray.h>
 
 #include <cstdint>
+#include <memory>
+#include <new>
 #include <stdexcept>
+#include <utility>
 
 #include "analysis/dag.hpp"
 #include "analysis/dag_edges.hpp"
 #include "analysis/intervals.hpp"
+#include "analysis/whatif.hpp"
 #include "bindings/bindings.hpp"
 #include "bindings/convert.hpp"
 
@@ -93,6 +97,60 @@ void bind_analysis(nb::module_& m) {
       "rank"_a, "node_id"_a, "is_send"_a, "is_recv"_a, "src_rank"_a, "dst_rank"_a, "tag"_a, "e_rank"_a, "e_src"_a,
       "e_dst"_a, "threads"_a = 0,
       "Vertex-id edges of an execution graph from its per-rank dependencies and its sends and receives.");
+
+  nb::class_<cta::analysis::DagPlan>(m, "DagPlan",
+                           "An execution graph prepared for repeated what-if solving; see analysis/whatif.hpp.")
+      .def(
+          "__init__",
+          [](cta::analysis::DagPlan* self, std::size_t num_vertices, Column<std::uint32_t> edge_src,
+             Column<std::uint32_t> edge_dst) {
+            if (edge_src.shape(0) != edge_dst.shape(0))
+              throw std::invalid_argument("edge_src and edge_dst must have the same length");
+            std::unique_ptr<cta::analysis::DagPlan> built;
+            {
+              nb::gil_scoped_release release;
+              built = std::make_unique<cta::analysis::DagPlan>(num_vertices, edge_src.data(), edge_dst.data(),
+                                                     edge_src.shape(0));
+            }
+            new (self) cta::analysis::DagPlan(std::move(*built));
+          },
+          "num_vertices"_a, "edge_src"_a, "edge_dst"_a)
+      .def_prop_ro("num_vertices", &cta::analysis::DagPlan::num_vertices)
+      .def_prop_ro("num_edges", &cta::analysis::DagPlan::num_edges)
+      .def_prop_ro("unordered", &cta::analysis::DagPlan::unordered)
+      .def(
+          "solve",
+          [](const cta::analysis::DagPlan& plan, Column<double> weights, Column<bool> is_comm, Column<bool> is_compute,
+             Column<std::int64_t> size_bytes, Column<std::uint32_t> group,
+             nb::ndarray<const double, nb::ndim<2>, nb::c_contig, nb::device::cpu> scale, int threads,
+             std::uint64_t memory_budget_bytes) {
+            const std::size_t n = plan.num_vertices();
+            if (weights.shape(0) != n || is_comm.shape(0) != n || is_compute.shape(0) != n ||
+                size_bytes.shape(0) != n || group.shape(0) != n)
+              throw std::invalid_argument("per-vertex arrays must have one entry per vertex of the plan");
+            const std::size_t scenarios = scale.shape(0), groups = scale.shape(1);
+            cta::analysis::WhatIfResult r;
+            {
+              nb::gil_scoped_release release;
+              r = cta::analysis::solve_scenarios(plan, weights.data(), is_comm.data(), is_compute.data(),
+                                       size_bytes.data(), group.data(), groups, scale.data(), scenarios, threads,
+                                       memory_budget_bytes);
+            }
+            nb::dict d;
+            d["makespan"] = to_numpy(std::move(r.makespan));
+            d["depth"] = to_numpy(std::move(r.depth));
+            d["critical_compute"] = to_numpy(std::move(r.critical_compute));
+            d["critical_comm"] = to_numpy(std::move(r.critical_comm));
+            d["critical_comm_bytes"] = to_numpy(std::move(r.critical_comm_bytes));
+            d["critical_by_group"] = to_numpy(std::move(r.critical_by_group));  // scenarios * groups, row-major
+            d["lanes"] = r.lanes;
+            d["workers"] = r.workers;
+            d["bytes_per_worker"] = r.bytes_per_worker;
+            return d;
+          },
+          "weights"_a, "is_comm"_a, "is_compute"_a, "size_bytes"_a, "group"_a, "scale"_a, "threads"_a = 0,
+          "memory_budget_bytes"_a = 0,
+          "Solves one scenario per row of `scale` (scenarios x groups multipliers); see analysis/whatif.hpp.");
 }
 
 }  // namespace cta::bindings
