@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from cta import _device
 from cta import models
 from cta.ingest import discovery
 
@@ -75,6 +76,8 @@ def _streaming_options(
     ):
         if key in section:
             options[key] = _flag(section, key)
+    if "accelerator" in section:
+        options["accelerator"] = _device.check(str(section["accelerator"]))
     if section.get("scratch_dir"):
         options["scratch_dir"] = base_dir / str(section["scratch_dir"])
     return options

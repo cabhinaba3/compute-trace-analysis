@@ -191,6 +191,16 @@ def analyze_command(
             help="Directory for temporary out-of-core scratch files.",
         ),
     ] = None,
+    accelerator: Annotated[
+        str,
+        typer.Option(
+            "--accelerator",
+            help=(
+                "Where to run: auto, cpu, cuda or metal. A GPU that is "
+                "missing falls back to the CPU."
+            ),
+        ),
+    ] = "auto",
 ) -> None:
     """Analyses one trace, a glob, or a directory holding a run bundle."""
     from cta import api
@@ -272,6 +282,7 @@ def analyze_command(
             extract_critical_path_ops=critical_path_ops,
             delay_attribution=delay_attribution,
             scratch_dir=scratch_dir,
+            accelerator=accelerator,
         )
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         output.print_error(exc)

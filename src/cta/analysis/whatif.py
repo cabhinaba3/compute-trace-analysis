@@ -38,6 +38,7 @@ import warnings
 import numpy as np
 import polars as pl
 
+from cta import _device
 from cta import _native as native
 from cta.analysis import alignment
 from cta.analysis import dag
@@ -661,6 +662,9 @@ class WhatIfRun:
         solve_seconds: Time of the native solve.
         lanes: Scenarios that shared one walk over the graph.
         workers: Threads used.
+        device: Where the solve ran: ``cpu``, ``cuda`` or ``metal``.
+        device_note: Why the CPU ran when a GPU was asked for, or a GPU
+            error that sent the solve back to the CPU; empty otherwise.
     """
 
     table: pl.DataFrame
@@ -669,6 +673,8 @@ class WhatIfRun:
     solve_seconds: float
     lanes: int
     workers: int
+    device: str = "cpu"
+    device_note: str = ""
 
 
 def _solve(
@@ -679,9 +685,14 @@ def _solve(
     group_labels: tuple[str, ...],
     threads: int,
     memory_budget_bytes: int,
+    accelerator: str | None = None,
 ) -> WhatIfRun:
     """Solves the scenarios in the rows of ``scale`` over ``group``."""
     graph = model.graph
+    chosen = _device.resolve(
+        accelerator if accelerator is not None else _device.requested(),
+        work=int(model.plan.num_vertices) * len(scale),
+    )
     start = time.perf_counter()
     solved = model.plan.solve(
         graph.weights_ns,
@@ -692,6 +703,7 @@ def _solve(
         np.ascontiguousarray(scale, dtype=np.float64),
         threads,
         memory_budget_bytes,
+        device=chosen.name,
     )
     seconds = time.perf_counter() - start
     makespan = solved["makespan"]
@@ -720,6 +732,8 @@ def _solve(
         seconds,
         solved["lanes"],
         solved["workers"],
+        str(solved.get("device", "cpu")),
+        str(solved.get("device_note", "") or chosen.note),
     )
 
 
@@ -1425,6 +1439,7 @@ def run_scenarios(
     *,
     threads: int = 0,
     memory_budget_bytes: int = 0,
+    accelerator: str | None = None,
 ) -> WhatIfRun:
     """Solves scenarios of a graph, each against the recorded run.
 
@@ -1440,6 +1455,10 @@ def run_scenarios(
         memory_budget_bytes: Memory the solve may use; 0 uses about 60% of
             what the machine has free. Each worker needs 12 bytes per op per
             lane in memory, or O(block_vertices) in streaming mode.
+        accelerator: ``auto``, ``cpu``, ``cuda`` or ``metal``; None takes
+            the one set for the analysis. A GPU that is missing, or that
+            fails, gives the CPU's answer. Streaming models always run on
+            the CPU.
 
     Returns:
         The results, the unchanged graph first.
@@ -1506,7 +1525,16 @@ def run_scenarios(
             ) & np.uint64(1)
             scale[row, bits.astype(np.bool_)] *= multiplier
     labels = ["baseline"] + [scenario.label for scenario in scenarios]
-    return _solve(model, group, scale, labels, (), threads, memory_budget_bytes)
+    return _solve(
+        model,
+        group,
+        scale,
+        labels,
+        (),
+        threads,
+        memory_budget_bytes,
+        accelerator,
+    )
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -1586,6 +1614,7 @@ def sweep(
     max_groups: int = 48,
     threads: int = 0,
     memory_budget_bytes: int = 0,
+    accelerator: str | None = None,
 ) -> SweepResult:
     """Speeds up each group of ops in turn and measures the whole run.
 
@@ -1600,6 +1629,8 @@ def sweep(
         threads: Worker threads; 0 uses every usable CPU.
         memory_budget_bytes: Memory the solve may use; 0 uses about 60% of
             what the machine has free.
+        accelerator: ``auto``, ``cpu``, ``cuda`` or ``metal``; None takes
+            the one set for the analysis.
 
     Returns:
         The sweep.
@@ -1639,6 +1670,7 @@ def sweep(
         tuple(group_labels),
         threads,
         memory_budget_bytes,
+        accelerator,
     )
     makespan = run.table["makespan_ns"].to_numpy()
     baseline = float(makespan[0])

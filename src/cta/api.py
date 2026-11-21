@@ -50,6 +50,7 @@ def _config(
     delay_attribution: bool = False,
     scratch_dir: str | pathlib.Path | None = None,
     parquet_bypass_bytes: int = 2 * 1024**3,
+    accelerator: str = "auto",
 ) -> models.AnalysisConfig:
     """Builds the config; empty sequences mean "all", like None."""
     return models.AnalysisConfig(
@@ -79,6 +80,7 @@ def _config(
         delay_attribution=delay_attribution,
         scratch_dir=pathlib.Path(scratch_dir) if scratch_dir else None,
         parquet_bypass_bytes=parquet_bypass_bytes,
+        accelerator=accelerator,
     )
 
 
@@ -128,6 +130,7 @@ def analyze(
     delay_attribution: bool = False,
     scratch_dir: str | pathlib.Path | None = None,
     parquet_bypass_bytes: int = 2 * 1024**3,
+    accelerator: str = "auto",
 ) -> models.Report:
     """Analyses a single trace, run bundle directory or multi-trial group.
 
@@ -165,6 +168,8 @@ def analyze(
         delay_attribution: Enable Scalasca backward wait-state attribution.
         scratch_dir: Optional directory for out-of-core scratch files.
         parquet_bypass_bytes: Raw size threshold for Parquet bypass in auto.
+        accelerator: ``auto``, ``cpu``, ``cuda`` or ``metal``; the CPU is the
+            fallback when a GPU is missing (see ``cta._device``).
 
     Returns:
         The report, in ``"single"`` mode.
@@ -200,6 +205,7 @@ def analyze(
         delay_attribution=delay_attribution,
         scratch_dir=scratch_dir,
         parquet_bypass_bytes=parquet_bypass_bytes,
+        accelerator=accelerator,
     )
     return engine.run_comparison((group,), config)
 
@@ -235,6 +241,7 @@ def compare(
     delay_attribution: bool = False,
     scratch_dir: str | pathlib.Path | None = None,
     parquet_bypass_bytes: int = 2 * 1024**3,
+    accelerator: str = "auto",
 ) -> models.Report:
     """Compares a baseline with one or more candidates.
 
@@ -278,6 +285,8 @@ def compare(
         delay_attribution: Enable Scalasca backward wait-state attribution.
         scratch_dir: Optional directory for out-of-core scratch files.
         parquet_bypass_bytes: Raw size threshold for Parquet bypass in auto.
+        accelerator: ``auto``, ``cpu``, ``cuda`` or ``metal``; the CPU is the
+            fallback when a GPU is missing (see ``cta._device``).
 
     Returns:
         The report, in ``"pair"`` or ``"multi"`` mode.
@@ -322,6 +331,7 @@ def compare(
         delay_attribution=delay_attribution,
         scratch_dir=scratch_dir,
         parquet_bypass_bytes=parquet_bypass_bytes,
+        accelerator=accelerator,
     )
     return engine.run_comparison(_with_distinct_labels(groups), config)
 

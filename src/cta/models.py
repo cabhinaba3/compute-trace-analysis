@@ -124,6 +124,11 @@ class AnalysisConfig:
         delay_attribution: Run Scalasca backward wait-state & delay root-cause
             attribution (IPDPS '12) during Pass 2.
         scratch_dir: Optional directory for out-of-core scratch files.
+        accelerator: Where the analysis runs: ``"auto"`` (a GPU when there
+            is one and the job is big enough), ``"cpu"``, ``"cuda"`` or
+            ``"metal"``.
+            The CPU is the fallback for a device that is missing (see
+            ``cta._device``).
         parquet_bypass_bytes: Raw artifact size threshold above which
             ``streaming="auto"`` bypasses full ``nodes``/``edges`` Parquet
             materialization in favor of ``.cta_graph`` caching.
@@ -158,6 +163,7 @@ class AnalysisConfig:
     delay_attribution: bool = False
     scratch_dir: pathlib.Path | None = None
     parquet_bypass_bytes: int = 2 * 1024**3
+    accelerator: str = "auto"
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

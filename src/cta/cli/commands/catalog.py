@@ -13,6 +13,7 @@ def list_command() -> None:
 
     Plugins are included.
     """
+    from cta import _device
     from cta import plugins
     from cta.export import writers
     from cta.viz import registry as viz_registry
@@ -37,6 +38,15 @@ def list_command() -> None:
     for name in sorted(writers.WRITERS):
         export_table.add_row(name)
     output.console.print(export_table)
+    devices_table = table.Table(title="Devices (--device)")
+    devices_table.add_column("device")
+    devices_table.add_column("available")
+    devices_table.add_row("cpu", "always")
+    for name in ("cuda", "metal"):
+        devices_table.add_row(
+            name, "yes" if name in _device.backends() else "no"
+        )
+    output.console.print(devices_table)
     plots_table = table.Table(title="Plot kinds (cta plot --kind)")
     for column in ("kind", "group", "title"):
         plots_table.add_column(column)

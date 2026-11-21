@@ -133,6 +133,16 @@ def whatif_command(
             help="Directory for temporary streaming what-if scratch files.",
         ),
     ] = None,
+    accelerator: Annotated[
+        str,
+        typer.Option(
+            "--accelerator",
+            help=(
+                "Where to run: auto, cpu, cuda or metal. A GPU that is "
+                "missing falls back to the CPU."
+            ),
+        ),
+    ] = "auto",
 ) -> None:
     """Predicts how much faster a run gets if some of its ops get faster.
 
@@ -199,7 +209,11 @@ def whatif_command(
                 else None,
             )
         run = whatif.run_scenarios(
-            model, scenarios, threads=threads, memory_budget_bytes=budget
+            model,
+            scenarios,
+            threads=threads,
+            memory_budget_bytes=budget,
+            accelerator=accelerator,
         )
         result = (
             whatif.sweep(
@@ -209,6 +223,7 @@ def whatif_command(
                 max_groups=top,
                 threads=threads,
                 memory_budget_bytes=budget,
+                accelerator=accelerator,
             )
             if sweep or not scenarios
             else None

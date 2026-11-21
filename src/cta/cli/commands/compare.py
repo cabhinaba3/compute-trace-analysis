@@ -234,6 +234,16 @@ def compare_command(
             help="Run Scalasca backward wait-state & delay attribution.",
         ),
     ] = False,
+    accelerator: Annotated[
+        str,
+        typer.Option(
+            "--accelerator",
+            help=(
+                "Where to run: auto, cpu, cuda or metal. A GPU that is "
+                "missing falls back to the CPU."
+            ),
+        ),
+    ] = "auto",
     scratch_dir: Annotated[
         pathlib.Path | None,
         typer.Option(
@@ -243,6 +253,7 @@ def compare_command(
     ] = None,
 ) -> None:
     """Compares two traces or bundles (baseline and candidate), or N of them."""
+    from cta import _device
     from cta import api
     from cta import engine
     from cta import gating
@@ -301,6 +312,11 @@ def compare_command(
                 ),
                 "delay_attribution": True if delay_attribution else None,
                 "scratch_dir": scratch_dir,
+                "accelerator": (
+                    _device.check(accelerator)
+                    if accelerator != "auto"
+                    else None
+                ),
             }
             for field_name, value in overrides.items():
                 if value is not None:
@@ -346,6 +362,7 @@ def compare_command(
                 extract_critical_path_ops=critical_path_ops,
                 delay_attribution=delay_attribution,
                 scratch_dir=scratch_dir,
+                accelerator=accelerator,
             )
     except (ValueError, FileNotFoundError, RuntimeError) as exc:
         # For example an unknown gate metric, no common formats or

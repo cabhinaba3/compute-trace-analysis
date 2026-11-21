@@ -10,6 +10,7 @@ from collections.abc import Sequence
 import pathlib
 from typing import Literal
 
+from cta import _device
 from cta import advisor
 from cta import diagnosis
 from cta import gating
@@ -168,10 +169,11 @@ def run_comparison(
             )
 
     results: dict[str, models.AspectResult] = {}
-    for name in aspect_names:
-        result = plugins.ASPECTS[name].run(group_tuple, tables, config)
-        if not result.summary.is_empty() or result.details:
-            results[name] = result
+    with _device.use(config.accelerator):
+        for name in aspect_names:
+            result = plugins.ASPECTS[name].run(group_tuple, tables, config)
+            if not result.summary.is_empty() or result.details:
+                results[name] = result
 
     mode: Literal["single", "pair", "multi"]
     if len(group_tuple) == 1:
