@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### macOS support
+- The package builds and passes its tests on macOS arm64 as well as Linux x86_64: `configure.sh` checks a Mac (Homebrew: `brew install cmake simdjson protobuf`), `environment.yml` uses `cxx-compiler` instead of `gxx_linux-64`, the classifiers list macOS, CI runs on `macos-latest` too, and the benchmark scripts read `ru_maxrss` in the unit the platform uses (KiB on Linux, bytes on macOS) and `ladder.py` runs without `os.sched_getaffinity`.
+
 ### Interconnect model for what-if (`--interconnect`)
 - New `cta.analysis.interconnect`: an alpha-beta model of the network. A link is a latency and a bandwidth; `intra` links the GPUs of a node (`gpus_per_node` of them) and `inter` links nodes. Collectives are priced with the usual ring and binomial-tree formulas (allreduce, allgather, reduce-scatter, all-to-all, broadcast, reduce, barrier), `algo=auto` takes the cheaper per op, and `algo=flat` is the single-transfer cost the solver has always used. A transfer between two ranks uses the link between their nodes. On several nodes a ring crosses between nodes `k` times per `n` steps and runs at the `inter` bandwidth. The formulas are checked against their closed forms in the tests.
 - `cta whatif --interconnect SPEC [--baseline-interconnect SPEC]`, `compare --interconnect ...`, `AnalysisConfig.interconnect` and `baseline_interconnect` (also the manifest keys and the `interconnect` arguments of `cta.analyze` and `cta.compare`): the `whatif` aspect prices the baseline's communication on the new interconnect before it applies `--predict` and scores the result against the measured candidates. The baseline's own `whatif_makespan_us` stays the measured one. A spec is `key=value` pairs, for example `gpus_per_node=8,intra=1us:300GB/s,inter=5us:50GB/s,algo=ring,group.ALL_REDUCE=64`.

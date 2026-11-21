@@ -6,7 +6,7 @@ Supported inputs: Chakra `.et`, GOAL `.goal`/`.bin`, Nsight Systems (`.sqlite`, 
 
 ## Install
 
-Linux (x86_64) and Python 3.12 or newer. The install compiles a C++ extension, so it needs a C++20 compiler and the zlib, SQLite, Protobuf (with `protoc`) and simdjson development libraries.
+Linux (x86_64) or macOS (Apple silicon; Homebrew: `brew install cmake simdjson protobuf`) and Python 3.12 or newer. The install compiles a C++ extension, so it needs a C++20 compiler and the zlib, SQLite, Protobuf (with `protoc`) and simdjson development libraries.
 
 ```bash
 git clone --recurse-submodules https://github.com/cabhinaba3/compute-trace-analysis.git

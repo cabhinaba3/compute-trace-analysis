@@ -12,7 +12,7 @@ channels:
   - conda-forge
 dependencies:
   - python=3.12
-  - gxx_linux-64
+  - cxx-compiler   # g++ on Linux, clang++ on macOS
   - cmake
   - ninja
   - zlib

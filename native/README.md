@@ -2,7 +2,7 @@
 
 The C++ behind `cta._native`. `pip install .` builds it (a hatch hook in
 `hatch_build.py` runs CMake with nanobind) and puts `src/cta/_native*.so` next
-to the Python code. Linux x86_64 only; a C++20 compiler plus zlib, SQLite,
+to the Python code. Linux x86_64 and macOS arm64; a C++20 compiler plus zlib, SQLite,
 Protobuf and simdjson development packages are needed.
 
 Every `#include` names its file from `src/`, for example

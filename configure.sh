@@ -19,8 +19,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ "$(uname -s)" != "Linux" ]; then
-  echo "cta builds its C++ extension on Linux only; this is $(uname -s). Nothing to check."
+OS="$(uname -s)"
+if [ "$OS" != "Linux" ] && [ "$OS" != "Darwin" ]; then
+  echo "cta builds its C++ extension on Linux and macOS; this is $OS. Nothing to check."
   exit 0
 fi
 
@@ -61,12 +62,13 @@ CXX_BIN="${CXX:-}"; [ -n "$CXX_BIN" ] && have "${CXX_BIN%% *}" || CXX_BIN=""
 [ -n "$CXX_BIN" ] || for c in g++ c++ clang++; do have "$c" && { CXX_BIN="$c"; break; }; done
 if [ -n "$CXX_BIN" ]; then
   if printf 'int main(){return 0;}\n' | $CXX_BIN -std=c++20 -x c++ - -o /dev/null 2>/dev/null; then
-    status "C++20 compiler" ok "$($CXX_BIN --version | head -1) (tested with g++ 13 and 15)"
+    status "C++20 compiler" ok "$($CXX_BIN --version | head -1) (tested with g++ 13 and 15, and Apple clang)"
   else
     status "C++20 compiler" missing "$CXX_BIN cannot compile -std=c++20"; need "c++20" "g++"
   fi
 else
   status "C++20 compiler" missing; need "c++20" "g++"
+  [ "$OS" = Darwin ] && echo "  (macOS: install the compiler with: xcode-select --install)"
 fi
 
 # CMake and Ninja: pip downloads its own for a normal install, so they only matter without build isolation.
@@ -85,6 +87,11 @@ fi
 # --- native libraries ---------------------------------------------------------
 echo; echo "Native libraries"
 PREFIXES="${CMAKE_PREFIX_PATH:-}"
+# Homebrew keeps its libraries outside the default search paths.
+if [ "$OS" = Darwin ]; then
+  BREW_PREFIX="$( (have brew && brew --prefix) 2>/dev/null || true)"
+  [ -n "$BREW_PREFIX" ] && PREFIXES="${PREFIXES:+$PREFIXES:}$BREW_PREFIX"
+fi
 [ -n "${CONDA_PREFIX:-}" ] && PREFIXES="${CONDA_PREFIX}${PREFIXES:+:$PREFIXES}"
 PROBE_OUT=""
 if have cmake; then
@@ -105,7 +112,7 @@ CM
   PROBE_OUT="$(cmake -S "$PROBE_DIR" -B "$PROBE_DIR/b" ${PREFIXES:+-DCMAKE_PREFIX_PATH="$PREFIXES"} 2>&1 | grep 'PROBE' | head -1)"
   rm -rf "$PROBE_DIR"
 fi
-probe() { printf '%s' "$PROBE_OUT" | sed -n "s/.*PROBE.*\b$1=\([^ ]*\).*/\1/p"; }
+probe() { printf '%s' "$PROBE_OUT" | sed -n "s/.*PROBE.* $1=\([^ ]*\).*/\1/p"; }
 header_found() {  # fallback when cmake is absent: look for a header
   for dir in /usr/include /usr/local/include ${PREFIXES//:/ }; do
     [ -e "$dir/$1" ] || [ -e "$dir/include/$1" ] && return 0
@@ -152,12 +159,12 @@ if [ -f "$CACHE" ]; then
   done
   if [ "$gone" = 1 ]; then status "build/ cache" stale "an earlier build left paths that are gone; the next install resets it"; else status "build/ cache" ok; fi
 fi
-JOBS="$(nproc 2>/dev/null || echo 4)"
+JOBS="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 CAN_SUDO=0
 if [ "$(id -u)" = 0 ]; then CAN_SUDO=1; elif have sudo && sudo -n true 2>/dev/null; then CAN_SUDO=1; fi
 CONDA_BIN=""; for c in mamba micromamba conda; do have "$c" && { CONDA_BIN="$c"; break; }; done
-PM=""; for c in apt-get dnf zypper; do have "$c" && { PM="$c"; break; }; done
+PM=""; for c in apt-get dnf zypper brew; do have "$c" && { PM="$c"; break; }; done
 
 status "root or sudo" "$([ $CAN_SUDO = 1 ] && echo ok || echo none)" "$([ $CAN_SUDO = 1 ] || echo 'needed only for system packages')"
 status "conda / mamba" "$([ -n "$CONDA_BIN" ] && echo ok || echo none)" "${CONDA_BIN}"
@@ -183,6 +190,9 @@ elif [ "$PM" = dnf ]; then
   system_cmd="sudo dnf install -y gcc-c++ zlib-devel sqlite-devel simdjson-devel protobuf-devel protobuf-compiler python3-devel"
 elif [ "$PM" = zypper ]; then
   system_cmd="sudo zypper install -y gcc-c++ zlib-devel sqlite3-devel simdjson-devel protobuf-devel python3-devel"
+elif [ "$PM" = brew ]; then
+  # zlib and sqlite come with the macOS SDK; the compiler comes from `xcode-select --install`.
+  system_cmd="brew install cmake simdjson protobuf"
 fi
 
 echo "Options, easiest first for this machine:"
@@ -195,7 +205,13 @@ conda_option() {
     echo "       $CONDA_BIN env create -f environment.yml    (or ./configure.sh --run conda)"
   else
     echo "     No conda here. micromamba is one small download and needs no root:"
-    echo "       curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj bin/micromamba"
+    case "$OS-$(uname -m)" in
+      Darwin-arm64) mamba_platform=osx-arm64 ;;
+      Darwin-*) mamba_platform=osx-64 ;;
+      *-aarch64) mamba_platform=linux-aarch64 ;;
+      *) mamba_platform=linux-64 ;;
+    esac
+    echo "       curl -Ls https://micro.mamba.pm/api/micromamba/$mamba_platform/latest | tar -xvj bin/micromamba"
     echo "       ./bin/micromamba create -y -f environment.yml"
   fi
   echo "       conda activate cta     (micromamba: micromamba activate cta)"
@@ -208,14 +224,18 @@ system_option() {
     echo "  $n. system packages: this distribution is not covered; install a C++20 compiler and the development"
     echo "     packages for zlib, sqlite3, simdjson, protobuf (with protoc) and Python."
   else
-    echo "  $n. system packages (needs root$([ $CAN_SUDO = 1 ] || echo ", which you do not have"))"
+    if [ "$PM" = brew ]; then
+      echo "  $n. Homebrew packages (no root)"
+    else
+      echo "  $n. system packages (needs root$([ $CAN_SUDO = 1 ] || echo ", which you do not have"))"
+    fi
     echo "       $system_cmd    (or ./configure.sh --run system)"
     echo "       CTA_BUILD_JOBS=$JOBS pip install -e \".[dev]\""
   fi
   echo
   n=$((n + 1))
 }
-if [ -n "$CONDA_BIN" ] || [ $CAN_SUDO = 0 ]; then conda_option; system_option; else system_option; conda_option; fi
+if [ -n "$CONDA_BIN" ] || { [ $CAN_SUDO = 0 ] && [ "$PM" != brew ]; }; then conda_option; system_option; else system_option; conda_option; fi
 echo "  $n. ask an administrator, or on a cluster load the modules (gcc, cmake, zlib, sqlite, simdjson, protobuf),"
 echo "     then run ./configure.sh again. Libraries in a non-standard place: CTA_PREFIX_PATH=/path/a:/path/b"
 echo
@@ -235,7 +255,7 @@ case "$RUN" in
     confirm "$cmd" && $cmd ;;
   system)
     [ -n "$system_cmd" ] || { echo "no known package manager"; exit 1; }
-    [ $CAN_SUDO = 1 ] || { echo "no root or passwordless sudo"; exit 1; }
+    [ "$PM" = brew ] || [ $CAN_SUDO = 1 ] || { echo "no root or passwordless sudo"; exit 1; }
     confirm "$system_cmd" && $system_cmd ;;
   *) echo "--run takes conda or system"; exit 2 ;;
 esac
