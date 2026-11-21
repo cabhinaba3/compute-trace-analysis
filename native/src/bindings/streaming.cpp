@@ -1,17 +1,22 @@
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
 
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "bindings/bindings.hpp"
 #include "bindings/convert.hpp"
 #include "streaming/batch.hpp"
+#include "streaming/engines/engine.hpp"
+#include "streaming/engines/frontier/frontier_engine.hpp"
 #include "streaming/engines/online_agg/online_agg.hpp"
 #include "streaming/sketches/quantile.hpp"
 #include "streaming/sources/source.hpp"
@@ -28,6 +33,35 @@ streaming::GoalSemantics parse_goal_semantics(const std::string& text) {
   if (text == "cta_legacy" || text == "legacy") return streaming::GoalSemantics::kCtaLegacy;
   if (text == "strict") return streaming::GoalSemantics::kStrict;
   throw std::invalid_argument("goal_semantics must be 'cta_legacy' or 'strict', got '" + text + "'");
+}
+
+streaming::CollectiveSync parse_collective_sync(const std::string& text) {
+  if (text == "none") return streaming::CollectiveSync::kNone;
+  if (text == "barrier") return streaming::CollectiveSync::kBarrier;
+  throw std::invalid_argument("collective_sync must be 'none' or 'barrier', got '" + text + "'");
+}
+
+streaming::engines::DagSolveOptions build_dag_options(
+    const std::string& engine, std::uint64_t memory_budget_bytes, const std::string& goal_semantics,
+    const std::string& collective_sync, std::uint32_t world_size_hint,
+    const std::unordered_map<std::string, std::uint32_t>& coll_group_sizes, std::size_t window_size,
+    std::size_t max_lookahead, bool fail_on_cycle, bool extract_critical_path_ops, bool delay_attribution,
+    const std::string& scratch_dir, std::size_t chunk_nodes) {
+  streaming::engines::DagSolveOptions opts;
+  opts.engine = engine;
+  opts.memory_budget_bytes = memory_budget_bytes;
+  opts.goal_semantics = parse_goal_semantics(goal_semantics);
+  opts.collective_sync = parse_collective_sync(collective_sync);
+  opts.world_size_hint = world_size_hint;
+  opts.coll_group_sizes = coll_group_sizes;
+  opts.window_size = window_size > 0 ? window_size : 262144;
+  opts.max_lookahead = max_lookahead > 0 ? max_lookahead : 65536;
+  opts.fail_on_cycle = fail_on_cycle;
+  opts.extract_critical_path_ops = extract_critical_path_ops;
+  opts.delay_attribution = delay_attribution;
+  opts.scratch_dir = scratch_dir;
+  opts.chunk_nodes = chunk_nodes > 0 ? chunk_nodes : 524288;
+  return opts;
 }
 
 class PyGraphStream {
@@ -223,6 +257,74 @@ void bind_streaming(nb::module_& m) {
       .def_prop_ro("sketch_name",
                    [](const streaming::sketches::HybridQuantile& self) { return std::string(self.sketch_name()); })
       .def_prop_ro("error_bound", &streaming::sketches::HybridQuantile::error_bound);
+
+  m.def("available_graph_engines", &streaming::engines::available_graph_engines,
+        "Returns the registered pluggable streaming/out-of-core DAG engine names.");
+
+  m.def(
+      "solve_dag_stream",
+      [](PyGraphStream& stream, const std::string& engine, std::uint64_t memory_budget_bytes,
+         const std::string& goal_semantics, const std::string& collective_sync, std::uint32_t world_size_hint,
+         const std::unordered_map<std::string, std::uint32_t>& coll_group_sizes, std::size_t window_size,
+         std::size_t max_lookahead, bool fail_on_cycle, bool extract_critical_path_ops, bool delay_attribution,
+         const std::string& scratch_dir, std::size_t chunk_nodes) {
+        const auto opts = build_dag_options(engine, memory_budget_bytes, goal_semantics, collective_sync,
+                                            world_size_hint, coll_group_sizes, window_size, max_lookahead,
+                                            fail_on_cycle, extract_critical_path_ops, delay_attribution, scratch_dir,
+                                            chunk_nodes);
+        streaming::engines::DagStreamResult r;
+        {
+          nb::gil_scoped_release release;
+          auto eng = streaming::engines::make_graph_engine(opts.engine);
+          r = eng->solve_dag(stream.source(), opts);
+        }
+        return to_dict(std::move(r));
+      },
+      "stream"_a, "engine"_a = "frontier", "memory_budget_bytes"_a = 0, "goal_semantics"_a = "cta_legacy",
+      "collective_sync"_a = "none", "world_size_hint"_a = 0,
+      "coll_group_sizes"_a = std::unordered_map<std::string, std::uint32_t>{}, "window_size"_a = 262144,
+      "max_lookahead"_a = 65536, "fail_on_cycle"_a = false, "extract_critical_path_ops"_a = false,
+      "delay_attribution"_a = false, "scratch_dir"_a = "", "chunk_nodes"_a = 524288,
+      "Solves an execution graph using a registered pluggable streaming/out-of-core GraphEngine.");
+
+  m.def(
+      "solve_goal_bin_frontier",
+      [](const std::string& path, const std::string& goal_semantics, bool fail_on_cycle,
+         bool extract_critical_path_ops, const std::string& scratch_dir) {
+        const auto opts = build_dag_options("frontier", 0, goal_semantics, "none", 0, {}, 262144, 65536, fail_on_cycle,
+                                            extract_critical_path_ops, false, scratch_dir, 524288);
+        streaming::engines::DagStreamResult r;
+        {
+          nb::gil_scoped_release release;
+          r = streaming::engines::solve_goal_bin_frontier(path, opts);
+        }
+        return to_dict(std::move(r));
+      },
+      "path"_a, "goal_semantics"_a = "cta_legacy", "fail_on_cycle"_a = false, "extract_critical_path_ops"_a = false,
+      "scratch_dir"_a = "", "Exact O(frontier) multi-rank Kahn DAG solver directly over an mmapped GOAL .bin file.");
+
+  m.def(
+      "solve_chakra_et_frontier",
+      [](const std::vector<std::string>& paths, const std::vector<std::uint32_t>& ranks,
+         const std::string& collective_sync, const std::unordered_map<std::string, std::uint32_t>& coll_group_sizes,
+         std::size_t window_size, std::size_t max_lookahead, bool fail_on_cycle, bool extract_critical_path_ops,
+         const std::string& scratch_dir) {
+        const auto opts = build_dag_options("frontier", 0, "cta_legacy", collective_sync,
+                                            static_cast<std::uint32_t>(paths.size()), coll_group_sizes, window_size,
+                                            max_lookahead, fail_on_cycle, extract_critical_path_ops, false, scratch_dir,
+                                            524288);
+        streaming::engines::DagStreamResult r;
+        {
+          nb::gil_scoped_release release;
+          r = streaming::engines::solve_chakra_et_frontier(paths, ranks, opts);
+        }
+        return to_dict(std::move(r));
+      },
+      "paths"_a, "ranks"_a, "collective_sync"_a = "none",
+      "coll_group_sizes"_a = std::unordered_map<std::string, std::uint32_t>{}, "window_size"_a = 262144,
+      "max_lookahead"_a = 65536, "fail_on_cycle"_a = false, "extract_critical_path_ops"_a = false,
+      "scratch_dir"_a = "",
+      "Multi-rank lockstep 1-pass frontier DAG solver over Chakra .et files with Certified Eviction-Epoch bounds.");
 }
 
 }  // namespace cta::bindings

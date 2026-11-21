@@ -311,3 +311,169 @@ def run_streaming_aggregates(
         coll_bytes_by_type=coll_bytes_by_type,
         provenance=StreamProvenance.from_native(raw["provenance"]),
     )
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class StreamingDagResult:
+    """Outputs of a streaming/out-of-core DAG solve plus honest provenance."""
+
+    num_nodes: int
+    num_edges: int
+    unordered: int
+    dag_depth: int
+    critical_path_ns: float
+    cp_compute_ns: float
+    cp_exposed_comm_ns: float
+    cp_comm_bytes: int
+    mean_slack_ns: float
+    zero_slack_ratio: float
+    critical_path_ops: pl.DataFrame
+    root_cause_delays: pl.DataFrame
+    provenance: StreamProvenance
+
+
+def dag_result_from_native(raw: dict[str, Any]) -> StreamingDagResult:
+    """Converts a native ``DagStreamResult`` dict to ``StreamingDagResult``."""
+    op_codes = np.asarray(raw["cp_op_class"], dtype=np.uint8)
+    if len(op_codes) > 0:
+        cp_ops = pl.DataFrame(
+            {
+                "rank": np.asarray(raw["cp_op_rank"], dtype=np.uint32),
+                "node_id": np.asarray(raw["cp_op_node_id"], dtype=np.uint64),
+                "name": list(raw["cp_op_name"]),
+                "op_class": pl.Series(op_codes).replace_strict(
+                    common.STREAM_OP_CLASSES, return_dtype=pl.String
+                ),
+                "weight_ns": np.asarray(
+                    raw["cp_op_weight_ns"], dtype=np.float64
+                ),
+                "size_bytes": np.asarray(
+                    raw["cp_op_size_bytes"], dtype=np.uint64
+                ),
+                "earliest_start_ns": np.asarray(
+                    raw["cp_op_earliest_start_ns"], dtype=np.float64
+                ),
+                "earliest_finish_ns": np.asarray(
+                    raw["cp_op_earliest_finish_ns"], dtype=np.float64
+                ),
+            }
+        )
+    else:
+        cp_ops = pl.DataFrame(
+            schema={
+                "rank": pl.UInt32,
+                "node_id": pl.UInt64,
+                "name": pl.String,
+                "op_class": pl.String,
+                "weight_ns": pl.Float64,
+                "size_bytes": pl.UInt64,
+                "earliest_start_ns": pl.Float64,
+                "earliest_finish_ns": pl.Float64,
+            }
+        )
+
+    delay_ranks = np.asarray(raw["delay_rank"], dtype=np.uint32)
+    if len(delay_ranks) > 0:
+        delays = pl.DataFrame(
+            {
+                "rank": delay_ranks,
+                "op_name": list(raw["delay_op_name"]),
+                "direct_wait_ns": np.asarray(
+                    raw["delay_direct_wait_ns"], dtype=np.float64
+                ),
+                "propagated_delay_ns": np.asarray(
+                    raw["delay_propagated_ns"], dtype=np.float64
+                ),
+                "op_count": np.asarray(raw["delay_op_count"], dtype=np.uint64),
+            }
+        )
+    else:
+        delays = pl.DataFrame(
+            schema={
+                "rank": pl.UInt32,
+                "op_name": pl.String,
+                "direct_wait_ns": pl.Float64,
+                "propagated_delay_ns": pl.Float64,
+                "op_count": pl.UInt64,
+            }
+        )
+
+    return StreamingDagResult(
+        num_nodes=int(raw["num_nodes"]),
+        num_edges=int(raw["num_edges"]),
+        unordered=int(raw["unordered"]),
+        dag_depth=int(raw["depth"]),
+        critical_path_ns=float(raw["makespan"]),
+        cp_compute_ns=float(raw["critical_compute"]),
+        cp_exposed_comm_ns=float(raw["critical_comm"]),
+        cp_comm_bytes=int(raw["critical_comm_bytes"]),
+        mean_slack_ns=float(raw["mean_slack"]),
+        zero_slack_ratio=float(raw["zero_slack_ratio"]),
+        critical_path_ops=cp_ops,
+        root_cause_delays=delays,
+        provenance=StreamProvenance.from_native(raw["provenance"]),
+    )
+
+
+def solve_artifact_frontier(
+    artifact: models.TraceArtifact,
+    *,
+    goal_semantics: str = "cta_legacy",
+    collective_sync: str = "none",
+    coll_group_sizes: dict[str, int] | None = None,
+    window_size: int = 262144,
+    max_lookahead: int = 65536,
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    scratch_dir: str = "",
+) -> StreamingDagResult:
+    """Runs Engine B (1-pass frontier / windowed solver) on an artifact."""
+    paths = sorted(artifact.paths)
+    groups = dict(coll_group_sizes) if coll_group_sizes else {}
+    if (
+        artifact.format == "goal"
+        and len(paths) == 1
+        and goal_reader._is_goal_bin(paths[0])
+    ):
+        raw = native.solve_goal_bin_frontier(
+            str(paths[0]),
+            goal_semantics=goal_semantics,
+            fail_on_cycle=fail_on_cycle,
+            extract_critical_path_ops=extract_critical_path_ops,
+            scratch_dir=scratch_dir,
+        )
+        return dag_result_from_native(raw)
+    if artifact.format == "chakra":
+        ranks = [
+            common.infer_rank(path, index) for index, path in enumerate(paths)
+        ]
+        raw = native.solve_chakra_et_frontier(
+            [str(path) for path in paths],
+            ranks,
+            collective_sync=collective_sync,
+            coll_group_sizes=groups,
+            window_size=window_size,
+            max_lookahead=max_lookahead,
+            fail_on_cycle=fail_on_cycle,
+            extract_critical_path_ops=extract_critical_path_ops,
+            scratch_dir=scratch_dir,
+        )
+        return dag_result_from_native(raw)
+
+    stream, _ = open_stream_for_artifact(
+        artifact, goal_semantics=goal_semantics
+    )
+    raw = native.solve_dag_stream(
+        stream,
+        engine="frontier",
+        goal_semantics=goal_semantics,
+        collective_sync=collective_sync,
+        world_size_hint=artifact.world_size,
+        coll_group_sizes=groups,
+        window_size=window_size,
+        max_lookahead=max_lookahead,
+        fail_on_cycle=fail_on_cycle,
+        extract_critical_path_ops=extract_critical_path_ops,
+        scratch_dir=scratch_dir,
+    )
+    return dag_result_from_native(raw)

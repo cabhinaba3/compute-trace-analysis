@@ -122,6 +122,53 @@ class HybridQuantile:
     def add_array(self, values: np.ndarray) -> None: ...
     def quantile(self, q: float) -> float: ...
 
+def available_graph_engines() -> list[str]:
+    """Returns the registered pluggable streaming/out-of-core DAG engines."""
+    ...
+
+def solve_dag_stream(
+    stream: GraphStream,
+    engine: str = "frontier",
+    memory_budget_bytes: int = 0,
+    goal_semantics: str = "cta_legacy",
+    collective_sync: str = "none",
+    world_size_hint: int = 0,
+    coll_group_sizes: dict[str, int] | None = None,
+    window_size: int = 262144,
+    max_lookahead: int = 65536,
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    delay_attribution: bool = False,
+    scratch_dir: str = "",
+    chunk_nodes: int = 524288,
+) -> dict[str, Any]:
+    """Solves an execution graph via a registered streaming GraphEngine."""
+    ...
+
+def solve_goal_bin_frontier(
+    path: str,
+    goal_semantics: str = "cta_legacy",
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    scratch_dir: str = "",
+) -> dict[str, Any]:
+    """Exact O(frontier) Kahn DAG solver directly over mmapped GOAL .bin."""
+    ...
+
+def solve_chakra_et_frontier(
+    paths: list[str],
+    ranks: list[int],
+    collective_sync: str = "none",
+    coll_group_sizes: dict[str, int] | None = None,
+    window_size: int = 262144,
+    max_lookahead: int = 65536,
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    scratch_dir: str = "",
+) -> dict[str, Any]:
+    """Lockstep 1-pass frontier DAG solver over multi-rank Chakra .et files."""
+    ...
+
 # Analysis.
 
 def build_dag_edges(
