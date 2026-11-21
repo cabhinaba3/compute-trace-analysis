@@ -31,6 +31,7 @@ struct GoalColumns {
   std::vector<std::uint64_t> duration_ns, size_bytes;
   std::vector<std::int32_t> src_rank, dst_rank;
   std::vector<std::uint32_t> message_tag;
+  std::vector<std::uint16_t> cpu, nic;  // "cpu N" and "nic N" of the op
 
   // Dependencies: `edge_src` must finish before `edge_dst` starts.
   std::vector<std::uint32_t> edge_rank;
@@ -52,6 +53,8 @@ struct GoalColumns {
     visit("src_rank", src_rank);
     visit("dst_rank", dst_rank);
     visit("message_tag", message_tag);
+    visit("cpu", cpu);
+    visit("nic", nic);
     visit("edge_rank", edge_rank);
     visit("edge_src", edge_src);
     visit("edge_dst", edge_dst);

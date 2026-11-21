@@ -33,6 +33,13 @@ NODES_SCHEMA = pl.Schema(
         "dst_rank": pl.Int32(),
         "message_tag": pl.UInt32(),
         "num_ops": pl.UInt64(),
+        # Process group of a collective or point-to-point op (Chakra's pg_name
+        # attribute); "" when the trace does not say.
+        "pg_name": pl.String(),
+        # GOAL's "cpu N" and "nic N": which CPU and NIC of the rank run the
+        # op; 0 for formats without them.
+        "cpu": pl.UInt16(),
+        "nic": pl.UInt16(),
     }
 )
 
@@ -256,7 +263,7 @@ def _decode(codes: np.ndarray, dictionary: list[str]) -> pl.Series:
     return pl.Series(dictionary, dtype=pl.String).gather(codes)
 
 
-@plugins.register_adapter("chakra", version="1.1")
+@plugins.register_adapter("chakra", version="1.2")
 class ChakraAdapter:
     """Reads Chakra .et protobuf execution traces (one file per rank).
 
@@ -266,7 +273,7 @@ class ChakraAdapter:
     """
 
     format_name = "chakra"
-    version = "1.1"
+    version = "1.2"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Checks whether a file is a Chakra .et trace.
@@ -369,10 +376,13 @@ def _host_node_row(node: dict[str, Any], rank: int) -> dict[str, object]:
         "dst_rank": dst_rank,
         "message_tag": max(0, message_tag),
         "num_ops": 0,
+        "pg_name": str(node.get("pg_name", "") or ""),
+        "cpu": 0,
+        "nic": 0,
     }
 
 
-@plugins.register_adapter("chakra_host", version="1.1")
+@plugins.register_adapter("chakra_host", version="1.2")
 class ChakraHostAdapter:
     """Reads host execution trace JSON files.
 
@@ -384,7 +394,7 @@ class ChakraHostAdapter:
     """
 
     format_name = "chakra_host"
-    version = "1.1"
+    version = "1.2"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Checks whether a file is a host execution trace JSON file.

@@ -206,6 +206,8 @@ void bind_streaming(nb::module_& m) {
             append_vector(all.nodes.src_rank, part.nodes.src_rank);
             append_vector(all.nodes.dst_rank, part.nodes.dst_rank);
             append_vector(all.nodes.message_tag, part.nodes.message_tag);
+            append_vector(all.nodes.cpu, part.nodes.cpu);
+            append_vector(all.nodes.nic, part.nodes.nic);
             append_vector(all.edges.rank, part.edges.rank);
             append_vector(all.edges.src_id, part.edges.src_id);
             append_vector(all.edges.dst_id, part.edges.dst_id);

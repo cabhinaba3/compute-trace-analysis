@@ -156,6 +156,7 @@ PLOT_KINDS: plugins.Registry[PlotKind] = plugins.Registry(
             "network",
             "scopes",
             "series",
+            "simulation",
             "steps",
             "summary",
             "sweeps",

@@ -5,9 +5,10 @@
 #include "bindings/bindings.hpp"
 
 NB_MODULE(_native, m) {
-  m.doc() = "Native code for compute-trace-analysis: trace readers and synthetic trace generators.";
+  m.doc() = "Native code for compute-trace-analysis: trace readers, synthetic trace generators and the simulator.";
   cta::bindings::bind_synth(m);
   cta::bindings::bind_readers(m);
   cta::bindings::bind_analysis(m);
   cta::bindings::bind_streaming(m);
+  cta::bindings::bind_sim(m);
 }

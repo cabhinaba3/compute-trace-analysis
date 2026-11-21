@@ -135,6 +135,13 @@ def chunk_to_graph_frames(
                 "dst_rank": chunk["dst_rank"],
                 "message_tag": chunk["message_tag"],
                 "num_ops": chunk["num_ops"],
+                # The process group and GOAL's `cpu N` / `nic N`, as the
+                # simulator reads them (0 for formats without them).
+                "pg_name": strings_from_ends(
+                    chunk["comm_group_end"], chunk["comm_group_bytes"]
+                ),
+                "cpu": chunk["cpu"],
+                "nic": chunk["nic"],
             },
             schema=nodes_schema,
         )

@@ -35,6 +35,10 @@ def test_static_figures_draw_the_exported_kinds() -> None:
         "skew",
         "roofline",
         "scaling",
+        "sim_attribution",
+        "sim_breakdown",
+        "sim_phases",
+        "sim_ranks",
     }
 
 

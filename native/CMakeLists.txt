@@ -34,6 +34,7 @@ set_target_properties(_native PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CTA_NATIVE_
 
 add_subdirectory(src/analysis)   # DAG solver and interval helpers
 add_subdirectory(src/readers)    # trace readers
+add_subdirectory(src/sim)        # the discrete-event simulator
 add_subdirectory(src/streaming)  # streaming graph sources, sketches, and engines
 add_subdirectory(src/synth)      # synthetic trace generators
 add_subdirectory(src/bindings)   # the Python-visible functions

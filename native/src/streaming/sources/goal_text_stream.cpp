@@ -4,6 +4,7 @@
 #include <simdjson.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -289,7 +290,9 @@ class GoalTextSource final : public GraphSource {
       sr = is_send ? me : peer;
       dr = is_send ? peer : me;
     }
-    out.nodes.push(r_u32, id, name, oc, comm_type, dur_ns, bytes, 0, sr, dr, narrow_u32(op.tag));
+    out.nodes.push(r_u32, id, name, oc, comm_type, dur_ns, bytes, 0, sr, dr, narrow_u32(op.tag), {},
+                   static_cast<std::uint16_t>(std::min<std::uint64_t>(op.cpu, 0xFFFF)),
+                   static_cast<std::uint16_t>(std::min<std::uint64_t>(op.nic, 0xFFFF)));
   }
 
   std::string path_;

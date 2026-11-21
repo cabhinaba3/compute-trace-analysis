@@ -94,6 +94,9 @@ def _bin_nodes_frame(
             "dst_rank": dst_ranks.astype(np.int32),
             "message_tag": np.array(records["tag"], dtype=np.uint32, copy=True),
             "num_ops": np.zeros(num_nodes, dtype=np.uint64),
+            "pg_name": [""] * num_nodes,
+            "cpu": records["proc"].astype(np.uint16),
+            "nic": records["nic"].astype(np.uint16),
         },
         schema=reader.NODES_SCHEMA,
     )
@@ -286,6 +289,9 @@ def parse_goal_text(path: pathlib.Path) -> tuple[pl.DataFrame, pl.DataFrame]:
             "dst_rank": columns["dst_rank"],
             "message_tag": columns["message_tag"],
             "num_ops": np.zeros(len(op_class), dtype=np.uint64),
+            "pg_name": pl.repeat("", len(op_class), eager=True),
+            "cpu": columns["cpu"],
+            "nic": columns["nic"],
         },
         schema=reader.NODES_SCHEMA,
     )
@@ -325,7 +331,7 @@ def _p2p_traffic(nodes: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-@plugins.register_adapter("goal", version="1.1")
+@plugins.register_adapter("goal", version="1.2")
 class GoalAdapter:
     """Reads GOAL schedules, as .goal text or SPCL txt2bin .bin binary.
 
@@ -335,7 +341,7 @@ class GoalAdapter:
     """
 
     format_name = "goal"
-    version = "1.1"
+    version = "1.2"
 
     def detect(self, path: pathlib.Path) -> bool:
         """Checks whether a file is a GOAL schedule.

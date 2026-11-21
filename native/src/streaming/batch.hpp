@@ -73,6 +73,8 @@ struct NodeBatch {
   std::vector<std::uint32_t> message_tag;
   std::vector<std::uint64_t> comm_group_end;
   std::vector<std::uint8_t> comm_group_bytes;
+  std::vector<std::uint16_t> cpu;  // GOAL "cpu N": which CPU of the rank runs the op (0 if absent)
+  std::vector<std::uint16_t> nic;  // GOAL "nic N"
 
   std::size_t size() const { return node_id.size(); }
   bool empty() const { return node_id.empty(); }
@@ -93,6 +95,8 @@ struct NodeBatch {
     message_tag.clear();
     comm_group_end.clear();
     comm_group_bytes.clear();
+    cpu.clear();
+    nic.clear();
   }
 
   void reserve(std::size_t n) {
@@ -108,11 +112,13 @@ struct NodeBatch {
     dst_rank.reserve(n);
     message_tag.reserve(n);
     comm_group_end.reserve(n);
+    cpu.reserve(n);
+    nic.reserve(n);
   }
 
   void push(std::uint32_t r, std::uint64_t id, std::string_view name, OpClass oc, std::string_view comm_type,
             std::uint64_t dur_ns, std::uint64_t bytes, std::uint64_t ops, std::int32_t sr, std::int32_t dr,
-            std::uint32_t tag, std::string_view comm_group = {}) {
+            std::uint32_t tag, std::string_view comm_group = {}, std::uint16_t cpu_id = 0, std::uint16_t nic_id = 0) {
     rank.push_back(r);
     node_id.push_back(id);
     name_bytes.insert(name_bytes.end(), name.begin(), name.end());
@@ -128,6 +134,8 @@ struct NodeBatch {
     message_tag.push_back(tag);
     comm_group_bytes.insert(comm_group_bytes.end(), comm_group.begin(), comm_group.end());
     comm_group_end.push_back(comm_group_bytes.size());
+    cpu.push_back(cpu_id);
+    nic.push_back(nic_id);
   }
 
   std::string_view name_at(std::size_t i) const {
@@ -209,6 +217,8 @@ struct GraphChunk {
     visit("message_tag", nodes.message_tag);
     visit("comm_group_end", nodes.comm_group_end);
     visit("comm_group_bytes", nodes.comm_group_bytes);
+    visit("cpu", nodes.cpu);
+    visit("nic", nodes.nic);
     visit("edge_rank", edges.rank);
     visit("edge_src", edges.src_id);
     visit("edge_dst", edges.dst_id);

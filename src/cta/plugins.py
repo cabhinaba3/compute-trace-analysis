@@ -247,6 +247,7 @@ ASPECTS: Registry[Aspect] = Registry(
         "cta.aspects.distributed.rank_skew",
         "cta.aspects.distributed.traffic",
         "cta.aspects.distributed.equivalence",
+        "cta.aspects.distributed.simulation",
         "cta.aspects.edge.layer_fusion",
         "cta.aspects.edge.energy",
         "cta.aspects.hta",

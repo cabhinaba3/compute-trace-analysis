@@ -1,9 +1,9 @@
 """Type stub for the compiled ``cta._native`` extension built from ``native/``.
 
 One flat module: the readers return dicts of NumPy columns (see the column
-structs in ``native/src/readers``), the writers back ``cta.synth``, and the
-analysis functions back ``cta.analysis``. Names, arguments and defaults match
-``native/src/bindings``.
+structs in ``native/src/readers``), the writers back ``cta.synth``, the
+analysis functions back ``cta.analysis`` and the simulator backs ``cta.sim``.
+Names, arguments and defaults match ``native/src/bindings``.
 """
 
 from typing import Any
@@ -289,6 +289,56 @@ class DagPlan:
     ) -> dict[str, Any]:
         """Solves one scenario per row of ``scale`` (scenarios x groups)."""
         ...
+
+# Simulator (see native/src/sim and cta.sim).
+
+def simulate(
+    graph: dict[str, np.ndarray],
+    group_offsets: np.ndarray,
+    group_members: np.ndarray,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Runs a graph; returns per-op, per-rank, critical-path, link columns."""
+    ...
+
+def lower_collectives(
+    graph: dict[str, np.ndarray],
+    group_offsets: np.ndarray,
+    group_members: np.ndarray,
+    params: dict[str, Any],
+) -> tuple[dict[str, np.ndarray], dict[str, int]]:
+    """Returns the graph with collectives replaced by their algorithms."""
+    ...
+
+def collective_schedule(
+    coll_type: int,
+    algorithm: str,
+    size: int,
+    bytes: int,
+    root: int = 0,
+    node_size: int = 1,
+    chunks: int = 1,
+    reduce: bool = False,
+    all_to_all_per_peer: bool = False,
+) -> dict[str, np.ndarray]:
+    """Returns every member's actions of one collective."""
+    ...
+
+def collective_times(
+    coll_type: int,
+    bytes: int,
+    members: list[int],
+    params: dict[str, Any],
+    root: int = 0,
+) -> list[int]:
+    """Returns each member's contention-free finish time in ns."""
+    ...
+
+def algorithm_supported(
+    coll_type: int, algorithm: str, size: int, node_size: int = 1
+) -> bool:
+    """Whether an algorithm can run a collective type on a group size."""
+    ...
 
 # Synthetic trace writers.
 

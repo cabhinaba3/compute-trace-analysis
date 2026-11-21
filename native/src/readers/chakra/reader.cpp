@@ -148,11 +148,11 @@ std::uint64_t storage_bytes(const pb::Node& node) {
 
 // One file's rows, with strings numbered locally; renumbered when merged.
 struct FileRows {
-  Interner names, comm_types;
+  Interner names, comm_types, pg_names;
   std::vector<std::uint64_t> node_id;
   std::vector<std::int32_t> name;
   std::vector<std::uint8_t> op_class;
-  std::vector<std::int32_t> comm_type;
+  std::vector<std::int32_t> comm_type, pg_name;
   std::vector<std::uint64_t> duration_ns, size_bytes, num_ops;
   std::vector<std::int32_t> src_rank, dst_rank;
   std::vector<std::uint32_t> message_tag;
@@ -165,7 +165,7 @@ struct FileRows {
 struct Attrs {
   bool comm_type_set = false, comm_type_is_int = false, comm_type_is_text = false;
   Wide comm_type_int = 0;
-  std::string comm_type_text;
+  std::string comm_type_text, pg_name;
   bool has_comm_size = false, has_tensor_size = false, has_src = false, has_dst = false;
   Wide comm_size = 0, tensor_size = 0, src = 0, dst = 0, tag = 0, num_ops = 0;
 };
@@ -196,6 +196,8 @@ Attrs read_attrs(const pb::Node& node) {
       out.tag = attr_as_int(a);
     } else if (name == "num_ops") {
       out.num_ops = attr_as_int(a);
+    } else if (name == "pg_name") {
+      out.pg_name = a.value_case() == pb::AttributeProto::kStringVal ? a.string_val() : wide_to_string(attr_as_int(a));
     }
   }
   return out;
@@ -239,6 +241,7 @@ void add_node(const pb::Node& node, FileRows& rows) {
   rows.name.push_back(rows.names.intern(node.name()));
   rows.op_class.push_back(op_class);
   rows.comm_type.push_back(rows.comm_types.intern(resolve_comm_type(at, op_class)));
+  rows.pg_name.push_back(rows.pg_names.intern(at.pg_name));
   rows.duration_ns.push_back(node.duration_micros() * 1000);
   rows.size_bytes.push_back(size_bytes);
   rows.src_rank.push_back(clamp_i32(at.has_src ? at.src : default_src));
@@ -296,9 +299,10 @@ class Merger {
  public:
   void add(std::unique_ptr<FileRows> file) {
     FileRows& f = *file;
-    std::vector<std::int32_t> name_map, type_map;
+    std::vector<std::int32_t> name_map, type_map, pg_map;
     for (const std::string& s : f.names.items()) name_map.push_back(names_.intern(s));
     for (const std::string& s : f.comm_types.items()) type_map.push_back(comm_types_.intern(s));
+    for (const std::string& s : f.pg_names.items()) pg_map.push_back(pg_names_.intern(s));
 
     const std::size_t n = f.node_id.size();
     out_.rank.insert(out_.rank.end(), n, f.rank);
@@ -306,6 +310,7 @@ class Merger {
     for (std::int32_t c : f.name) out_.name.push_back(name_map[static_cast<std::size_t>(c)]);
     append_vector(out_.op_class, f.op_class);
     for (std::int32_t c : f.comm_type) out_.comm_type.push_back(type_map[static_cast<std::size_t>(c)]);
+    for (std::int32_t c : f.pg_name) out_.pg_name.push_back(pg_map[static_cast<std::size_t>(c)]);
     append_vector(out_.duration_ns, f.duration_ns);
     append_vector(out_.size_bytes, f.size_bytes);
     append_vector(out_.num_ops, f.num_ops);
@@ -322,12 +327,13 @@ class Merger {
   ChakraColumns finish() {
     out_.names.assign(names_.items().begin(), names_.items().end());
     out_.comm_types.assign(comm_types_.items().begin(), comm_types_.items().end());
+    out_.pg_names.assign(pg_names_.items().begin(), pg_names_.items().end());
     return std::move(out_);
   }
 
  private:
   ChakraColumns out_;
-  Interner names_, comm_types_;
+  Interner names_, comm_types_, pg_names_;
 };
 
 }  // namespace

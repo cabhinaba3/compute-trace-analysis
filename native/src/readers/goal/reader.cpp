@@ -117,6 +117,10 @@ std::uint32_t narrow_u32(std::uint64_t v) {
   if (v > std::numeric_limits<std::uint32_t>::max()) throw std::invalid_argument("number too large for a 32-bit column in GOAL text");
   return static_cast<std::uint32_t>(v);
 }
+std::uint16_t narrow_u16(std::uint64_t v) {
+  if (v > std::numeric_limits<std::uint16_t>::max()) throw std::invalid_argument("cpu or nic index too large in GOAL text");
+  return static_cast<std::uint16_t>(v);
+}
 std::int32_t narrow_i32(std::uint64_t v) {
   if (v > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max()))
     throw std::invalid_argument("number too large for a 32-bit column in GOAL text");
@@ -204,6 +208,8 @@ std::unique_ptr<GoalColumns> parse_piece(const MappedFile& file, const Piece& pi
       rows.dst_rank.push_back(op.kind == OpKind::kSend ? peer : me);
     }
     rows.message_tag.push_back(narrow_u32(op.tag));
+    rows.cpu.push_back(narrow_u16(op.cpu));
+    rows.nic.push_back(narrow_u16(op.nic));
   }
   return out;
 }
@@ -224,6 +230,8 @@ class Merger {
     append_vector(out_.src_rank, p.src_rank);
     append_vector(out_.dst_rank, p.dst_rank);
     append_vector(out_.message_tag, p.message_tag);
+    append_vector(out_.cpu, p.cpu);
+    append_vector(out_.nic, p.nic);
     append_vector(out_.edge_rank, p.edge_rank);
     append_vector(out_.edge_src, p.edge_src);
     append_vector(out_.edge_dst, p.edge_dst);

@@ -15,11 +15,12 @@ schema from the submodule.
 CMakeLists.txt            dependencies and the one module target
 cmake/ChakraProto.cmake   protobuf, and C++ generated from Chakra's schema
 src/
-  module.cpp              the NB_MODULE; calls the three bind_* functions
+  module.cpp              the NB_MODULE; calls the four bind_* functions
   bindings/               what Python sees: names, arguments and defaults
     readers.cpp             trace readers
     synth.cpp               synthetic trace generators
     analysis.cpp            the DAG solver and interval helpers
+    sim.cpp                 the simulator: simulate, lower_collectives, schedules
     convert.hpp             column structs to dicts of NumPy arrays, no copies
   util/                   header-only helpers shared by the areas below
     sink.hpp                buffered file or gzip output
@@ -40,6 +41,12 @@ src/
                           engines (see below)
   readers/<format>/       namespace cta::readers: one reader per format, with
                           reader.hpp declaring read_<format>() and its columns
+  sim/                    namespace cta::sim: the simulator. graph (ops, edges,
+                          groups), collectives (algorithm schedules and their
+                          contention-free cost), lowering, topology and flow
+                          (max-min fair link sharing), noise, engine (the event
+                          loop and critical path); engine.hpp states the
+                          semantics of every network model
   synth/                  namespace cta::synth: one generator per format
                           (kineto, goal, nsys, chakra, ncu, jtop, trtexec) and
                           the 3D-parallel training graphs
@@ -149,3 +156,26 @@ All streaming DAG, cache, and what-if translation units compile with `-ffp-contr
 The splitter's inner loop (`Splitter::feed` and `skip_event`) and the event
 parser (`add_event` and the `read_*` helpers) each stay in one source file, so
 the compiler can inline them.
+
+## sim
+
+`simulate()` runs one graph of all ranks with an event queue ordered by
+(time, event type, id), so a run depends only on its ops and parameters.
+CPUs and NICs are resources with a free-at time and a queue of waiting
+activities (an op starting, or a receiver processing a message); the one that
+has waited longest gets a freed resource. Messages match per (receiver,
+sender, tag) in FIFO order, as in LogGOPSim. `SimParams` lists its settings
+once, under the dotted names of `cta.sim.config`, and the binding parses
+them generically.
+
+`build_schedule()` gives one member's actions of a collective. Lowering
+inlines them between an entry and an exit NOP that carry the collective's
+edges; `evaluate_collective()` runs all members' schedules as a
+contention-free longest path for the analytical level.
+
+Topologies only declare their links; routes are shortest paths, with ties
+broken by a hash of (src, dst). `FlowNetwork` re-shares bandwidth by
+progressive filling among the flows connected to the one that started or
+ended. The engine records each message's split points as it runs, and the
+critical path walks back from the last op through them, cutting time into
+Segment categories that tile [0, makespan].

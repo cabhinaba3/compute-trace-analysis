@@ -70,7 +70,7 @@ void push_goal_bin_node(const GoalBinNode& nr, std::uint32_t rank, std::uint64_t
   const std::int32_t peer_i32 = static_cast<std::int32_t>(nr.peer);
   const std::int32_t src_r = is_send ? r_i32 : is_recv ? peer_i32 : -1;
   const std::int32_t dst_r = is_send ? peer_i32 : is_recv ? r_i32 : -1;
-  out.push(rank, node_id, name, oc, comm_type, dur_ns, bytes, 0, src_r, dst_r, nr.tag);
+  out.push(rank, node_id, name, oc, comm_type, dur_ns, bytes, 0, src_r, dst_r, nr.tag, {}, nr.proc, nr.nic);
 }
 
 // Streaming source backed by an mmapped GoalBinFile (seekable, O(1) per rank).
