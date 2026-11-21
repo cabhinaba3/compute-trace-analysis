@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+from typing import cast
 
 import numpy as np
 import polars as pl
@@ -326,8 +327,12 @@ def test_ceilings_of_a_generated_nsys_trace_match_the_overlap_aspect(
     )
     overlap_total_ms = overlap.row(0, named=True)["a"]
     steps = 4
-    advisor_total_ms = comm.evidence["exposed_comm_ms_per_step"] * steps + (
-        copies.evidence["exposed_copy_ms_per_step"] * steps if copies else 0
+    advisor_total_ms = float(
+        comm.evidence["exposed_comm_ms_per_step"]
+    ) * steps + (
+        float(copies.evidence["exposed_copy_ms_per_step"]) * steps
+        if copies
+        else 0
     )
     # The aspect counts comm and copies as one class, so it is at most the
     # sum, and the same when the two never overlap each other.
@@ -462,7 +467,7 @@ def test_real_single_gpu_capture_is_launch_bound(
     copies = [r for r in report.recommendations if r.rule == "exposed_copies"]
     # 38 GB/s is no pageable copy: the advice must not start with pinning.
     assert copies
-    assert copies[0].evidence["achieved_gb_per_s"] > 20
+    assert float(copies[0].evidence["achieved_gb_per_s"]) > 20
     assert copies[0].action.startswith("Issue the copy early")
     for rec in report.recommendations:
         assert rec.ceiling_pct <= 100
@@ -498,4 +503,5 @@ def test_real_two_rank_kineto_ceiling_agrees_with_the_overlap_aspect(
     # it is a mean over timelines; the advisor keeps the worst timeline.
     assert timelines.height == kept["rank"].n_unique()
     assert comm.ceiling_ms >= mean_per_step_ms * (1 - 1e-9)
-    assert comm.ceiling_ms <= kept["duration_ns"].mean() / 1e6
+    mean_step_ms = cast(float, kept["duration_ns"].mean()) / 1e6
+    assert comm.ceiling_ms <= mean_step_ms

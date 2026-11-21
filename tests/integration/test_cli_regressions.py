@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+from typing import Any
 
 import pytest
 from typer import testing
@@ -130,13 +131,13 @@ def test_list_includes_plugin_export_formats_and_plot_kinds() -> None:
     from cta.viz import registry as viz_registry
 
     @writers.register_writer("zz_test_format")
-    def _writer(report, out_dir):  # noqa: ANN001, ANN202
+    def _writer(report: Any, out_dir: Any) -> dict[str, Any]:
         return {}
 
     @viz_registry.register_plot(
         "zz_test_kind", group="custom", title="ZZ test kind"
     )
-    def _kind(ctx, opts):  # noqa: ANN001, ANN202
+    def _kind(ctx: Any, opts: Any) -> Any:
         raise NotImplementedError
 
     try:
