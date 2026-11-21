@@ -56,6 +56,9 @@ viz = ["plotly>=5.20"]  # interactive HTML plots and the dashboard (static PDF/S
 jax = ["xprof>=2.24.2"]  # converts JAX/XProf *.xplane.pb to a trace (the Chrome-format files need nothing)
 hta = ["traceinsight>=0.6.1"]  # Meta Holistic Trace Analysis; enables the opt-in `hta_kineto` aspect
 sql = ["duckdb>=1.0.0"]  # SQL plots (`--sql`, the `custom` kind) and the `where` filter of raw-table plots
+# Run table queries on an NVIDIA GPU (`--accelerator cuda`) with Polars' GPU engine; Linux and CUDA only. Needs
+# NVIDIA's package index: pip install --extra-index-url=https://pypi.nvidia.com ".[gpu]". Not part of `all`.
+gpu = ["polars[gpu]>=1.0.0"]
 # Writing Chakra .et files from Python (the readers are native and need none of this). mlc-chakra is the official
 # MLCommons schema, vendored as a pinned git submodule because PyPI's 1.0.0 predates STORAGE_NODE/DATA_OP_NODE;
 # installing this extra needs `git clone --recurse-submodules`.

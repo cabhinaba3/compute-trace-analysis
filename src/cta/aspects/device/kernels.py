@@ -6,6 +6,7 @@ import pathlib
 
 import polars as pl
 
+from cta import _device
 from cta import models
 from cta import plugins
 from cta.analysis import stats
@@ -58,11 +59,16 @@ def _category_ms(kernels: pl.DataFrame, category: str) -> float:
 
 def _time_by(kernels: pl.DataFrame, key: str) -> pl.DataFrame:
     """Sums kernel time (``duration_ms``) and ``launches`` per ``key``."""
-    return kernels.group_by(key).agg(
-        (pl.col("duration_ns").sum().cast(pl.Float64) / 1e6).alias(
-            "duration_ms"
+    return _device.collect(
+        kernels.lazy()
+        .group_by(key)
+        .agg(
+            (pl.col("duration_ns").sum().cast(pl.Float64) / 1e6).alias(
+                "duration_ms"
+            ),
+            pl.len().alias("launches"),
         ),
-        pl.len().alias("launches"),
+        rows=kernels.height,
     )
 
 
