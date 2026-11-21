@@ -26,6 +26,12 @@ class QuantileSketch {
   virtual double error_bound() const = 0;
 };
 
+// Whether make_sketch knows `kind` (checked up front: a typo must not go unnoticed
+// until the exact map overflows, which may never happen on a small trace).
+inline bool is_known_sketch(const std::string& kind) {
+  return kind == "ddsketch" || kind == "kll" || kind == "gk" || kind == "greenwald_khanna";
+}
+
 // Factory implemented after concrete sketch headers (see make_quantile_sketch below).
 std::unique_ptr<QuantileSketch> make_sketch(const std::string& kind, double accuracy);
 
@@ -36,6 +42,8 @@ class HybridQuantile {
  public:
   explicit HybridQuantile(std::string sketch_kind = "ddsketch", std::size_t exact_cap = 65536, double accuracy = 0.001)
       : sketch_kind_(std::move(sketch_kind)), exact_cap_(exact_cap), accuracy_(accuracy) {
+    if (!is_known_sketch(sketch_kind_))
+      throw std::invalid_argument("unknown quantile_sketch '" + sketch_kind_ + "'; use ddsketch, kll, or gk");
     if (exact_cap_ == 0) {
       sketch_ = make_sketch(sketch_kind_, accuracy_);
       spilled_ = true;

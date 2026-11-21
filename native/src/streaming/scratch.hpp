@@ -22,10 +22,17 @@ class ScratchDir {
     std::error_code ec;
     std::filesystem::create_directories(root, ec);
     if (ec) throw std::runtime_error("cannot create scratch root " + root.string() + ": " + ec.message());
-    const std::uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);
-    dir_ = root / ("run_" + std::to_string(::getpid()) + "_" + std::to_string(seq));
-    std::filesystem::create_directories(dir_, ec);
-    if (ec) throw std::runtime_error("cannot create scratch dir " + dir_.string() + ": " + ec.message());
+    // A directory left by a killed run with the same pid (container pids repeat) must
+    // never be reused: its spill files are opened for append and would be read back as
+    // part of this run. create_directory fails softly on an existing one, so move on.
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+      const std::uint64_t seq = counter.fetch_add(1, std::memory_order_relaxed);
+      dir_ = root / ("run_" + std::to_string(::getpid()) + "_" + std::to_string(seq));
+      const bool created = std::filesystem::create_directory(dir_, ec);
+      if (ec) throw std::runtime_error("cannot create scratch dir " + dir_.string() + ": " + ec.message());
+      if (created) return;
+    }
+    throw std::runtime_error("cannot find an unused scratch dir under " + root.string());
   }
 
   ~ScratchDir() { cleanup(); }

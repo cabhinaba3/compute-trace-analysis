@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -48,6 +49,14 @@ struct DagSolveOptions {
   std::string scratch_dir;
   std::size_t chunk_nodes = 524288;
 };
+
+// Only the gridgraph engine attributes delays (Scalasca backward pass). The
+// others must refuse the request instead of returning an empty table.
+inline void reject_delay_attribution(const DagSolveOptions& opts, std::string_view engine) {
+  if (opts.delay_attribution)
+    throw std::invalid_argument("delay_attribution is implemented by the gridgraph engine only, not " +
+                                std::string(engine));
+}
 
 struct DagStreamResult {
   std::uint64_t num_nodes = 0;

@@ -66,6 +66,7 @@ class GraphChiEngine final : public GraphEngine {
   std::string_view name() const override { return "graphchi"; }
 
   DagStreamResult solve_dag(GraphSource& source, const DagSolveOptions& opts) override {
+    reject_delay_attribution(opts, "graphchi");
     ScratchDir scratch(opts.scratch_dir);
     const std::string cache_path = scratch.file("graphchi.cta_graph");
     cache::build_graph_cache(source, cache_path, opts);

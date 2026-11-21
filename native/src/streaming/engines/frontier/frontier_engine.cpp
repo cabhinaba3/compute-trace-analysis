@@ -471,15 +471,17 @@ class StreamFrontierSolver {
     }
   }
 
-  DagStreamResult finish() {
-    // 1. Strip truly-dangling parent IDs (not present in any unresolved node or
-    //    parked barrier) and unmatched P2P waits, then cascade-release in exact
-    //    topological order so downstream children wake AFTER their parents.
+  // Strips parent ids that belong to no pending node (provably dangling) and,
+  // when `strip_p2p` is set, recvs whose sender never arrived, then
+  // cascade-releases in exact topological order so downstream children wake
+  // AFTER their parents. Returns whether it released or stripped anything.
+  bool release_dangling(bool strip_p2p) {
     std::unordered_set<std::uint64_t> pending_keys;
     pending_keys.reserve(unresolved_.size() * 2 + barrier_parked_.size() * 2 + 1);
     for (const auto& [vid, un] : unresolved_) pending_keys.insert(rank_node_key(un.rank, un.node_id));
     for (const auto& [vid, un] : barrier_parked_) pending_keys.insert(rank_node_key(un.rank, un.node_id));
 
+    bool changed = false;
     std::vector<std::uint32_t> ready_to_release;
     for (auto& [vid, un] : unresolved_) {
       for (auto it = un.missing_deps.begin(); it != un.missing_deps.end();) {
@@ -490,14 +492,15 @@ class StreamFrontierSolver {
           ++it;
         }
       }
-      if (un.waiting_p2p) {
+      if (strip_p2p && un.waiting_p2p) {
         // Sender never arrived in the entire trace -> provably unmatched recv.
         const ChannelSeqKey ck{un.src_rank, un.dst_rank, un.tag, un.p2p_seq};
         waiting_p2p_recvs_.erase(ck);
         un.waiting_p2p = false;
         ++res_.provenance.unmatched_p2p_recvs;
+        changed = true;
       }
-      if (un.missing_deps.empty()) ready_to_release.push_back(vid);
+      if (un.missing_deps.empty() && !un.waiting_p2p) ready_to_release.push_back(vid);
     }
     std::sort(ready_to_release.begin(), ready_to_release.end());
     for (std::uint32_t vid : ready_to_release) {
@@ -506,14 +509,29 @@ class StreamFrontierSolver {
       UnresolvedNode un = std::move(it->second);
       unresolved_.erase(it);
       finalize_node(un);
+      changed = true;
     }
+    return changed;
+  }
 
-    // 2. Flush any partial barrier groups at EOF (may wake downstream waiters).
-    while (!active_barriers_.empty()) {
-      auto bit = active_barriers_.begin();
-      WindowBarrierState bs = std::move(bit->second);
-      active_barriers_.erase(bit);
-      release_barrier_participants(bs, false);
+  DagStreamResult finish() {
+    // 1-2. Resolve what is left at EOF until nothing moves. Order matters: a
+    //    recv may wait on a send that is parked behind a partial barrier, so
+    //    dangling parents go first, then partial barrier groups are flushed
+    //    (their sends then match the waiting recvs through the normal path),
+    //    and only a recv that is STILL unmatched after that is provably
+    //    unmatched.
+    for (;;) {
+      if (release_dangling(/*strip_p2p=*/false)) continue;
+      if (!active_barriers_.empty()) {
+        auto bit = active_barriers_.begin();
+        WindowBarrierState bs = std::move(bit->second);
+        active_barriers_.erase(bit);
+        release_barrier_participants(bs, false);
+        continue;
+      }
+      if (release_dangling(/*strip_p2p=*/true)) continue;
+      break;
     }
 
     // 3. Anything still in unresolved_ after dangling-dep stripping and barrier
@@ -544,7 +562,13 @@ class StreamFrontierSolver {
       res_.makespan = global_makespan_lb_;
       res_.depth = global_max_depth_;
       res_.provenance.makespan_lb = global_makespan_lb_;
-      res_.provenance.makespan_ub = global_makespan_ub_;
+      // A node dropped by the lookahead cap was released with parents still
+      // missing, and those can finish later than anything seen so far, so the
+      // running upper bound no longer bounds the makespan. The sum of all node
+      // weights always does (a path never costs more than every node).
+      res_.provenance.makespan_ub = res_.provenance.lookahead_drops > 0
+                                        ? std::max(global_makespan_ub_, total_weight_ns_)
+                                        : global_makespan_ub_;
 
       if (parent_log_ && global_sink_vid_ != kNoParent) {
         fill_cp_op_chain_from_log(*parent_log_, global_sink_vid_, res_.num_nodes, res_);
@@ -621,6 +645,7 @@ class StreamFrontierSolver {
     un.comm_type.assign(comm_type.data(), comm_type.size());
     un.comm_group.assign(comm_group.data(), comm_group.size());
     un.best_depth = 1;
+    total_weight_ns_ += w;
 
     RankWindow& rw = rank_windows_[rank];
 
@@ -764,7 +789,9 @@ class StreamFrontierSolver {
   void release_barrier_participants(WindowBarrierState& bs, bool is_global_cut) {
     // Virtual barrier B_in adds 1 edge from each rank's pre-state, and B_out
     // synchronizes completion across all participating ranks (2 * G edges).
-    res_.num_edges += 2 * static_cast<std::uint64_t>(bs.participant_vids.size());
+    // A group that ended with a single participant (its peers never arrived) synchronizes
+    // nothing; the other engines add no barrier for it either.
+    if (bs.participant_vids.size() > 1) res_.num_edges += 2 * static_cast<std::uint64_t>(bs.participant_vids.size());
 
     // First compute each participant's post-collective finish after B_in.
     for (std::uint32_t pvid : bs.participant_vids) {
@@ -1192,6 +1219,7 @@ class StreamFrontierSolver {
 
   double global_makespan_lb_ = 0.0;
   double global_makespan_ub_ = 0.0;
+  double total_weight_ns_ = 0.0;  // sum of every ingested node's weight
   std::int32_t global_max_depth_ = 0;
   std::uint32_t global_sink_vid_ = kNoParent;
   double global_cp_compute_ = 0.0;
@@ -1204,6 +1232,7 @@ class FrontierEngine final : public GraphEngine {
   std::string_view name() const override { return "frontier"; }
 
   DagStreamResult solve_dag(GraphSource& source, const DagSolveOptions& opts) override {
+    reject_delay_attribution(opts, "frontier");
     StreamFrontierSolver solver(opts);
     GraphChunk chunk;
     const std::size_t step = opts.chunk_nodes > 0 ? opts.chunk_nodes : 65536;
@@ -1220,6 +1249,7 @@ std::unique_ptr<GraphEngine> make_frontier_engine() { return std::make_unique<Fr
 // Engine B1: Exact O(frontier) multi-rank Kahn directly over mmapped GOAL .bin
 // -----------------------------------------------------------------------------
 DagStreamResult solve_goal_bin_frontier(const std::string& bin_path, const DagSolveOptions& opts) {
+  reject_delay_attribution(opts, "frontier");
   GoalBinFile bin(bin_path);
   DagStreamResult res;
   res.provenance.engine = "frontier";
@@ -1528,6 +1558,7 @@ DagStreamResult solve_goal_bin_frontier(const std::string& bin_path, const DagSo
 DagStreamResult solve_chakra_et_frontier(const std::vector<std::string>& paths,
                                          const std::vector<std::uint32_t>& ranks, const DagSolveOptions& opts) {
   if (paths.size() != ranks.size()) throw std::invalid_argument("paths and ranks must have the same length");
+  reject_delay_attribution(opts, "frontier");
   StreamFrontierSolver solver(opts);
   solver.set_expected_world_size(static_cast<std::uint32_t>(paths.size()));
 

@@ -26,6 +26,19 @@ namespace {
 
 constexpr std::uint32_t kNone32 = std::numeric_limits<std::uint32_t>::max();
 
+// Closes a stdio file on scope exit, so an exception on the way does not leak the handle.
+struct FileGuard {
+  std::FILE* fp = nullptr;
+  explicit FileGuard(std::FILE* f) : fp(f) {}
+  FileGuard(const FileGuard&) = delete;
+  FileGuard& operator=(const FileGuard&) = delete;
+  ~FileGuard() { close(); }
+  void close() {
+    if (fp) std::fclose(fp);
+    fp = nullptr;
+  }
+};
+
 template <typename T>
 void write_exact(std::FILE* fp, const T* data, std::size_t count) {
   if (count == 0) return;
@@ -206,12 +219,34 @@ std::uint64_t rank_node_hash(std::uint32_t r, std::uint64_t id) {
 GraphCacheReader::GraphCacheReader(const std::string& path) : path_(path) {
   fp_ = std::fopen(path.c_str(), "rb");
   if (!fp_) throw std::runtime_error("cannot open graph cache " + path);
-  read_exact(fp_, &header_, 1);
-  if (header_.magic != kGraphCacheMagic || header_.version != kGraphCacheVersion) {
+  // A throwing constructor never runs the destructor, so close the file here.
+  try {
+    read_header_and_indexes(path);
+  } catch (...) {
     std::fclose(fp_);
     fp_ = nullptr;
+    throw;
+  }
+}
+
+void GraphCacheReader::read_header_and_indexes(const std::string& path) {
+  read_exact(fp_, &header_, 1);
+  if (header_.magic != kGraphCacheMagic || header_.version != kGraphCacheVersion) {
     throw std::invalid_argument("invalid or unsupported .cta_graph header in " + path);
   }
+  // Every section the header points to must lie inside the file: a build cut short by a
+  // crash leaves a header whose offsets run past the end.
+  if (std::fseek(fp_, 0, SEEK_END) != 0) throw std::runtime_error("seek failed in graph cache");
+  const long file_size = std::ftell(fp_);
+  // A build that died early leaves the header with its offsets still zero, so they must
+  // also lie past the header itself.
+  const auto inside = [&](std::uint64_t off) {
+    return file_size >= 0 && off >= sizeof(GraphCacheHeader) && off <= static_cast<std::uint64_t>(file_size);
+  };
+  if (!inside(header_.rank_stats_offset) || !inside(header_.names_offset) || !inside(header_.comm_types_offset) ||
+      !inside(header_.witness_offset) || !inside(header_.block_index_offset) ||
+      !inside(header_.block_index_offset + static_cast<std::uint64_t>(header_.num_blocks) * sizeof(BlockIndexEntry)))
+    throw std::runtime_error("graph cache is truncated: " + path);
 
   if (std::fseek(fp_, static_cast<long>(header_.rank_stats_offset), SEEK_SET) != 0)
     throw std::runtime_error("seek failed in graph cache");
@@ -283,11 +318,8 @@ void build_graph_cache(GraphSource& source, const std::string& cache_path, const
   const std::string spill_names_path = scratch.file("spill_names.bin");
   std::FILE* vfp = std::fopen(raw_verts_path.c_str(), "wb");
   std::FILE* nfp = std::fopen(spill_names_path.c_str(), "wb");
-  if (!vfp || !nfp) {
-    if (vfp) std::fclose(vfp);
-    if (nfp) std::fclose(nfp);
-    throw std::runtime_error("cannot open scratch vertex/name files");
-  }
+  FileGuard vguard(vfp), nguard(nfp);
+  if (!vfp || !nfp) throw std::runtime_error("cannot open scratch vertex/name files");
 
   BucketWriter<RankNodeVid> v_join_buckets(scratch, "vjoin", kJoinBuckets);
   BucketWriter<RawEdgeRec> e_raw_buckets(scratch, "eraw", kJoinBuckets);
@@ -474,13 +506,14 @@ void build_graph_cache(GraphSource& source, const std::string& cache_path, const
     }
   }
   coll_entries.clear();
-  std::fclose(vfp);
-  std::fclose(nfp);
+  vguard.close();
+  nguard.close();
 
   // Empty graph fast path.
   if (num_total == 0) {
     std::FILE* out = std::fopen(cache_path.c_str(), "wb");
     if (!out) throw std::runtime_error("cannot open graph cache for write: " + cache_path);
+    FileGuard out_guard(out);
     GraphCacheHeader hdr{};
     hdr.goal_semantics = static_cast<std::uint8_t>(opts.goal_semantics);
     hdr.collective_sync = static_cast<std::uint8_t>(opts.collective_sync);
@@ -497,7 +530,7 @@ void build_graph_cache(GraphSource& source, const std::string& cache_path, const
     hdr.block_index_offset = static_cast<std::uint64_t>(std::ftell(out));
     std::fseek(out, 0, SEEK_SET);
     write_exact(out, &hdr, 1);
-    std::fclose(out);
+    out_guard.close();
     return;
   }
 
@@ -923,6 +956,7 @@ void build_graph_cache(GraphSource& source, const std::string& cache_path, const
   // Write the final `.cta_graph` container sequentially block by block!
   std::FILE* out = std::fopen(cache_path.c_str(), "wb");
   if (!out) throw std::runtime_error("cannot open graph cache for write: " + cache_path);
+  FileGuard out_guard(out);
   GraphCacheHeader hdr{};
   hdr.num_real_vertices = num_real;
   hdr.num_total_vertices = num_total;
@@ -941,6 +975,7 @@ void build_graph_cache(GraphSource& source, const std::string& cache_path, const
 
   std::FILE* rvfp = std::fopen(raw_verts_path.c_str(), "rb");
   std::FILE* snfp = std::fopen(spill_names_path.c_str(), "rb");
+  FileGuard rguard(rvfp), sguard(snfp);
   if (!rvfp || !snfp) throw std::runtime_error("cannot reopen scratch raw vertices/names");
 
   // Also load raw vertices into memory if they fit in budget/3 (fast path), else seek per vertex.
@@ -1029,8 +1064,8 @@ void build_graph_cache(GraphSource& source, const std::string& cache_path, const
     write_exact(out, local_name_end.data(), len);
     write_exact(out, local_name_bytes.data(), local_name_bytes.size());
   }
-  std::fclose(rvfp);
-  std::fclose(snfp);
+  rguard.close();
+  sguard.close();
 
   // Append rank stats, string tables, cycle witness, and block index, then patch header.
   hdr.rank_stats_offset = static_cast<std::uint64_t>(std::ftell(out));
@@ -1055,7 +1090,7 @@ void build_graph_cache(GraphSource& source, const std::string& cache_path, const
 
   if (std::fseek(out, 0, SEEK_SET) != 0) throw std::runtime_error("seek failed patching .cta_graph header");
   write_exact(out, &hdr, 1);
-  std::fclose(out);
+  out_guard.close();
 }
 
 }  // namespace cta::streaming::cache

@@ -21,5 +21,6 @@ set_source_files_properties(
   engines/graphchi/graphchi_engine.cpp
   engines/xstream/xstream_engine.cpp
   engines/whatif/streaming_whatif.cpp
+  engines/online_agg/online_agg.cpp  # and the quantile sketches it includes
   TARGET_DIRECTORY _native
   PROPERTIES COMPILE_OPTIONS -ffp-contract=off)

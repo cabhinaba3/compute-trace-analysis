@@ -136,6 +136,8 @@ class GraphCacheReader {
   void read_block(std::uint32_t block_idx, TopoBlock& out) const;
 
  private:
+  void read_header_and_indexes(const std::string& path);
+
   std::string path_;
   std::FILE* fp_ = nullptr;
   GraphCacheHeader header_{};

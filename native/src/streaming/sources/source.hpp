@@ -22,6 +22,18 @@ namespace cta::streaming {
 inline std::size_t safe_fd_limit(std::size_t requested = 0) {
   std::size_t cap = 256;
   struct rlimit rl {};
+#if defined(__APPLE__)
+  // macOS starts processes with a soft limit of 256 (Linux: 1024 or more), which would halve the
+  // lockstep rank window; raise it as far as the system allows (OPEN_MAX).
+  if (::getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < 4096) {
+    rlim_t want = 10240;
+    if (rl.rlim_max != RLIM_INFINITY && rl.rlim_max < want) want = rl.rlim_max;
+    if (want > rl.rlim_cur) {
+      rl.rlim_cur = want;
+      ::setrlimit(RLIMIT_NOFILE, &rl);
+    }
+  }
+#endif
   if (::getrlimit(RLIMIT_NOFILE, &rl) == 0 && rl.rlim_cur != RLIM_INFINITY) {
     const std::size_t soft = static_cast<std::size_t>(rl.rlim_cur);
     cap = soft > 64 ? std::min<std::size_t>(soft / 2, 1024) : std::max<std::size_t>(8, soft / 2);

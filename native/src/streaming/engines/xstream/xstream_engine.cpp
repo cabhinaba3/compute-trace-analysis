@@ -73,6 +73,7 @@ class XStreamEngine final : public GraphEngine {
   std::string_view name() const override { return "xstream"; }
 
   DagStreamResult solve_dag(GraphSource& source, const DagSolveOptions& opts) override {
+    reject_delay_attribution(opts, "xstream");
     ScratchDir scratch(opts.scratch_dir);
     const std::string cache_path = scratch.file("xstream.cta_graph");
     cache::build_graph_cache(source, cache_path, opts);
@@ -292,6 +293,19 @@ class XStreamEngine final : public GraphEngine {
       res.critical_compute = static_cast<double>(cp_comp);
       res.critical_comm = static_cast<double>(cp_comm);
       res.critical_comm_bytes = cp_bytes;
+      if (opts.extract_critical_path_ops) {
+        std::reverse(chain.begin(), chain.end());
+        for (const auto& st : chain) {
+          res.cp_op_rank.push_back(st.rank);
+          res.cp_op_node_id.push_back(st.node_id);
+          res.cp_op_class.push_back(st.op_class);
+          res.cp_op_weight_ns.push_back(st.weight);
+          res.cp_op_size_bytes.push_back(st.size_bytes);
+          res.cp_op_earliest_start_ns.push_back(st.es);
+          res.cp_op_earliest_finish_ns.push_back(st.ef);
+          res.cp_op_name.emplace_back("");
+        }
+      }
     }
 
     // Reverse scatter-gather pass for exact slack.

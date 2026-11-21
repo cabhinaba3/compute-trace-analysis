@@ -40,3 +40,6 @@ add_subdirectory(src/bindings)   # the Python-visible functions
 
 # No fused multiply-add: what-if answers must not depend on the CPU.
 set_source_files_properties(src/analysis/whatif.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+# The quantile sketches are header-only and also run from their Python bindings. arm64 fuses
+# multiply-adds by default, x86 only with -march flags, so results would differ by platform.
+set_source_files_properties(src/bindings/streaming.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
