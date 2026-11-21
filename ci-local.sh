@@ -25,6 +25,8 @@ case "${1:-}" in
 esac
 
 if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY=python3; fi
+# GitHub sets these, and rich then colours CLI output, which has broken tests that matched plain text.
+export CI=true GITHUB_ACTIONS=true
 
 step() {  # step NAME CMD...
   local name="$1"; shift

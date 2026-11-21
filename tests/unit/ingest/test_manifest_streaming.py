@@ -7,6 +7,7 @@ manifest silently ran with the defaults.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 from typer import testing
@@ -125,8 +126,12 @@ def test_whatif_streaming_off_refuses_options_only_the_streaming_model_has(
     )
 
     def text(result: testing.Result) -> str:
-        """The output without the error box's frame and line breaks."""
-        return " ".join(result.output.replace("│", " ").split())
+        """The output without colour codes, the error frame and line breaks.
+
+        CI sets GITHUB_ACTIONS, which makes rich colour its output.
+        """
+        plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        return " ".join(plain.replace("│", " ").split())
 
     assert refused.exit_code != 0
     assert "drop --streaming off" in text(refused)
