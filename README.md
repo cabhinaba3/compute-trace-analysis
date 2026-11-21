@@ -55,6 +55,19 @@ Run `PYTHONPATH=src python examples/benchmark_streaming.py --scale medium` to be
 
 Add `--out-dir DIR --export markdown,latex,csv,json,pdf` to write reports, and `--format json` to print one. `cta --help` and `cta <command> --help` list everything else.
 
+## GPU
+
+`--accelerator auto|cpu|cuda|metal` (also `AnalysisConfig.accelerator`, the manifest key `accelerator`, and the `accelerator=` argument of `cta.analyze`, `cta.compare` and `cta.analysis.whatif.run_scenarios`) picks where the analysis runs. The CPU is always there and is the fallback: a GPU that is missing, not compiled in, out of memory or failing gives the CPU result and a one-line warning, never an error. `cta list` shows which devices were found.
+
+| Work | GPU | Notes |
+|---|---|---|
+| What-if scenario solver (`cta whatif`, the `whatif` aspect, sweeps) | CUDA (64-bit) and Metal (32-bit) | One thread per scenario. CUDA gives the CPU's makespan and depth bit for bit; Metal is approximate (about 1e-5 relative, more on deep graphs). `auto` uses CUDA from about 5e7 vertices x scenarios up (an A100 was 9.6x to 44x faster than 8 CPU threads there, and 0.1x below 5e6). `auto` never picks Metal: an Apple M1 ran it at 0.7x to 1.4x the CPU. |
+| Kernel-time tables | Polars GPU engine (`pip install --extra-index-url=https://pypi.nvidia.com ".[gpu]"`), CUDA only | A group-by was 1.0x to 1.7x the CPU on an A100, so the gain is small; `auto` uses it only above 50 million rows. Polars has no Metal engine, so tables stay on the CPU on a Mac. |
+| Simulator | none | One simulation is a sequential event loop. `cta simulate sweep --workers N` runs the points and seeds of a sweep or Monte Carlo run on N threads (default: all CPUs), with the serial answer. |
+| Out-of-core engines, streaming what-if and aggregates, graph building | none | I/O bound, or the data never leaves the host. |
+
+The GPU code is built when CMake finds the toolkit: `CTA_GPU=auto` (default) uses CUDA (`nvcc`) on Linux and Metal on macOS if present, `OFF` builds the CPU solver only, `ON`, `CUDA` and `METAL` fail the build if the backend is missing, for example `CTA_CMAKE_ARGS=-DCTA_GPU=CUDA pip install -e .`. `scripts/native/bench_gpu.py` measures both.
+
 ## Simulate
 
 `cta simulate` replays GOAL schedules and Chakra traces on a model of the machine and compares them, including a Chakra trace against the GOAL schedule made from it:
