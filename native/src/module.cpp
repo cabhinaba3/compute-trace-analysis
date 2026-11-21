@@ -9,4 +9,5 @@ NB_MODULE(_native, m) {
   cta::bindings::bind_synth(m);
   cta::bindings::bind_readers(m);
   cta::bindings::bind_analysis(m);
+  cta::bindings::bind_streaming(m);
 }

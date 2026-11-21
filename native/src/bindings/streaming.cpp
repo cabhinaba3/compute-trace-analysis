@@ -1,0 +1,177 @@
+#include <nanobind/nanobind.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
+
+#include <cstdint>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "bindings/bindings.hpp"
+#include "bindings/convert.hpp"
+#include "streaming/batch.hpp"
+#include "streaming/sources/source.hpp"
+#include "util/memory.hpp"
+#include "util/util.hpp"
+
+namespace nb = nanobind;
+using namespace nb::literals;
+
+namespace cta::bindings {
+namespace {
+
+streaming::GoalSemantics parse_goal_semantics(const std::string& text) {
+  if (text == "cta_legacy" || text == "legacy") return streaming::GoalSemantics::kCtaLegacy;
+  if (text == "strict") return streaming::GoalSemantics::kStrict;
+  throw std::invalid_argument("goal_semantics must be 'cta_legacy' or 'strict', got '" + text + "'");
+}
+
+class PyGraphStream {
+ public:
+  PyGraphStream(std::unique_ptr<streaming::GraphSource> source, std::size_t chunk_nodes)
+      : source_(std::move(source)), chunk_nodes_(chunk_nodes > 0 ? chunk_nodes : 524288) {}
+
+  nb::object next_chunk(std::size_t max_nodes) {
+    if (!source_) return nb::none();
+    const std::size_t limit = max_nodes > 0 ? max_nodes : chunk_nodes_;
+    streaming::GraphChunk chunk;
+    bool got = false;
+    {
+      nb::gil_scoped_release release;
+      got = source_->next_chunk(chunk, limit);
+    }
+    if (!got) return nb::none();
+    return to_dict(std::move(chunk));
+  }
+
+  nb::object iter_next() {
+    nb::object chunk = next_chunk(chunk_nodes_);
+    if (chunk.is_none()) throw nb::stop_iteration();
+    return chunk;
+  }
+
+  bool is_seekable() const { return source_ && source_->is_seekable(); }
+  std::string format_name() const { return source_ ? source_->format_name() : ""; }
+  std::uint64_t estimated_bytes() const { return source_ ? source_->estimated_bytes() : 0; }
+  void reset() {
+    if (!source_) return;
+    nb::gil_scoped_release release;
+    source_->reset();
+  }
+
+ private:
+  std::unique_ptr<streaming::GraphSource> source_;
+  std::size_t chunk_nodes_;
+};
+
+}  // namespace
+
+void bind_streaming(nb::module_& m) {
+  m.def("available_memory_bytes", &cta::available_memory_bytes,
+        "Returns available host/cgroup memory in bytes, or 0 if unavailable.");
+  m.def("resolve_memory_budget", &cta::resolve_memory_budget, "requested_bytes"_a = 0,
+        "Returns requested_bytes if > 0, else 60% of available memory (or 4 GiB fallback).");
+
+  nb::class_<PyGraphStream>(m, "GraphStream", "Bounded-memory streaming reader over a GOAL or Chakra execution graph.")
+      .def("next_chunk", &PyGraphStream::next_chunk, "max_nodes"_a = 0,
+           "Returns the next chunk dict of zero-copy NumPy arrays, or None at EOF.")
+      .def("__iter__", [](PyGraphStream& self) -> PyGraphStream& { return self; }, nb::rv_policy::reference)
+      .def("__next__", &PyGraphStream::iter_next)
+      .def_prop_ro("is_seekable", &PyGraphStream::is_seekable)
+      .def_prop_ro("format_name", &PyGraphStream::format_name)
+      .def_prop_ro("estimated_bytes", &PyGraphStream::estimated_bytes)
+      .def("reset", &PyGraphStream::reset, "Resets a seekable stream back to the start.");
+
+  m.def(
+      "open_goal_bin_stream",
+      [](const std::string& path, std::size_t chunk_nodes) {
+        std::unique_ptr<streaming::GraphSource> src;
+        {
+          nb::gil_scoped_release release;
+          src = streaming::open_goal_bin_stream(path);
+        }
+        return PyGraphStream(std::move(src), chunk_nodes);
+      },
+      "path"_a, "chunk_nodes"_a = 524288, "Opens a GOAL binary (.bin) file or pipe as a chunked GraphStream.");
+
+  m.def(
+      "open_goal_text_stream",
+      [](const std::string& path, const std::string& goal_semantics, std::size_t chunk_nodes) {
+        const auto sem = parse_goal_semantics(goal_semantics);
+        std::unique_ptr<streaming::GraphSource> src;
+        {
+          nb::gil_scoped_release release;
+          src = streaming::open_goal_text_stream(path, sem);
+        }
+        return PyGraphStream(std::move(src), chunk_nodes);
+      },
+      "path"_a, "goal_semantics"_a = "cta_legacy", "chunk_nodes"_a = 524288,
+      "Opens a GOAL text (.goal) file or pipe as a chunked GraphStream.");
+
+  m.def(
+      "open_chakra_et_stream",
+      [](const std::vector<std::string>& paths, const std::vector<std::uint32_t>& ranks, std::size_t chunk_nodes) {
+        std::unique_ptr<streaming::GraphSource> src;
+        {
+          nb::gil_scoped_release release;
+          src = streaming::open_chakra_et_stream(paths, ranks);
+        }
+        return PyGraphStream(std::move(src), chunk_nodes);
+      },
+      "paths"_a, "ranks"_a, "chunk_nodes"_a = 524288,
+      "Opens Chakra .et protobuf files (one per rank) as a chunked GraphStream.");
+
+  m.def(
+      "open_chakra_host_stream",
+      [](const std::vector<std::string>& paths, const std::vector<std::uint32_t>& ranks, std::size_t chunk_nodes) {
+        std::unique_ptr<streaming::GraphSource> src;
+        {
+          nb::gil_scoped_release release;
+          src = streaming::open_chakra_host_stream(paths, ranks);
+        }
+        return PyGraphStream(std::move(src), chunk_nodes);
+      },
+      "paths"_a, "ranks"_a, "chunk_nodes"_a = 524288,
+      "Opens Chakra host execution trace JSON files as a chunked GraphStream.");
+
+  m.def(
+      "read_goal_bin",
+      [](const std::string& path) {
+        streaming::GraphChunk all;
+        {
+          nb::gil_scoped_release release;
+          auto src = streaming::open_goal_bin_stream(path);
+          streaming::GraphChunk part;
+          while (src->next_chunk(part, 1u << 22)) {
+            const std::uint64_t name_base = all.nodes.name_bytes.size();
+            for (std::uint64_t end : part.nodes.name_end) all.nodes.name_end.push_back(name_base + end);
+            append_vector(all.nodes.name_bytes, part.nodes.name_bytes);
+            const std::uint64_t ct_base = all.nodes.comm_type_bytes.size();
+            for (std::uint64_t end : part.nodes.comm_type_end) all.nodes.comm_type_end.push_back(ct_base + end);
+            append_vector(all.nodes.comm_type_bytes, part.nodes.comm_type_bytes);
+            const std::uint64_t cg_base = all.nodes.comm_group_bytes.size();
+            for (std::uint64_t end : part.nodes.comm_group_end) all.nodes.comm_group_end.push_back(cg_base + end);
+            append_vector(all.nodes.comm_group_bytes, part.nodes.comm_group_bytes);
+            append_vector(all.nodes.rank, part.nodes.rank);
+            append_vector(all.nodes.node_id, part.nodes.node_id);
+            append_vector(all.nodes.op_class, part.nodes.op_class);
+            append_vector(all.nodes.duration_ns, part.nodes.duration_ns);
+            append_vector(all.nodes.size_bytes, part.nodes.size_bytes);
+            append_vector(all.nodes.num_ops, part.nodes.num_ops);
+            append_vector(all.nodes.src_rank, part.nodes.src_rank);
+            append_vector(all.nodes.dst_rank, part.nodes.dst_rank);
+            append_vector(all.nodes.message_tag, part.nodes.message_tag);
+            append_vector(all.edges.rank, part.edges.rank);
+            append_vector(all.edges.src_id, part.edges.src_id);
+            append_vector(all.edges.dst_id, part.edges.dst_id);
+            append_vector(all.edges.edge_kind, part.edges.edge_kind);
+          }
+        }
+        return to_dict(std::move(all));
+      },
+      "path"_a, "Reads a GOAL binary (.bin) schedule into node and edge columns in C++.");
+}
+
+}  // namespace cta::bindings

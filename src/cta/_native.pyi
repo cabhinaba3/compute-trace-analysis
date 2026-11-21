@@ -37,6 +37,61 @@ def read_goal(
     """Reads a GOAL text schedule into node and edge columns."""
     ...
 
+def read_goal_bin(path: str) -> dict[str, Any]:
+    """Reads a GOAL binary (.bin) schedule into node and edge columns."""
+    ...
+
+# Streaming readers and memory helpers.
+
+def available_memory_bytes() -> int:
+    """Returns available host/cgroup memory in bytes, or 0 if unavailable."""
+    ...
+
+def resolve_memory_budget(requested_bytes: int = 0) -> int:
+    """Returns requested_bytes if > 0, else 60% of available memory."""
+    ...
+
+class GraphStream:
+    """Bounded-memory streaming reader over a GOAL or Chakra graph."""
+
+    is_seekable: bool
+    format_name: str
+    estimated_bytes: int
+
+    def next_chunk(self, max_nodes: int = 0) -> dict[str, Any] | None:
+        """Returns the next chunk dict of NumPy arrays, or None at EOF."""
+        ...
+
+    def __iter__(self) -> GraphStream: ...
+    def __next__(self) -> dict[str, Any]: ...
+    def reset(self) -> None:
+        """Resets a seekable stream back to the start."""
+        ...
+
+def open_goal_bin_stream(path: str, chunk_nodes: int = 524288) -> GraphStream:
+    """Opens a GOAL binary (.bin) file or pipe as a chunked GraphStream."""
+    ...
+
+def open_goal_text_stream(
+    path: str,
+    goal_semantics: str = "cta_legacy",
+    chunk_nodes: int = 524288,
+) -> GraphStream:
+    """Opens a GOAL text (.goal) file or pipe as a chunked GraphStream."""
+    ...
+
+def open_chakra_et_stream(
+    paths: list[str], ranks: list[int], chunk_nodes: int = 524288
+) -> GraphStream:
+    """Opens Chakra .et protobuf files as a chunked GraphStream."""
+    ...
+
+def open_chakra_host_stream(
+    paths: list[str], ranks: list[int], chunk_nodes: int = 524288
+) -> GraphStream:
+    """Opens Chakra host JSON files as a chunked GraphStream."""
+    ...
+
 # Analysis.
 
 def build_dag_edges(

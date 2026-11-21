@@ -223,22 +223,10 @@ def _decode_goal_mmap(
 
 def _parse_goal_bin(path: pathlib.Path) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Parses a GOAL binary schedule into ``nodes`` and ``edges`` frames."""
-    with (
-        path.open("rb") as fh,
-        mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mapped_file,
-    ):
-        node_frames, edge_frames = _decode_goal_mmap(mapped_file, path)
-    nodes = (
-        pl.concat(node_frames)
-        if node_frames
-        else pl.DataFrame(schema=reader.NODES_SCHEMA)
+    columns = native.read_goal_bin(str(path))
+    return common.chunk_to_graph_frames(
+        columns, reader.NODES_SCHEMA, reader.EDGES_SCHEMA
     )
-    edges = (
-        pl.concat(edge_frames)
-        if edge_frames
-        else pl.DataFrame(schema=reader.EDGES_SCHEMA)
-    )
-    return nodes, edges
 
 
 # Codes the native text reader gives to op classes and dependency kinds.
@@ -371,7 +359,9 @@ class GoalAdapter:
     ) -> dict[str, pathlib.Path]:
         """Converts the artifact's schedules to nodes/edges/traffic tables.
 
-        The traffic table counts point-to-point sends only.
+        Streams chunks from native C++ readers directly into zstd Parquet row
+        groups in bounded RAM. The traffic table counts point-to-point sends
+        only.
 
         Args:
             artifact: The GOAL artifact to read.
@@ -381,33 +371,40 @@ class GoalAdapter:
             The table names ``"nodes"``, ``"edges"`` and ``"traffic"`` mapped
             to their Parquet paths.
         """
-        node_frames, edge_frames = [], []
-        for path in sorted(artifact.paths):
-            nodes, edges = (
-                _parse_goal_bin(path)
-                if _is_goal_bin(path)
-                else parse_goal_text(path)
-            )
-            node_frames.append(nodes)
-            edge_frames.append(edges)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        nodes_path = out_dir / "nodes.parquet"
+        edges_path = out_dir / "edges.parquet"
+        traffic_acc = common.OnlineTrafficAccumulator(include_collectives=False)
 
-        all_nodes = (
-            pl.concat(node_frames)
-            if node_frames
-            else pl.DataFrame(schema=reader.NODES_SCHEMA)
-        )
-        all_edges = (
-            pl.concat(edge_frames)
-            if edge_frames
-            else pl.DataFrame(schema=reader.EDGES_SCHEMA)
-        )
-        traffic = _p2p_traffic(all_nodes)
+        with (
+            common.StreamingParquetWriter(
+                nodes_path, reader.NODES_SCHEMA
+            ) as node_writer,
+            common.StreamingParquetWriter(
+                edges_path, reader.EDGES_SCHEMA
+            ) as edge_writer,
+        ):
+            for path in sorted(artifact.paths):
+                stream = (
+                    native.open_goal_bin_stream(str(path))
+                    if _is_goal_bin(path)
+                    else native.open_goal_text_stream(str(path))
+                )
+                for chunk in stream:
+                    nodes_df, edges_df = common.chunk_to_graph_frames(
+                        chunk, reader.NODES_SCHEMA, reader.EDGES_SCHEMA
+                    )
+                    traffic_acc.update(nodes_df)
+                    node_writer.write_frame(nodes_df)
+                    edge_writer.write_frame(edges_df)
 
-        return common.write_tables(
-            out_dir,
-            {
-                "nodes": all_nodes,
-                "edges": all_edges,
-                "traffic": traffic,
-            },
+        traffic = traffic_acc.finish(
+            reader.TRAFFIC_SCHEMA, min_world_size=artifact.world_size
         )
+        traffic_path = out_dir / "traffic.parquet"
+        traffic.write_parquet(traffic_path, compression="zstd")
+        return {
+            "nodes": nodes_path,
+            "edges": edges_path,
+            "traffic": traffic_path,
+        }

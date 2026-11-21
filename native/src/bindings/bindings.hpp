@@ -7,8 +7,9 @@
 
 namespace cta::bindings {
 
-void bind_synth(nanobind::module_& m);    // synthetic trace generators
-void bind_readers(nanobind::module_& m);  // trace readers
-void bind_analysis(nanobind::module_& m);  // DAG solver and interval helpers
+void bind_synth(nanobind::module_& m);      // synthetic trace generators
+void bind_readers(nanobind::module_& m);    // trace readers
+void bind_analysis(nanobind::module_& m);   // DAG solver and interval helpers
+void bind_streaming(nanobind::module_& m);  // streaming graph sources and engines
 
 }  // namespace cta::bindings

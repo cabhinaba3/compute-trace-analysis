@@ -9,7 +9,6 @@ of their usual algorithm).
 from __future__ import annotations
 
 from collections.abc import Iterable
-import json
 import pathlib
 from typing import Any
 
@@ -285,8 +284,9 @@ class ChakraAdapter:
     ) -> dict[str, pathlib.Path]:
         """Converts the artifact's .et files to nodes/edges/traffic tables.
 
-        Files are parsed in parallel, one task per file. Each file's rank
-        comes from its name, else from its index in sorted path order.
+        Streams chunks from the native protobuf reader directly into zstd
+        Parquet row groups in bounded RAM. Each file's rank comes from its
+        name, else from its index in sorted path order.
 
         Args:
             artifact: The Chakra .et artifact to read.
@@ -300,42 +300,40 @@ class ChakraAdapter:
         ranks = [
             common.infer_rank(path, index) for index, path in enumerate(paths)
         ]
-        columns = native.read_chakra(
-            [str(path) for path in paths],
-            ranks,
+        out_dir.mkdir(parents=True, exist_ok=True)
+        nodes_path = out_dir / "nodes.parquet"
+        edges_path = out_dir / "edges.parquet"
+        traffic_acc = common.OnlineTrafficAccumulator(include_collectives=True)
+
+        with (
+            common.StreamingParquetWriter(
+                nodes_path, NODES_SCHEMA
+            ) as node_writer,
+            common.StreamingParquetWriter(
+                edges_path, EDGES_SCHEMA
+            ) as edge_writer,
+        ):
+            stream = native.open_chakra_et_stream(
+                [str(path) for path in paths], ranks
+            )
+            for chunk in stream:
+                nodes_df, edges_df = common.chunk_to_graph_frames(
+                    chunk, NODES_SCHEMA, EDGES_SCHEMA
+                )
+                traffic_acc.update(nodes_df)
+                node_writer.write_frame(nodes_df)
+                edge_writer.write_frame(edges_df)
+
+        traffic = traffic_acc.finish(
+            TRAFFIC_SCHEMA, min_world_size=artifact.world_size
         )
-        nodes = pl.DataFrame(
-            {
-                "rank": columns["rank"],
-                "node_id": columns["node_id"],
-                "name": _decode(columns["name"], columns["names"]),
-                "op_class": pl.Series(columns["op_class"]).replace_strict(
-                    _OP_CLASSES, return_dtype=pl.String
-                ),
-                "comm_type": _decode(
-                    columns["comm_type"], columns["comm_types"]
-                ),
-                "duration_ns": columns["duration_ns"],
-                "size_bytes": columns["size_bytes"],
-                "src_rank": columns["src_rank"],
-                "dst_rank": columns["dst_rank"],
-                "message_tag": columns["message_tag"],
-                "num_ops": columns["num_ops"],
-            },
-            schema=NODES_SCHEMA,
-        )
-        edges = pl.DataFrame(
-            {
-                "rank": columns["edge_rank"],
-                "src_id": columns["edge_src"],
-                "dst_id": columns["edge_dst"],
-                "dep_kind": pl.Series(columns["edge_kind"]).replace_strict(
-                    _DEPENDENCY_KINDS, return_dtype=pl.String
-                ),
-            },
-            schema=EDGES_SCHEMA,
-        )
-        return _write_tables(artifact, nodes, edges, out_dir)
+        traffic_path = out_dir / "traffic.parquet"
+        traffic.write_parquet(traffic_path, compression="zstd")
+        return {
+            "nodes": nodes_path,
+            "edges": edges_path,
+            "traffic": traffic_path,
+        }
 
 
 def _classify_host_op(name: str) -> tuple[str, str]:
@@ -418,8 +416,9 @@ class ChakraHostAdapter:
     ) -> dict[str, pathlib.Path]:
         """Converts the artifact's host ET files to nodes/edges/traffic tables.
 
-        Each file's rank comes from its name, else from its index in sorted
-        path order.
+        Streams chunks from the native simdjson JSON reader directly into zstd
+        Parquet row groups in bounded RAM. Each file's rank comes from its
+        name, else from its index in sorted path order.
 
         Args:
             artifact: The host execution trace artifact to read.
@@ -429,28 +428,41 @@ class ChakraHostAdapter:
             The table names ``"nodes"``, ``"edges"`` and ``"traffic"`` mapped
             to their Parquet paths.
         """
-        node_rows: list[dict[str, object]] = []
-        edge_rows: list[dict[str, object]] = []
-        for file_index, path in enumerate(sorted(artifact.paths)):
-            rank = common.infer_rank(path, file_index)
-            trace = json.loads(path.read_text())
-            for node in trace.get("nodes", []):
-                node_id = int(node["id"])
-                node_rows.append(_host_node_row(node, rank))
-                edge_rows.extend(
-                    _dependency_rows(
-                        rank, node_id, node.get("ctrl_deps", []), "ctrl"
-                    )
-                )
-                edge_rows.extend(
-                    _dependency_rows(
-                        rank, node_id, node.get("data_deps", []), "data"
-                    )
-                )
+        paths = sorted(artifact.paths)
+        ranks = [
+            common.infer_rank(path, index) for index, path in enumerate(paths)
+        ]
+        out_dir.mkdir(parents=True, exist_ok=True)
+        nodes_path = out_dir / "nodes.parquet"
+        edges_path = out_dir / "edges.parquet"
+        traffic_acc = common.OnlineTrafficAccumulator(include_collectives=True)
 
-        return _write_tables(
-            artifact,
-            _rows_to_frame(node_rows, NODES_SCHEMA),
-            _rows_to_frame(edge_rows, EDGES_SCHEMA),
-            out_dir,
+        with (
+            common.StreamingParquetWriter(
+                nodes_path, NODES_SCHEMA
+            ) as node_writer,
+            common.StreamingParquetWriter(
+                edges_path, EDGES_SCHEMA
+            ) as edge_writer,
+        ):
+            stream = native.open_chakra_host_stream(
+                [str(path) for path in paths], ranks
+            )
+            for chunk in stream:
+                nodes_df, edges_df = common.chunk_to_graph_frames(
+                    chunk, NODES_SCHEMA, EDGES_SCHEMA
+                )
+                traffic_acc.update(nodes_df)
+                node_writer.write_frame(nodes_df)
+                edge_writer.write_frame(edges_df)
+
+        traffic = traffic_acc.finish(
+            TRAFFIC_SCHEMA, min_world_size=artifact.world_size
         )
+        traffic_path = out_dir / "traffic.parquet"
+        traffic.write_parquet(traffic_path, compression="zstd")
+        return {
+            "nodes": nodes_path,
+            "edges": edges_path,
+            "traffic": traffic_path,
+        }
