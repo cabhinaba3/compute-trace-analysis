@@ -8,6 +8,7 @@ distributed aspects and CLI.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import pathlib
 from typing import Any
 
@@ -539,3 +540,224 @@ def solve_artifact_outofcore(
         scratch_dir=scratch_dir,
     )
     return dag_result_from_native(raw)
+
+
+STREAMING_MODES = ("auto", "exact", "frontier", "windowed", "aggregate", "off")
+STREAMING_FORMATS = ("chakra", "chakra_host", "goal")
+
+
+def artifact_raw_bytes(artifact: models.TraceArtifact) -> int:
+    """Returns total raw byte size on disk across an artifact's source files."""
+    total = 0
+    for path in artifact.paths:
+        if path.exists() and path.is_file():
+            total += path.stat().st_size
+    return total
+
+
+def pick_graph_artifact(
+    trial: models.RunBundle,
+) -> models.TraceArtifact | None:
+    """Returns the preferred execution-graph artifact of a trial, or None."""
+    for trace_format in STREAMING_FORMATS:
+        if trace_format in trial.artifacts:
+            return trial.artifacts[trace_format]
+    return None
+
+
+def _needs_streaming_feature(config: models.AnalysisConfig) -> bool:
+    """Returns True when config asks for a streaming-only capability."""
+    return (
+        config.goal_semantics != "cta_legacy"
+        or config.collective_sync != "none"
+        or config.delay_attribution
+        or config.extract_critical_path_ops
+        or config.fail_on_cycle
+        or config.graph_engine != "gridgraph"
+    )
+
+
+def resolve_streaming_tier(
+    artifact: models.TraceArtifact, config: models.AnalysisConfig
+) -> str:
+    """Resolves the execution tier for an artifact and AnalysisConfig.
+
+    Returns one of ``"off"``, ``"exact"``, ``"frontier"``, ``"windowed"``, or
+    ``"aggregate"``. Raises ``ValueError`` on an unrecognized mode.
+    """
+    mode = config.streaming.lower().strip()
+    if mode not in STREAMING_MODES:
+        raise ValueError(
+            f"Unknown streaming mode {config.streaming!r}; "
+            f"expected one of {STREAMING_MODES}"
+        )
+    if artifact.format not in STREAMING_FORMATS or mode == "off":
+        return "off"
+    if mode != "auto":
+        return mode
+    raw_bytes = artifact_raw_bytes(artifact)
+    if raw_bytes >= config.parquet_bypass_bytes:
+        return "exact"
+    if config.memory_budget_bytes > 0:
+        # Rough conservative working-set multiplier for full in-memory Polars +
+        # DagPlan materialization (~10x raw binary / ~4x raw text).
+        est_ram = raw_bytes * 6
+        if est_ram > config.memory_budget_bytes:
+            return "exact"
+    if _needs_streaming_feature(config):
+        return "exact"
+    return "off"
+
+
+def should_bypass_parquet(
+    artifact: models.TraceArtifact, config: models.AnalysisConfig
+) -> bool:
+    """Returns True when full nodes/edges Parquet ingest should be bypassed."""
+    if artifact.format not in STREAMING_FORMATS:
+        return False
+    mode = config.streaming.lower().strip()
+    if mode == "off":
+        return False
+    if mode in ("exact", "frontier", "windowed", "aggregate"):
+        return True
+    if mode != "auto":
+        raise ValueError(
+            f"Unknown streaming mode {config.streaming!r}; "
+            f"expected one of {STREAMING_MODES}"
+        )
+    raw_bytes = artifact_raw_bytes(artifact)
+    if raw_bytes >= config.parquet_bypass_bytes:
+        return True
+    return (
+        config.memory_budget_bytes > 0
+        and raw_bytes * 6 > config.memory_budget_bytes
+    )
+
+
+def aggregate_artifact(
+    artifact: models.TraceArtifact,
+    *,
+    quantile_sketch: str = "ddsketch",
+    goal_semantics: str = "cta_legacy",
+    quantile_exact_cap: int = 65536,
+    quantile_accuracy: float = 0.001,
+    chunk_nodes: int = 524288,
+) -> StreamingAggregateSummary:
+    """Runs Engine A (1-pass online aggregates) directly on an artifact."""
+    stream, inc_coll = open_stream_for_artifact(
+        artifact, goal_semantics=goal_semantics, chunk_nodes=chunk_nodes
+    )
+    return run_streaming_aggregates(
+        stream,
+        include_collectives_in_traffic=inc_coll,
+        min_world_size=max(1, artifact.world_size),
+        quantile_sketch=quantile_sketch,
+        quantile_exact_cap=quantile_exact_cap,
+        quantile_accuracy=quantile_accuracy,
+        chunk_nodes=chunk_nodes,
+    )
+
+
+@functools.lru_cache(maxsize=32)
+def _aggregate_cached_key(
+    fmt: str,
+    path_sigs: tuple[tuple[str, int, int], ...],
+    world_size: int,
+    quantile_sketch: str,
+    goal_semantics: str,
+) -> StreamingAggregateSummary:
+    """Caches one-pass Engine A summaries across aspects in the same run."""
+    art = models.TraceArtifact(
+        format=fmt,
+        paths=tuple(pathlib.Path(p) for p, _, _ in path_sigs),
+        world_size=world_size,
+    )
+    return aggregate_artifact(
+        art,
+        quantile_sketch=quantile_sketch,
+        goal_semantics=goal_semantics,
+    )
+
+
+def aggregate_artifact_cached(
+    artifact: models.TraceArtifact,
+    *,
+    quantile_sketch: str = "ddsketch",
+    goal_semantics: str = "cta_legacy",
+) -> StreamingAggregateSummary:
+    """Runs Engine A once per artifact and shares results across aspects."""
+    sigs: list[tuple[str, int, int]] = []
+    for path in sorted(artifact.paths):
+        stat = path.stat()
+        sigs.append((str(path.resolve()), stat.st_size, stat.st_mtime_ns))
+    return _aggregate_cached_key(
+        artifact.format,
+        tuple(sigs),
+        artifact.world_size,
+        quantile_sketch,
+        goal_semantics,
+    )
+
+
+def solve_artifact_with_config(
+    artifact: models.TraceArtifact,
+    config: models.AnalysisConfig,
+    *,
+    cache_path: pathlib.Path | None = None,
+) -> StreamingDagResult:
+    """Dispatches an artifact to Engine B or Engine C according to config."""
+    tier = resolve_streaming_tier(artifact, config)
+    scratch = str(config.scratch_dir) if config.scratch_dir else ""
+    if tier in ("frontier", "windowed") or config.graph_engine == "frontier":
+        coll_sync = (
+            "barrier"
+            if tier == "windowed" and config.collective_sync == "none"
+            else config.collective_sync
+        )
+        return solve_artifact_frontier(
+            artifact,
+            goal_semantics=config.goal_semantics,
+            collective_sync=coll_sync,
+            window_size=config.window_size,
+            fail_on_cycle=config.fail_on_cycle,
+            extract_critical_path_ops=config.extract_critical_path_ops,
+            scratch_dir=scratch,
+        )
+    return solve_artifact_outofcore(
+        artifact,
+        engine=config.graph_engine,
+        memory_budget_bytes=config.memory_budget_bytes,
+        goal_semantics=config.goal_semantics,
+        collective_sync=config.collective_sync,
+        fail_on_cycle=config.fail_on_cycle,
+        extract_critical_path_ops=config.extract_critical_path_ops,
+        delay_attribution=config.delay_attribution,
+        scratch_dir=scratch,
+        cache_path=cache_path,
+    )
+
+
+def provenance_row(
+    group_label: str, trial_index: int, prov: StreamProvenance
+) -> dict[str, Any]:
+    """Converts a ``StreamProvenance`` into a flat row dict for Polars."""
+    return {
+        "group": group_label,
+        "trial": trial_index,
+        "engine": prov.engine,
+        "exact": prov.exact,
+        "slack_scope": prov.slack_scope,
+        "goal_semantics": prov.goal_semantics,
+        "collective_sync": prov.collective_sync,
+        "makespan_lb_ns": prov.makespan_lb,
+        "makespan_ub_ns": prov.makespan_ub,
+        "evicted_dep_hits": prov.evicted_dep_hits,
+        "lookahead_drops": prov.lookahead_drops,
+        "straddling_edges": prov.straddling_edges,
+        "dead_end_sinks": prov.dead_end_sinks,
+        "has_cycle": prov.has_cycle,
+        "unordered_nodes": prov.unordered_nodes,
+        "quantile_sketch": prov.quantile_sketch,
+        "quantile_error_bound": prov.quantile_error_bound,
+        "delay_timing_basis": prov.delay_timing_basis,
+    }

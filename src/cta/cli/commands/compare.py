@@ -159,6 +159,88 @@ def compare_command(
             help="Cache directory (default .cta_cache; overrides manifest).",
         ),
     ] = None,
+    streaming: Annotated[
+        str,
+        typer.Option(
+            "--streaming",
+            help=(
+                "Execution-graph streaming mode: auto, exact, frontier, "
+                "windowed, aggregate, or off."
+            ),
+        ),
+    ] = "auto",
+    engine_name: Annotated[
+        str,
+        typer.Option(
+            "--engine",
+            help="DAG engine: gridgraph, graphchi, xstream, or frontier.",
+        ),
+    ] = "gridgraph",
+    quantile_sketch: Annotated[
+        str,
+        typer.Option(
+            "--quantile-sketch",
+            help="Streaming quantile sketch: ddsketch, kll, gk, or exact.",
+        ),
+    ] = "ddsketch",
+    memory_gb: Annotated[
+        float,
+        typer.Option(
+            "--memory-gb",
+            min=0.0,
+            help="RAM budget in GiB for streaming passes (0 = auto).",
+        ),
+    ] = 0.0,
+    collective_sync: Annotated[
+        str,
+        typer.Option(
+            "--collective-sync",
+            help="Cross-rank collective synchronization: none or barrier.",
+        ),
+    ] = "none",
+    goal_semantics: Annotated[
+        str,
+        typer.Option(
+            "--goal-semantics",
+            help="GOAL interpretation: cta_legacy or strict.",
+        ),
+    ] = "cta_legacy",
+    window_size: Annotated[
+        int,
+        typer.Option(
+            "--window-size",
+            min=1024,
+            help="Frontier/windowed cache capacity in nodes.",
+        ),
+    ] = 262144,
+    fail_on_cycle: Annotated[
+        bool,
+        typer.Option(
+            "--fail-on-cycle",
+            help="Fail immediately when a dependency cycle is detected.",
+        ),
+    ] = False,
+    critical_path_ops: Annotated[
+        bool,
+        typer.Option(
+            "--critical-path-ops",
+            help="Extract the exact critical-path op chain table.",
+        ),
+    ] = False,
+    delay_attribution: Annotated[
+        bool,
+        typer.Option(
+            "--delay-attribution",
+            help="Run Scalasca backward wait-state & delay attribution.",
+        ),
+    ] = False,
+    scratch_dir: Annotated[
+        pathlib.Path | None,
+        typer.Option(
+            "--scratch-dir",
+            help="Directory for temporary out-of-core scratch files.",
+        ),
+    ] = None,
 ) -> None:
     """Compares two traces or bundles (baseline and candidate), or N of them."""
     from cta import api
@@ -196,6 +278,29 @@ def compare_command(
                 "interconnect": interconnect,
                 "baseline_interconnect": baseline_interconnect,
                 "cache_dir": cache_dir,
+                "streaming": streaming if streaming != "auto" else None,
+                "graph_engine": (
+                    engine_name if engine_name != "gridgraph" else None
+                ),
+                "quantile_sketch": (
+                    quantile_sketch if quantile_sketch != "ddsketch" else None
+                ),
+                "memory_budget_bytes": (
+                    int(memory_gb * 1024**3) if memory_gb > 0.0 else None
+                ),
+                "collective_sync": (
+                    collective_sync if collective_sync != "none" else None
+                ),
+                "goal_semantics": (
+                    goal_semantics if goal_semantics != "cta_legacy" else None
+                ),
+                "window_size": window_size if window_size != 262144 else None,
+                "fail_on_cycle": True if fail_on_cycle else None,
+                "extract_critical_path_ops": (
+                    True if critical_path_ops else None
+                ),
+                "delay_attribution": True if delay_attribution else None,
+                "scratch_dir": scratch_dir,
             }
             for field_name, value in overrides.items():
                 if value is not None:
@@ -230,8 +335,19 @@ def compare_command(
                 baseline_interconnect=baseline_interconnect,
                 cache_dir=cache_dir or pathlib.Path(".cta_cache"),
                 labels=output.split_comma_separated(labels),
+                streaming=streaming,
+                graph_engine=engine_name,
+                quantile_sketch=quantile_sketch,
+                memory_budget_bytes=int(memory_gb * 1024**3),
+                collective_sync=collective_sync,
+                goal_semantics=goal_semantics,
+                window_size=window_size,
+                fail_on_cycle=fail_on_cycle,
+                extract_critical_path_ops=critical_path_ops,
+                delay_attribution=delay_attribution,
+                scratch_dir=scratch_dir,
             )
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, FileNotFoundError, RuntimeError) as exc:
         # For example an unknown gate metric, no common formats or
         # inapplicable aspects.
         output.print_error(exc)

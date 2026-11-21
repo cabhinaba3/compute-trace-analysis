@@ -10,8 +10,10 @@ from cta import models
 from cta import plugins
 from cta.analysis import interconnect
 from cta.analysis import stats
+from cta.analysis import streaming
 from cta.analysis import whatif
 from cta.aspects.distributed import graph_tables
+from cta.ingest import cache
 
 
 @plugins.register_aspect(
@@ -89,9 +91,46 @@ class WhatIfAspect(plugins.Aspect):
                 "whatif_makespan_us": [],
                 "whatif_residual": [],
             }
-            for trial_index, table_paths in enumerate(tables[group.group_id]):
-                nodes, edges, _ = graph_tables.read_graph_tables(table_paths)
-                model = whatif.build_model(nodes, edges)
+            store = cache.CacheStore(config.cache_dir)
+            for trial_index, (trial, table_paths) in enumerate(
+                zip(group.trials, tables[group.group_id], strict=True)
+            ):
+                artifact = streaming.pick_graph_artifact(trial)
+                has_parquet = any(
+                    f"{fmt}.nodes" in table_paths
+                    for fmt in graph_tables.FORMATS
+                )
+                use_stream = artifact is not None and (
+                    not has_parquet
+                    or streaming.resolve_streaming_tier(artifact, config)
+                    != "off"
+                )
+                model: whatif.WhatIfModel | whatif.StreamingWhatIfModel
+                if use_stream and artifact is not None:
+                    gc_path = table_paths.get(
+                        f"{artifact.format}.graph_cache"
+                    ) or table_paths.get("graph_cache")
+                    if gc_path is None:
+                        gc_path = store.graph_cache_path(
+                            artifact,
+                            goal_semantics=config.goal_semantics,
+                            collective_sync=config.collective_sync,
+                        )
+                    model = whatif.build_streaming_model_from_artifact(
+                        artifact,
+                        cache_path=gc_path,
+                        goal_semantics=config.goal_semantics,
+                        collective_sync=config.collective_sync,
+                        memory_budget_bytes=config.memory_budget_bytes,
+                        scratch_dir=str(config.scratch_dir)
+                        if config.scratch_dir
+                        else "",
+                    )
+                else:
+                    nodes, edges, _ = graph_tables.read_graph_tables(
+                        table_paths
+                    )
+                    model = whatif.build_model(nodes, edges)
                 is_baseline = index == 0
                 # With no new interconnect the baseline and the scenario
                 # share one solve; with one, the scenario runs on the
@@ -103,6 +142,7 @@ class WhatIfAspect(plugins.Aspect):
                     [scenario]
                     if scenario and is_baseline and not reprices
                     else [],
+                    memory_budget_bytes=config.memory_budget_bytes,
                 )
                 makespan_us = run.table["makespan_ns"].to_numpy() / 1e3
                 values["whatif_makespan_us"].append(float(makespan_us[0]))
@@ -111,7 +151,9 @@ class WhatIfAspect(plugins.Aspect):
                 elif reprices:
                     assert new_net is not None
                     predicted = whatif.run_scenarios(
-                        whatif.reprice(model, new_net, base_net), [scenario]
+                        whatif.reprice(model, new_net, base_net),
+                        [scenario],
+                        memory_budget_bytes=config.memory_budget_bytes,
                     )
                     predicted_us = (
                         predicted.table["makespan_ns"].to_numpy() / 1e3
@@ -126,7 +168,9 @@ class WhatIfAspect(plugins.Aspect):
                 else:
                     values["whatif_residual"].append(float(makespan_us[0]))
                 if is_baseline and trial_index == 0:
-                    result = whatif.sweep(model)
+                    result = whatif.sweep(
+                        model, memory_budget_bytes=config.memory_budget_bytes
+                    )
                     details["sweep"] = result.table
                     details["ceiling"] = result.ceiling
             trials.append(values)

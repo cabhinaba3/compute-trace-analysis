@@ -38,6 +38,18 @@ def _config(
     cache_dir: str | pathlib.Path,
     gates: dict[str, float] | None = None,
     allow_missing_gates: bool = False,
+    streaming: str = "auto",
+    graph_engine: str = "gridgraph",
+    quantile_sketch: str = "ddsketch",
+    memory_budget_bytes: int = 0,
+    collective_sync: str = "none",
+    goal_semantics: str = "cta_legacy",
+    window_size: int = 262144,
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    delay_attribution: bool = False,
+    scratch_dir: str | pathlib.Path | None = None,
+    parquet_bypass_bytes: int = 2 * 1024**3,
 ) -> models.AnalysisConfig:
     """Builds the config; empty sequences mean "all", like None."""
     return models.AnalysisConfig(
@@ -55,6 +67,18 @@ def _config(
         interconnect=interconnect,
         baseline_interconnect=baseline_interconnect,
         cache_dir=pathlib.Path(cache_dir),
+        streaming=streaming,
+        graph_engine=graph_engine,
+        quantile_sketch=quantile_sketch,
+        memory_budget_bytes=memory_budget_bytes,
+        collective_sync=collective_sync,
+        goal_semantics=goal_semantics,
+        window_size=window_size,
+        fail_on_cycle=fail_on_cycle,
+        extract_critical_path_ops=extract_critical_path_ops,
+        delay_attribution=delay_attribution,
+        scratch_dir=pathlib.Path(scratch_dir) if scratch_dir else None,
+        parquet_bypass_bytes=parquet_bypass_bytes,
     )
 
 
@@ -92,6 +116,18 @@ def analyze(
     baseline_interconnect: str | None = None,
     cache_dir: str | pathlib.Path = ".cta_cache",
     label: str | None = None,
+    streaming: str = "auto",
+    graph_engine: str = "gridgraph",
+    quantile_sketch: str = "ddsketch",
+    memory_budget_bytes: int = 0,
+    collective_sync: str = "none",
+    goal_semantics: str = "cta_legacy",
+    window_size: int = 262144,
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    delay_attribution: bool = False,
+    scratch_dir: str | pathlib.Path | None = None,
+    parquet_bypass_bytes: int = 2 * 1024**3,
 ) -> models.Report:
     """Analyses a single trace, run bundle directory or multi-trial group.
 
@@ -114,6 +150,21 @@ def analyze(
         baseline_interconnect: The interconnect the baseline was measured on.
         cache_dir: Directory of the Parquet ingest cache.
         label: Label of the group; defaults to the bundle's label.
+        streaming: Execution-graph streaming mode (``auto``, ``exact``,
+            ``frontier``, ``windowed``, ``aggregate``, ``off``).
+        graph_engine: Out-of-core / streaming DAG engine (``gridgraph``,
+            ``graphchi``, ``xstream``, ``frontier``).
+        quantile_sketch: Streaming quantile sketch (``ddsketch``, ``kll``,
+            ``gk``, ``exact``).
+        memory_budget_bytes: RAM budget in bytes (0 = auto 60% free).
+        collective_sync: Cross-rank collective sync (``none`` or ``barrier``).
+        goal_semantics: GOAL interpretation (``cta_legacy`` or ``strict``).
+        window_size: Frontier / windowed cache size in nodes.
+        fail_on_cycle: Raise ``RuntimeError`` when a DAG cycle is detected.
+        extract_critical_path_ops: Include exact critical-path op chain table.
+        delay_attribution: Enable Scalasca backward wait-state attribution.
+        scratch_dir: Optional directory for out-of-core scratch files.
+        parquet_bypass_bytes: Raw size threshold for Parquet bypass in auto.
 
     Returns:
         The report, in ``"single"`` mode.
@@ -137,6 +188,18 @@ def analyze(
         interconnect=interconnect,
         baseline_interconnect=baseline_interconnect,
         cache_dir=cache_dir,
+        streaming=streaming,
+        graph_engine=graph_engine,
+        quantile_sketch=quantile_sketch,
+        memory_budget_bytes=memory_budget_bytes,
+        collective_sync=collective_sync,
+        goal_semantics=goal_semantics,
+        window_size=window_size,
+        fail_on_cycle=fail_on_cycle,
+        extract_critical_path_ops=extract_critical_path_ops,
+        delay_attribution=delay_attribution,
+        scratch_dir=scratch_dir,
+        parquet_bypass_bytes=parquet_bypass_bytes,
     )
     return engine.run_comparison((group,), config)
 
@@ -160,6 +223,18 @@ def compare(
     baseline_interconnect: str | None = None,
     cache_dir: str | pathlib.Path = ".cta_cache",
     labels: Sequence[str] | None = None,
+    streaming: str = "auto",
+    graph_engine: str = "gridgraph",
+    quantile_sketch: str = "ddsketch",
+    memory_budget_bytes: int = 0,
+    collective_sync: str = "none",
+    goal_semantics: str = "cta_legacy",
+    window_size: int = 262144,
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    delay_attribution: bool = False,
+    scratch_dir: str | pathlib.Path | None = None,
+    parquet_bypass_bytes: int = 2 * 1024**3,
 ) -> models.Report:
     """Compares a baseline with one or more candidates.
 
@@ -191,6 +266,18 @@ def compare(
         cache_dir: Directory of the Parquet ingest cache.
         labels: Labels for the inputs, in order; inputs past the end of
             the list keep their default label.
+        streaming: Execution-graph streaming mode.
+        graph_engine: Out-of-core / streaming DAG engine.
+        quantile_sketch: Streaming quantile sketch algorithm.
+        memory_budget_bytes: RAM budget in bytes (0 = auto).
+        collective_sync: Cross-rank collective sync (``none`` or ``barrier``).
+        goal_semantics: GOAL interpretation (``cta_legacy`` or ``strict``).
+        window_size: Frontier / windowed cache size in nodes.
+        fail_on_cycle: Raise ``RuntimeError`` when a DAG cycle is detected.
+        extract_critical_path_ops: Include exact critical-path op chain table.
+        delay_attribution: Enable Scalasca backward wait-state attribution.
+        scratch_dir: Optional directory for out-of-core scratch files.
+        parquet_bypass_bytes: Raw size threshold for Parquet bypass in auto.
 
     Returns:
         The report, in ``"pair"`` or ``"multi"`` mode.
@@ -223,6 +310,18 @@ def compare(
         interconnect=interconnect,
         baseline_interconnect=baseline_interconnect,
         cache_dir=cache_dir,
+        streaming=streaming,
+        graph_engine=graph_engine,
+        quantile_sketch=quantile_sketch,
+        memory_budget_bytes=memory_budget_bytes,
+        collective_sync=collective_sync,
+        goal_semantics=goal_semantics,
+        window_size=window_size,
+        fail_on_cycle=fail_on_cycle,
+        extract_critical_path_ops=extract_critical_path_ops,
+        delay_attribution=delay_attribution,
+        scratch_dir=scratch_dir,
+        parquet_bypass_bytes=parquet_bypass_bytes,
     )
     return engine.run_comparison(_with_distinct_labels(groups), config)
 

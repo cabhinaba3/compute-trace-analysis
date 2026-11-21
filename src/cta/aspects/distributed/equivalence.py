@@ -14,6 +14,7 @@ import polars as pl
 from cta import models
 from cta import plugins
 from cta.analysis import stats
+from cta.analysis import streaming
 from cta.ingest import cache
 from cta.ingest import discovery
 
@@ -108,6 +109,25 @@ def _expected_goal_send_bytes(
     return p2p_bytes + collective_bytes
 
 
+def _expected_goal_send_bytes_from_summary(
+    agg: streaming.StreamingAggregateSummary,
+    world_size: int,
+    collective_algorithm: str,
+) -> float:
+    """Computes expected GOAL send bytes directly from an Engine A summary."""
+    n_ranks = max(1, world_size)
+    p2p_bytes = float(agg.total_send_bytes)
+    if not agg.coll_bytes_by_type or n_ranks <= 1:
+        return p2p_bytes
+    algorithm = collective_algorithm.lower()
+    collective_bytes = sum(
+        float(bytes_sum)
+        * _collective_send_factor(str(comm_type), n_ranks, algorithm)
+        for comm_type, bytes_sum in agg.coll_bytes_by_type.items()
+    )
+    return p2p_bytes + collective_bytes
+
+
 def verify_chakra_goal_equivalence(
     chakra_source: str | pathlib.Path,
     goal_source: str | pathlib.Path,
@@ -115,6 +135,7 @@ def verify_chakra_goal_equivalence(
     collective_algorithm: str = "ring",
     rel_tol: float = 0.02,
     cache_dir: str | pathlib.Path = ".cta_cache",
+    streaming_mode: str = "auto",
 ) -> EquivalenceVerdict:
     """Checks that a GOAL schedule conserves the work of a Chakra-ET trace.
 
@@ -131,6 +152,8 @@ def verify_chakra_goal_equivalence(
         rel_tol: Largest relative error at which the compute and
             communication checks still pass.
         cache_dir: Directory of the Parquet ingest cache.
+        streaming_mode: ``"auto"``, ``"on"``, or ``"off"``; streaming uses
+            1-pass Engine A aggregates without materializing Parquet tables.
 
     Returns:
         The verdict, with one row per check.
@@ -162,49 +185,82 @@ def verify_chakra_goal_equivalence(
             f"{sorted(goal_bundle.formats)}"
         )
 
-    chakra_table_paths = store.get_or_ingest(
-        chakra_bundle.artifacts[chakra_format],
-        plugins.ADAPTERS[chakra_format],
-    )
-    goal_table_paths = store.get_or_ingest(
-        goal_bundle.artifacts["goal"], plugins.ADAPTERS["goal"]
-    )
-    chakra_nodes = pl.read_parquet(chakra_table_paths["nodes"])
-    goal_nodes = pl.read_parquet(goal_table_paths["nodes"])
-
-    world_size_chakra = (
-        int(chakra_nodes["rank"].n_unique()) if chakra_nodes.height else 0
-    )
-    world_size_goal = (
-        int(goal_nodes["rank"].n_unique()) if goal_nodes.height else 0
+    chakra_art = chakra_bundle.artifacts[chakra_format]
+    goal_art = goal_bundle.artifacts["goal"]
+    mode = streaming_mode.lower().strip()
+    if mode not in ("auto", "on", "off", "aggregate", "exact"):
+        raise ValueError(
+            f"Unknown streaming mode {streaming_mode!r}; use auto, on, or off"
+        )
+    use_stream = mode != "off" and (
+        mode in ("on", "aggregate", "exact")
+        or streaming.artifact_raw_bytes(chakra_art)
+        + streaming.artifact_raw_bytes(goal_art)
+        >= 128 * 1024 * 1024
     )
 
-    chakra_compute_ns = _op_class_sum(chakra_nodes, "compute", "duration_ns")
-    goal_compute_ns = _op_class_sum(goal_nodes, "compute", "duration_ns")
+    if use_stream:
+        chakra_agg = streaming.aggregate_artifact_cached(chakra_art)
+        goal_agg = streaming.aggregate_artifact_cached(goal_art)
+        world_size_chakra = chakra_agg.world_size
+        world_size_goal = goal_agg.world_size
+        chakra_compute_ns = float(chakra_agg.total_compute_ns)
+        goal_compute_ns = float(goal_agg.total_compute_ns)
+        expected_comm_bytes = _expected_goal_send_bytes_from_summary(
+            chakra_agg,
+            max(world_size_chakra, world_size_goal),
+            collective_algorithm,
+        )
+        observed_comm_bytes = float(goal_agg.total_send_bytes)
+        goal_sends = int(goal_agg.send_count)
+        goal_recvs = int(goal_agg.recv_count)
+    else:
+        chakra_table_paths = store.get_or_ingest(
+            chakra_art,
+            plugins.ADAPTERS[chakra_format],
+        )
+        goal_table_paths = store.get_or_ingest(
+            goal_art, plugins.ADAPTERS["goal"]
+        )
+        chakra_nodes = pl.read_parquet(chakra_table_paths["nodes"])
+        goal_nodes = pl.read_parquet(goal_table_paths["nodes"])
+
+        world_size_chakra = (
+            int(chakra_nodes["rank"].n_unique()) if chakra_nodes.height else 0
+        )
+        world_size_goal = (
+            int(goal_nodes["rank"].n_unique()) if goal_nodes.height else 0
+        )
+
+        chakra_compute_ns = _op_class_sum(
+            chakra_nodes, "compute", "duration_ns"
+        )
+        goal_compute_ns = _op_class_sum(goal_nodes, "compute", "duration_ns")
+        expected_comm_bytes = _expected_goal_send_bytes(
+            chakra_nodes,
+            max(world_size_chakra, world_size_goal),
+            collective_algorithm,
+        )
+        observed_comm_bytes = _op_class_sum(
+            goal_nodes, "comm_send", "size_bytes"
+        )
+        goal_sends = int(
+            goal_nodes.filter(pl.col("op_class") == "comm_send").height
+        )
+        goal_recvs = int(
+            goal_nodes.filter(pl.col("op_class") == "comm_recv").height
+        )
+
     compute_rel_error = (
         abs(goal_compute_ns - chakra_compute_ns) / max(chakra_compute_ns, 1.0)
         if (chakra_compute_ns > 0 or goal_compute_ns > 0)
         else 0.0
     )
-
-    expected_comm_bytes = _expected_goal_send_bytes(
-        chakra_nodes,
-        max(world_size_chakra, world_size_goal),
-        collective_algorithm,
-    )
-    observed_comm_bytes = _op_class_sum(goal_nodes, "comm_send", "size_bytes")
     comm_rel_error = (
         abs(observed_comm_bytes - expected_comm_bytes)
         / max(expected_comm_bytes, 1.0)
         if (expected_comm_bytes > 0 or observed_comm_bytes > 0)
         else 0.0
-    )
-
-    goal_sends = int(
-        goal_nodes.filter(pl.col("op_class") == "comm_send").height
-    )
-    goal_recvs = int(
-        goal_nodes.filter(pl.col("op_class") == "comm_recv").height
     )
     send_recv_rel_error = (
         0.0
@@ -298,29 +354,69 @@ class ScheduleEquivalenceAspect(plugins.Aspect):
         for group in groups:
             compute_mismatch_pct: list[float] = []
             comm_mismatch_pct: list[float] = []
-            for table_paths in tables[group.group_id]:
-                chakra_nodes = pl.read_parquet(table_paths["chakra.nodes"])
-                goal_nodes = pl.read_parquet(table_paths["goal.nodes"])
-                world_size = max(
-                    int(chakra_nodes["rank"].n_unique()),
-                    int(goal_nodes["rank"].n_unique()),
+            for trial, table_paths in zip(
+                group.trials, tables[group.group_id], strict=True
+            ):
+                has_parquet = (
+                    "chakra.nodes" in table_paths
+                    and "goal.nodes" in table_paths
                 )
-                chakra_compute_ns = _op_class_sum(
-                    chakra_nodes, "compute", "duration_ns"
+                chakra_art = trial.artifacts.get("chakra")
+                goal_art = trial.artifacts.get("goal")
+                use_stream = (
+                    chakra_art is not None
+                    and goal_art is not None
+                    and (
+                        not has_parquet
+                        or streaming.resolve_streaming_tier(chakra_art, config)
+                        != "off"
+                    )
                 )
-                goal_compute_ns = _op_class_sum(
-                    goal_nodes, "compute", "duration_ns"
-                )
+                if (
+                    use_stream
+                    and chakra_art is not None
+                    and goal_art is not None
+                ):
+                    c_agg = streaming.aggregate_artifact_cached(
+                        chakra_art,
+                        quantile_sketch=config.quantile_sketch,
+                        goal_semantics=config.goal_semantics,
+                    )
+                    g_agg = streaming.aggregate_artifact_cached(
+                        goal_art,
+                        quantile_sketch=config.quantile_sketch,
+                        goal_semantics=config.goal_semantics,
+                    )
+                    world_size = max(c_agg.world_size, g_agg.world_size)
+                    chakra_compute_ns = float(c_agg.total_compute_ns)
+                    goal_compute_ns = float(g_agg.total_compute_ns)
+                    expected_bytes = _expected_goal_send_bytes_from_summary(
+                        c_agg, world_size, config.collective_algorithm
+                    )
+                    observed_bytes = float(g_agg.total_send_bytes)
+                else:
+                    chakra_nodes = pl.read_parquet(table_paths["chakra.nodes"])
+                    goal_nodes = pl.read_parquet(table_paths["goal.nodes"])
+                    world_size = max(
+                        int(chakra_nodes["rank"].n_unique()),
+                        int(goal_nodes["rank"].n_unique()),
+                    )
+                    chakra_compute_ns = _op_class_sum(
+                        chakra_nodes, "compute", "duration_ns"
+                    )
+                    goal_compute_ns = _op_class_sum(
+                        goal_nodes, "compute", "duration_ns"
+                    )
+                    expected_bytes = _expected_goal_send_bytes(
+                        chakra_nodes, world_size, config.collective_algorithm
+                    )
+                    observed_bytes = _op_class_sum(
+                        goal_nodes, "comm_send", "size_bytes"
+                    )
                 compute_mismatch_pct.append(
                     abs(goal_compute_ns - chakra_compute_ns)
                     / max(chakra_compute_ns, 1.0)
                     * 100.0
-                )
-                expected_bytes = _expected_goal_send_bytes(
-                    chakra_nodes, world_size, config.collective_algorithm
-                )
-                observed_bytes = _op_class_sum(
-                    goal_nodes, "comm_send", "size_bytes"
                 )
                 comm_mismatch_pct.append(
                     abs(observed_bytes - expected_bytes)

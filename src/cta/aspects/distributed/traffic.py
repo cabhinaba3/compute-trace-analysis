@@ -10,6 +10,7 @@ import polars as pl
 from cta import models
 from cta import plugins
 from cta.analysis import stats
+from cta.analysis import streaming
 from cta.aspects.distributed import graph_tables
 
 
@@ -70,7 +71,37 @@ class TrafficMatrixAspect(plugins.Aspect):
                 "total_p2p_mb": [],
             }
             trial_links: list[pl.DataFrame] = []
-            for table_paths in tables[group.group_id]:
+            for trial, table_paths in zip(
+                group.trials, tables[group.group_id], strict=True
+            ):
+                artifact = streaming.pick_graph_artifact(trial)
+                has_parquet = any(
+                    f"{fmt}.nodes" in table_paths
+                    for fmt in graph_tables.FORMATS
+                )
+                use_stream = artifact is not None and (
+                    not has_parquet
+                    or streaming.resolve_streaming_tier(artifact, config)
+                    != "off"
+                )
+                if use_stream and artifact is not None:
+                    agg = streaming.aggregate_artifact_cached(
+                        artifact,
+                        quantile_sketch=config.quantile_sketch,
+                        goal_semantics=config.goal_semantics,
+                    )
+                    metric_values["active_rank_links"].append(
+                        float(agg.active_rank_links)
+                    )
+                    metric_values["hotspot_link_mb"].append(agg.hotspot_link_mb)
+                    metric_values["mean_peer_degree"].append(
+                        agg.mean_peer_degree
+                    )
+                    metric_values["total_p2p_mb"].append(agg.total_p2p_mb)
+                    if agg.traffic.height:
+                        trial_links.append(_link_volumes(agg.traffic))
+                    continue
+
                 nodes, _, traffic = graph_tables.read_graph_tables(table_paths)
                 world_size = (
                     int(nodes["rank"].n_unique()) if nodes.height else 1

@@ -10,6 +10,7 @@ import polars as pl
 from cta import models
 from cta import plugins
 from cta.analysis import stats
+from cta.analysis import streaming
 from cta.aspects.distributed import graph_tables
 
 
@@ -87,7 +88,46 @@ class RankSkewAspect(plugins.Aspect):
                 "comm_jains_fairness": [],
             }
             last_per_rank = pl.DataFrame()
-            for table_paths in tables[group.group_id]:
+            for trial, table_paths in zip(
+                group.trials, tables[group.group_id], strict=True
+            ):
+                artifact = streaming.pick_graph_artifact(trial)
+                has_parquet = any(
+                    f"{fmt}.nodes" in table_paths
+                    for fmt in graph_tables.FORMATS
+                )
+                use_stream = artifact is not None and (
+                    not has_parquet
+                    or streaming.resolve_streaming_tier(artifact, config)
+                    != "off"
+                )
+                if use_stream and artifact is not None:
+                    agg = streaming.aggregate_artifact_cached(
+                        artifact,
+                        quantile_sketch=config.quantile_sketch,
+                        goal_semantics=config.goal_semantics,
+                    )
+                    if agg.num_nodes == 0:
+                        continue
+                    last_per_rank = agg.per_rank
+                    metric_values["world_size"].append(float(agg.world_size))
+                    metric_values["max_rank_compute_us"].append(
+                        agg.max_rank_compute_us
+                    )
+                    metric_values["mean_rank_compute_us"].append(
+                        agg.mean_rank_compute_us
+                    )
+                    metric_values["compute_skew_ratio"].append(
+                        agg.compute_skew_ratio
+                    )
+                    metric_values["max_rank_comm_mb"].append(
+                        agg.max_rank_comm_mb
+                    )
+                    metric_values["comm_jains_fairness"].append(
+                        agg.comm_jains_fairness
+                    )
+                    continue
+
                 nodes, _, _ = graph_tables.read_graph_tables(table_paths)
                 if nodes.is_empty():
                     continue

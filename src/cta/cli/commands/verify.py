@@ -31,6 +31,13 @@ def verify_equivalence_command(
     cache_dir: Annotated[
         pathlib.Path, typer.Option("--cache-dir")
     ] = pathlib.Path(".cta_cache"),
+    streaming: Annotated[
+        str,
+        typer.Option(
+            "--streaming",
+            help="Streaming 1-pass aggregate verification: auto, on, or off.",
+        ),
+    ] = "auto",
 ) -> None:
     """Checks that a Chakra ET and a GOAL trace describe the same run.
 
@@ -44,6 +51,7 @@ def verify_equivalence_command(
         collective_algorithm=collective_algorithm,
         rel_tol=rel_tol,
         cache_dir=cache_dir,
+        streaming_mode=streaming,
     )
     checks_table = table.Table(title="Chakra-ET <-> GOAL Equivalence Check")
     for column in ("check", "expected", "observed", "rel_error", "passed"):

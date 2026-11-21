@@ -155,6 +155,73 @@ class CacheStore:
         tmp_meta_path.replace(meta_path)
         return table_paths
 
+    def graph_cache_path(
+        self,
+        artifact: models.TraceArtifact,
+        *,
+        goal_semantics: str = "cta_legacy",
+        collective_sync: str = "none",
+    ) -> pathlib.Path:
+        """Returns the content-addressed `.cta_graph` path for an artifact."""
+        digest = artifact.digest or compute_artifact_digest(
+            artifact, "graph_cache_v1"
+        )
+        target_dir = self.entry_dir(digest)
+        return (
+            target_dir / f"graph_{goal_semantics}_{collective_sync}.cta_graph"
+        )
+
+    def get_or_build_graph_cache(
+        self,
+        artifact: models.TraceArtifact,
+        *,
+        goal_semantics: str = "cta_legacy",
+        collective_sync: str = "none",
+        memory_budget_bytes: int = 0,
+        fail_on_cycle: bool = False,
+        scratch_dir: str = "",
+    ) -> pathlib.Path:
+        """Returns the cached `.cta_graph` path, building it on a miss."""
+        from cta import _native as native
+        from cta.analysis import streaming
+
+        cache_path = self.graph_cache_path(
+            artifact,
+            goal_semantics=goal_semantics,
+            collective_sync=collective_sync,
+        )
+        if cache_path.exists():
+            return cache_path
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}")
+        try:
+            stream, _ = streaming.open_stream_for_artifact(
+                artifact, goal_semantics=goal_semantics
+            )
+            native.build_graph_cache(
+                stream,
+                str(tmp_path),
+                memory_budget_bytes=memory_budget_bytes,
+                goal_semantics=goal_semantics,
+                collective_sync=collective_sync,
+                world_size_hint=artifact.world_size,
+                fail_on_cycle=fail_on_cycle,
+                scratch_dir=scratch_dir,
+            )
+            tmp_path.replace(cache_path)
+        except Exception:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+        return cache_path
+
+    def ensure_parquet_tables(
+        self, artifact: models.TraceArtifact
+    ) -> dict[str, pathlib.Path]:
+        """Lazily materializes Parquet tables for a bypassed artifact."""
+        adapter = plugins.ADAPTERS[artifact.format]
+        return self.get_or_ingest(artifact, adapter)
+
     def status(self) -> dict[str, int]:
         """Returns the number of cache entries and their total size.
 

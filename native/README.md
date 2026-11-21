@@ -33,7 +33,11 @@ src/
     ordered_pool.hpp        worker threads whose results are merged in task order
   analysis/               namespace cta::analysis: dag (critical path and
                           slack), dag_edges (the graph's edge list), intervals
-                          (nesting_parents)
+                          (nesting_parents), whatif (in-memory DagPlan)
+  streaming/              namespace cta::streaming: bounded-RAM streaming graph
+                          sources, quantile sketches, .cta_graph block cache,
+                          Scalasca delay attribution, and pluggable DAG/what-if
+                          engines (see below)
   readers/<format>/       namespace cta::readers: one reader per format, with
                           reader.hpp declaring read_<format>() and its columns
   synth/                  namespace cta::synth: one generator per format
@@ -118,6 +122,29 @@ Two rules keep the output independent of thread count, chunk size and block
 size: chunks are merged in file order, and ids are assigned at the merge, not
 while parsing. `tests/unit/native/test_kineto_reader.py` checks this by cutting
 the same file at many sizes, down to one byte.
+
+## streaming/
+
+Chunked, bounded-memory execution-graph streaming and out-of-core solvers for GOAL (`.bin`/`.goal`) and Chakra-ET (`.et`/host `.json`):
+
+```
+streaming/
+  batch.hpp, scratch.hpp          canonical SoA NodeBatch/EdgeBatch, StreamProvenance, RAII ScratchDir
+  sources/                        chunked GraphSource readers (goal_bin, goal_text, chakra_et, chakra_host)
+  sketches/                       pluggable Hybrid Exact-First -> DDSketch, KLL, Greenwald-Khanna quantiles
+  cache/graph_cache.{hpp,cpp}     .cta_graph 2D GridGraph topological block cache (64B TopoVertexMeta POD)
+  attribution/scalasca_delay.hpp  Scalasca backward wait-state & delay root-cause accumulator (IPDPS '12)
+  engines/
+    engine.hpp, engine_registry.cpp  pluggable GraphEngine interface & factory
+    online_agg/                      Engine A: 1-pass O(P^2) aggregates + sketches
+    frontier/                        Engine B: 1-pass Kahn frontier + Certified Eviction-Epoch intervals
+    gridgraph/                       Engine C default: GridGraph (USENIX ATC '15) 2-pass exact DAG + Scalasca
+    graphchi/                        pluggable GraphChi PSW (OSDI '12) out-of-core DAG solver
+    xstream/                         pluggable X-Stream Scatter-Gather (SOSP '13) out-of-core DAG solver
+    whatif/                          Engine D: block-streaming multi-lane what-if + 1-byte winner log
+```
+
+All streaming DAG, cache, and what-if translation units compile with `-ffp-contract=off` (applied via `TARGET_DIRECTORY _native`) and use Neumaier compensated summation (`util/compensated_sum.hpp`) for cross-CPU determinism and bit-exact parity with `analysis/dag.cpp` and `analysis/whatif.cpp`.
 
 The splitter's inner loop (`Splitter::feed` and `skip_event`) and the event
 parser (`add_event` and the `read_*` helpers) each stay in one source file, so

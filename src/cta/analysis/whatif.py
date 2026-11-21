@@ -309,6 +309,16 @@ class WhatIfModel:
             self._labels = op_label(self.nodes)
         return self._labels
 
+    @property
+    def num_nodes(self) -> int:
+        """Number of vertices in the graph."""
+        return self.graph.num_nodes
+
+    @property
+    def num_edges(self) -> int:
+        """Number of deduplicated edges in the graph."""
+        return self.plan.num_edges
+
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class StreamingWhatIfModel:

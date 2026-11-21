@@ -21,27 +21,52 @@ from cta.ingest import cache
 def ingest_group_tables(
     groups: Sequence[models.TrialGroup],
     store: cache.CacheStore,
+    config: models.AnalysisConfig | None = None,
 ) -> dict[str, list[dict[str, pathlib.Path]]]:
     """Ingests (or fetches from the cache) every artifact of every group.
 
     Each trial's tables from all of its formats are merged into one map.
     Every table appears under ``<format>.<table>`` and under its bare name;
     when several formats have a table with the same bare name, the first
-    format's table keeps it.
+    format's table keeps it. When streaming Parquet bypass is active for a
+    distributed execution graph, full ``nodes``/``edges`` Parquet files are
+    skipped and a ``.cta_graph`` cache is built on demand instead.
 
     Args:
         groups: The trial groups to ingest.
         store: The cache that holds the ingested Parquet tables.
+        config: Optional analysis config controlling streaming Parquet bypass.
 
     Returns:
-        Group id -> one map of table name -> Parquet path per trial.
+        Group id -> one map of table name -> cached path per trial.
     """
+    from cta.analysis import streaming
+
     tables_by_group: dict[str, list[dict[str, pathlib.Path]]] = {}
     for group in groups:
         trial_tables: list[dict[str, pathlib.Path]] = []
         for trial in group.trials:
             merged: dict[str, pathlib.Path] = {}
             for trace_format, artifact in trial.artifacts.items():
+                if config is not None and streaming.should_bypass_parquet(
+                    artifact, config
+                ):
+                    tier = streaming.resolve_streaming_tier(artifact, config)
+                    if tier == "exact" and config.graph_engine == "gridgraph":
+                        gc_path = store.get_or_build_graph_cache(
+                            artifact,
+                            goal_semantics=config.goal_semantics,
+                            collective_sync=config.collective_sync,
+                            memory_budget_bytes=config.memory_budget_bytes,
+                            fail_on_cycle=config.fail_on_cycle,
+                            scratch_dir=str(config.scratch_dir)
+                            if config.scratch_dir
+                            else "",
+                        )
+                        merged[f"{trace_format}.graph_cache"] = gc_path
+                        merged.setdefault("graph_cache", gc_path)
+                    merged[f"{trace_format}.streaming"] = artifact.paths[0]
+                    continue
                 adapter = plugins.ADAPTERS[trace_format]
                 format_tables = store.get_or_ingest(artifact, adapter)
                 for table_name, table_path in format_tables.items():
@@ -126,8 +151,21 @@ def run_comparison(
         )
 
     store = cache.CacheStore(config.cache_dir)
-    tables = ingest_group_tables(group_tuple, store)
+    tables = ingest_group_tables(group_tuple, store, config=config)
     aspect_names = select_aspects(common_formats, config.aspects)
+    if config.streaming == "aggregate":
+        if config.aspects is None:
+            aspect_names = [
+                name
+                for name in aspect_names
+                if name not in ("critical_path", "whatif")
+            ]
+        elif any(name in ("critical_path", "whatif") for name in aspect_names):
+            raise ValueError(
+                "Aspects 'critical_path' and 'whatif' require DAG traversal "
+                "and cannot run under streaming='aggregate'. Use "
+                "streaming='frontier', 'windowed', 'exact', or 'auto'."
+            )
 
     results: dict[str, models.AspectResult] = {}
     for name in aspect_names:

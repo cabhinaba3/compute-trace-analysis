@@ -107,6 +107,26 @@ class AnalysisConfig:
             on, so recorded communication times are scaled by how much
             ``interconnect`` costs against it; None keeps them as recorded.
         cache_dir: Directory of the Parquet ingest cache.
+        streaming: Execution-graph streaming mode: ``"auto"``, ``"exact"``,
+            ``"frontier"``, ``"windowed"``, ``"aggregate"`` or ``"off"``.
+        graph_engine: Out-of-core / streaming DAG engine (``"gridgraph"``,
+            ``"graphchi"``, ``"xstream"``, ``"frontier"``).
+        quantile_sketch: Streaming quantile algorithm for Engine A
+            (``"ddsketch"``, ``"kll"``, ``"gk"``, ``"exact"``).
+        memory_budget_bytes: Hard RAM cap for streaming/out-of-core passes
+            (0 auto-detects 60% of available memory).
+        collective_sync: Cross-rank collective modeling (``"none"`` or
+            ``"barrier"``).
+        goal_semantics: GOAL interpretation (``"cta_legacy"`` or ``"strict"``).
+        window_size: Frontier / windowed solver cache size in nodes.
+        fail_on_cycle: Raise ``RuntimeError`` when a cycle is detected.
+        extract_critical_path_ops: Populate the exact critical-path op chain.
+        delay_attribution: Run Scalasca backward wait-state & delay root-cause
+            attribution (IPDPS '12) during Pass 2.
+        scratch_dir: Optional directory for out-of-core scratch files.
+        parquet_bypass_bytes: Raw artifact size threshold above which
+            ``streaming="auto"`` bypasses full ``nodes``/``edges`` Parquet
+            materialization in favor of ``.cta_graph`` caching.
     """
 
     aspects: tuple[str, ...] | None = None
@@ -126,6 +146,18 @@ class AnalysisConfig:
     cache_dir: pathlib.Path = dataclasses.field(
         default_factory=lambda: pathlib.Path(".cta_cache")
     )
+    streaming: str = "auto"
+    graph_engine: str = "gridgraph"
+    quantile_sketch: str = "ddsketch"
+    memory_budget_bytes: int = 0
+    collective_sync: str = "none"
+    goal_semantics: str = "cta_legacy"
+    window_size: int = 262144
+    fail_on_cycle: bool = False
+    extract_critical_path_ops: bool = False
+    delay_attribution: bool = False
+    scratch_dir: pathlib.Path | None = None
+    parquet_bypass_bytes: int = 2 * 1024**3
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

@@ -105,6 +105,34 @@ def whatif_command(
     cache_dir: Annotated[
         pathlib.Path, typer.Option("--cache-dir", help="Cache directory.")
     ] = pathlib.Path(".cta_cache"),
+    streaming: Annotated[
+        str,
+        typer.Option(
+            "--streaming",
+            help="Bounded-RAM streaming Engine D mode: auto, on, or off.",
+        ),
+    ] = "auto",
+    goal_semantics: Annotated[
+        str,
+        typer.Option(
+            "--goal-semantics",
+            help="GOAL interpretation (streaming mode): cta_legacy or strict.",
+        ),
+    ] = "cta_legacy",
+    collective_sync: Annotated[
+        str,
+        typer.Option(
+            "--collective-sync",
+            help="Collective sync (streaming mode): none or barrier.",
+        ),
+    ] = "none",
+    scratch_dir: Annotated[
+        pathlib.Path | None,
+        typer.Option(
+            "--scratch-dir",
+            help="Directory for temporary streaming what-if scratch files.",
+        ),
+    ] = None,
 ) -> None:
     """Predicts how much faster a run gets if some of its ops get faster.
 
@@ -112,17 +140,48 @@ def whatif_command(
     run's critical path answers where speeding something up pays off.
     """
     from cta.analysis import interconnect as interconnect_model
+    from cta.analysis import streaming as streaming_mod
     from cta.analysis import whatif
+    from cta.ingest import discovery
 
     if output_format not in ("rich", "json"):
         raise typer.BadParameter(
             f"Unknown --format '{output_format}' (expected 'rich' or 'json')."
         )
+    stream_mode = streaming.lower().strip()
+    if stream_mode not in ("auto", "on", "off", "exact"):
+        raise typer.BadParameter(
+            f"Unknown --streaming '{streaming}' (expected auto, on, or off)."
+        )
     budget = int(memory_gb * 1024**3)
     try:
         scenarios = [whatif.parse_scenario(text) for text in speed or []]
         sweep_factors = whatif.parse_factors(factors)
-        model = whatif.load_model(trace, cache_dir=cache_dir)
+        use_stream = stream_mode in ("on", "exact")
+        if stream_mode == "auto":
+            if goal_semantics != "cta_legacy" or collective_sync != "none":
+                use_stream = True
+            else:
+                grp = discovery.resolve_trial_group(trace)
+                art = streaming_mod.pick_graph_artifact(grp.trials[0])
+                if art is not None:
+                    raw_sz = streaming_mod.artifact_raw_bytes(art)
+                    if raw_sz >= 256 * 1024**2 or (
+                        budget > 0 and raw_sz * 6 > budget
+                    ):
+                        use_stream = True
+        model: whatif.WhatIfModel | whatif.StreamingWhatIfModel
+        if use_stream:
+            model = whatif.load_streaming_model(
+                trace,
+                cache_dir=cache_dir,
+                goal_semantics=goal_semantics,
+                collective_sync=collective_sync,
+                memory_budget_bytes=budget,
+                scratch_dir=str(scratch_dir) if scratch_dir else "",
+            )
+        else:
+            model = whatif.load_model(trace, cache_dir=cache_dir)
         if interconnect:
             model = whatif.reprice(
                 model,
@@ -152,9 +211,10 @@ def whatif_command(
 
     if output_format == "json":
         document: dict[str, object] = {
-            "vertices": model.graph.num_nodes,
-            "edges": model.plan.num_edges,
+            "vertices": model.num_nodes,
+            "edges": model.num_edges,
             "prepare_seconds": model.prepare_seconds,
+            "streaming": isinstance(model, whatif.StreamingWhatIfModel),
             "scenarios": run.table.to_dicts(),
         }
         if result is not None:
@@ -166,7 +226,7 @@ def whatif_command(
 
     console = output.console
     console.print(
-        f"{model.graph.num_nodes:,} ops, {model.plan.num_edges:,} edges; "
+        f"{model.num_nodes:,} ops, {model.num_edges:,} edges; "
         f"graph prepared in {model.prepare_seconds:.2f} s"
     )
     if scenarios:

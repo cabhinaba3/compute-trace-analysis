@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -10,6 +11,7 @@ import polars as pl
 from cta import models
 from cta import plugins
 from cta.analysis import stats
+from cta.analysis import streaming
 from cta.aspects.distributed import graph_tables
 
 
@@ -50,6 +52,7 @@ class CollectivesAspect(plugins.Aspect):
         labels = [group.label for group in groups]
         trials: list[dict[str, list[float]]] = []
         breakdown_totals: list[pl.DataFrame] = []
+        prov_rows: list[dict[str, Any]] = []
 
         for group in groups:
             metric_values: dict[str, list[float]] = {
@@ -60,7 +63,41 @@ class CollectivesAspect(plugins.Aspect):
                 "max_msg_kb": [],
             }
             trial_breakdowns: list[pl.DataFrame] = []
-            for table_paths in tables[group.group_id]:
+            for trial_idx, (trial, table_paths) in enumerate(
+                zip(group.trials, tables[group.group_id], strict=True)
+            ):
+                artifact = streaming.pick_graph_artifact(trial)
+                has_parquet = any(
+                    f"{fmt}.nodes" in table_paths
+                    for fmt in graph_tables.FORMATS
+                )
+                use_stream = artifact is not None and (
+                    not has_parquet
+                    or streaming.resolve_streaming_tier(artifact, config)
+                    != "off"
+                )
+                if use_stream and artifact is not None:
+                    agg = streaming.aggregate_artifact_cached(
+                        artifact,
+                        quantile_sketch=config.quantile_sketch,
+                        goal_semantics=config.goal_semantics,
+                    )
+                    prov_rows.append(
+                        streaming.provenance_row(
+                            group.label, trial_idx, agg.provenance
+                        )
+                    )
+                    metric_values["total_comm_mb"].append(agg.total_comm_mb)
+                    metric_values["comm_op_count"].append(
+                        float(agg.comm_op_count)
+                    )
+                    metric_values["median_msg_kb"].append(agg.median_msg_kb)
+                    metric_values["p95_msg_kb"].append(agg.p95_msg_kb)
+                    metric_values["max_msg_kb"].append(agg.max_msg_kb)
+                    if agg.by_comm_type.height:
+                        trial_breakdowns.append(agg.by_comm_type)
+                    continue
+
                 nodes, _, _ = graph_tables.read_graph_tables(table_paths)
                 comm_nodes = nodes.filter(
                     pl.col("op_class").is_in(["comm_coll", "comm_send"])
@@ -134,9 +171,12 @@ class CollectivesAspect(plugins.Aspect):
             value_column="volume_mb",
             count_column="op_count",
         )
+        details: dict[str, pl.DataFrame] = {"by_comm_type": by_comm_type}
+        if prov_rows:
+            details["provenance"] = pl.DataFrame(prov_rows)
         return models.AspectResult(
             name=self.name,
             title=self.title,
             summary=summary,
-            details={"by_comm_type": by_comm_type},
+            details=details,
         )
