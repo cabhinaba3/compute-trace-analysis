@@ -18,6 +18,8 @@
 #include <utility>
 #include <vector>
 
+#include "util/util.hpp"
+
 namespace cta::streaming {
 namespace {
 
@@ -282,7 +284,7 @@ std::int64_t json_as_i64(simdjson::ondemand::value& v, std::int64_t fallback) {
       std::int64_t i = 0;
       if (!v.get_int64().get(i)) return i;
       double d = 0.0;
-      if (!v.get_double().get(d)) return static_cast<std::int64_t>(d);
+      if (!v.get_double().get(d)) return checked_i64(d, fallback);
       return fallback;
     }
     case simdjson::ondemand::json_type::string: {
@@ -408,7 +410,7 @@ void parse_host_json_chunk(const std::string& json_chunk, std::uint32_t rank, si
     if (!has_id) continue;
     const auto [oc, comm_type] = classify_host_op(name);
     const double chosen_us = has_dur_us ? dur_us : (has_duration_micros ? duration_micros : 1.0);
-    const std::int64_t dur_ns_signed = static_cast<std::int64_t>(chosen_us * 1000.0);
+    const std::int64_t dur_ns_signed = checked_i64(chosen_us * 1000.0, 0);
     const std::uint64_t dur_ns = dur_ns_signed > 0 ? static_cast<std::uint64_t>(dur_ns_signed) : 0;
     const std::int64_t chosen_bytes = has_comm_bytes ? comm_bytes : (has_tensor_bytes ? tensor_bytes : 0);
     const std::uint64_t size_bytes = chosen_bytes > 0 ? static_cast<std::uint64_t>(chosen_bytes) : 0;

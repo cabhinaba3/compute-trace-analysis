@@ -7,12 +7,14 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <limits>
 #include <memory>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "util/cpus.hpp"
 #include "util/util.hpp"
@@ -36,6 +38,24 @@ class MappedFile {
       ::close(fd);
       throw std::runtime_error("cannot stat " + path);
     }
+    if (!S_ISREG(st.st_mode)) {
+      // A pipe or FIFO (or /dev/stdin) reports size 0 and cannot be mapped: read it whole.
+      char buf[1 << 16];
+      for (;;) {
+        const ssize_t n = ::read(fd, buf, sizeof buf);
+        if (n < 0) {
+          if (errno == EINTR) continue;
+          ::close(fd);
+          throw std::runtime_error("cannot read " + path);
+        }
+        if (n == 0) break;
+        owned_.insert(owned_.end(), buf, buf + n);
+      }
+      ::close(fd);
+      data_ = owned_.empty() ? nullptr : owned_.data();
+      size_ = owned_.size();
+      return;
+    }
     size_ = static_cast<std::size_t>(st.st_size);
     if (size_ > 0) {  // mmap rejects an empty file
       void* p = ::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd, 0);
@@ -48,7 +68,7 @@ class MappedFile {
     ::close(fd);
   }
   ~MappedFile() {
-    if (data_) ::munmap(const_cast<char*>(data_), size_);
+    if (data_ && owned_.empty()) ::munmap(const_cast<char*>(data_), size_);
   }
   MappedFile(const MappedFile&) = delete;
   MappedFile& operator=(const MappedFile&) = delete;
@@ -58,6 +78,7 @@ class MappedFile {
  private:
   const char* data_ = nullptr;
   std::size_t size_ = 0;
+  std::vector<char> owned_;  // contents of a file that cannot be mapped
 };
 
 // Copies of labels, so a label from a line rewritten by comment removal

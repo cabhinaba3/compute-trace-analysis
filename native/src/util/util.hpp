@@ -2,6 +2,7 @@
 #pragma once
 
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
@@ -16,6 +17,12 @@ inline std::uint64_t mix64(std::uint64_t x) {
   x ^= x >> 27;
   x *= 0x94d049bb133111ebULL;
   return x ^ (x >> 31);
+}
+
+// A double as an int64, or `fallback` when it is NaN or beyond +-4e18. Casting such a value
+// is undefined behaviour, and arm64 and x86 give different answers (saturate or INT64_MIN).
+inline std::int64_t checked_i64(double d, std::int64_t fallback) {
+  return std::fabs(d) < 4.0e18 ? static_cast<std::int64_t>(d) : fallback;
 }
 
 // Appends one vector to the end of another.

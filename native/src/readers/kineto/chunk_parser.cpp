@@ -87,15 +87,21 @@ int64_t text_as_int(std::string_view s) {
   return (end && *end == '\0') ? static_cast<int64_t>(v) : 0;
 }
 
+// ts and dur are in microseconds and become nanoseconds in an int64, with room for start + duration.
+double checked_time(double us) {
+  if (!(std::fabs(us) < 4.0e15)) throw std::invalid_argument("ts and dur must be finite and below 4e15 us");
+  return us;
+}
+
 double read_time(od::value val) {
   switch (val.type().value()) {
     case od::json_type::number:
-      return number_as_double(val.get_number().value());
+      return checked_time(number_as_double(val.get_number().value()));
     case od::json_type::string: {
       std::string s(val.get_string().value());
       char* end = nullptr;
       const double d = std::strtod(s.c_str(), &end);
-      if (!s.empty() && end && *end == '\0') return d;
+      if (!s.empty() && end && *end == '\0') return checked_time(d);
       break;
     }
     default:

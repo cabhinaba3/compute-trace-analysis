@@ -164,31 +164,41 @@ class PipeGoalBinSource final : public GraphSource {
       fd_ = ::open(path.c_str(), O_RDONLY);
       if (fd_ < 0) throw std::runtime_error("cannot open " + path);
     }
-    std::uint8_t head[14];
-    if (!read_exact(fd_, head, 14)) {
-      eof_ = true;
-      return;
-    }
-    const std::uint64_t cookie = load_le<std::uint64_t>(head);
-    if (cookie != kGoalMagicCookie && cookie != kGoalMagicInvalid) {
+    // A throwing constructor never runs the destructor, so close the descriptor here.
+    try {
+      read_header(path);
+    } catch (...) {
       ::close(fd_);
       fd_ = -1;
-      throw std::invalid_argument("Invalid GOAL binary magic cookie in " + path);
+      throw;
     }
-    num_ranks_ = load_le<std::uint32_t>(head + 8);
-    bounds_.resize(static_cast<std::size_t>(num_ranks_) * 2);
-    if (num_ranks_ > 0) {
-      if (!read_exact(fd_, reinterpret_cast<std::uint8_t*>(bounds_.data()), bounds_.size() * sizeof(std::uint64_t))) {
-        ::close(fd_);
-        fd_ = -1;
-        throw std::invalid_argument("truncated GOAL binary rank table in " + path);
-      }
-    }
-    stream_pos_ = 14 + bounds_.size() * sizeof(std::uint64_t);
   }
 
   ~PipeGoalBinSource() override {
     if (fd_ >= 0) ::close(fd_);
+  }
+
+  // A header that is cut short is an error, as it is for a mapped file: an empty
+  // or truncated pipe is not an empty graph.
+  void read_header(const std::string& path) {
+    std::uint8_t head[14];
+    if (!read_exact(fd_, head, 14)) throw std::invalid_argument("truncated GOAL binary header in " + path);
+    const std::uint64_t cookie = load_le<std::uint64_t>(head);
+    if (cookie != kGoalMagicCookie && cookie != kGoalMagicInvalid)
+      throw std::invalid_argument("Invalid GOAL binary magic cookie in " + path);
+    num_ranks_ = load_le<std::uint32_t>(head + 8);
+    // Read the rank table in steps so a bogus rank count cannot allocate gigabytes
+    // before the data is known to exist.
+    constexpr std::size_t kStep = std::size_t{1} << 16;
+    const std::size_t total = static_cast<std::size_t>(num_ranks_) * 2;
+    for (std::size_t done = 0; done < total;) {
+      const std::size_t take = std::min(kStep, total - done);
+      bounds_.resize(done + take);
+      if (!read_exact(fd_, reinterpret_cast<std::uint8_t*>(bounds_.data() + done), take * sizeof(std::uint64_t)))
+        throw std::invalid_argument("truncated GOAL binary rank table in " + path);
+      done += take;
+    }
+    stream_pos_ = 14 + bounds_.size() * sizeof(std::uint64_t);
   }
 
   bool next_chunk(GraphChunk& out, std::size_t max_nodes) override {
@@ -223,7 +233,7 @@ class PipeGoalBinSource final : public GraphSource {
         if (static_cast<std::size_t>(nr.deps_apdx) + nr.num_deps > apdx_len)
           throw std::invalid_argument("GOAL binary requires appendix out of bounds");
         for (std::uint32_t k = 0; k < nr.num_deps; ++k) {
-          out.edges.push(cur_rank_, i, load_le<std::uint32_t>(apdx_base + (nr.deps_apdx + k) * 4), EdgeKind::kRequires);
+          out.edges.push(cur_rank_, i, load_le<std::uint32_t>(apdx_base + (static_cast<std::size_t>(nr.deps_apdx) + k) * 4), EdgeKind::kRequires);
         }
       }
       for (std::uint32_t i = cur_node_; i < end_node; ++i) {
@@ -232,7 +242,7 @@ class PipeGoalBinSource final : public GraphSource {
         if (static_cast<std::size_t>(nr.startdeps_apdx) + nr.num_startdeps > apdx_len)
           throw std::invalid_argument("GOAL binary irequires appendix out of bounds");
         for (std::uint32_t k = 0; k < nr.num_startdeps; ++k) {
-          out.edges.push(cur_rank_, i, load_le<std::uint32_t>(apdx_base + (nr.startdeps_apdx + k) * 4),
+          out.edges.push(cur_rank_, i, load_le<std::uint32_t>(apdx_base + (static_cast<std::size_t>(nr.startdeps_apdx) + k) * 4),
                          EdgeKind::kIrequires);
         }
       }

@@ -38,6 +38,12 @@ class GzSource : public Source {
       int code = 0;
       throw std::runtime_error(std::string("gzip read failed: ") + gzerror(gz_, &code));
     }
+    // A file cut short (or missing its trailer) is reported through the error state, which is
+    // latched on the read that hits the end and may come with data: look after every read.
+    int code = Z_OK;
+    const char* msg = gzerror(gz_, &code);
+    if (code != Z_OK && code != Z_STREAM_END)
+      throw std::runtime_error(std::string("gzip read failed: ") + (msg ? msg : "truncated file"));
     return static_cast<std::size_t>(n);
   }
 

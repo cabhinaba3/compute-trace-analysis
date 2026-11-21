@@ -28,6 +28,11 @@ void Splitter::check_start(char c) {
   }
 }
 
+void Splitter::event_value() {
+  if (slot_ == Slot::kAfterValue) throw std::invalid_argument("missing comma between trace events");
+  slot_ = Slot::kAfterValue;
+}
+
 void Splitter::info_push(char c) {
   if (info_.size() < kInfoLimit) info_.push_back(c);
 }
@@ -123,8 +128,13 @@ void Splitter::feed(const char* base, std::size_t n) {
     }
 
     const bool was_capturing_info = capture_info_;
+    if (c == '"' || c == '{' || c == '[' || c == '}' || c == ']' || c == ',' || c == ':' || c == ' ' || c == '\t' ||
+        c == '\n' || c == '\r')
+      in_scalar_ = false;
     switch (c) {
       case '"':
+        if (stack_.empty()) check_start(c);
+        if (in_events_ && stack_.size() == events_depth_) event_value();
         in_string_ = true;
         if (stack_.size() == 1 && stack_[0] == '{' && expect_key_) {
           capture_key_ = true;
@@ -136,12 +146,15 @@ void Splitter::feed(const char* base, std::size_t n) {
       case '[': {
         if (in_events_ && stack_.size() == events_depth_) {
           // An event: only its brackets and strings matter until it closes.
+          event_value();
           in_fast_ = true;
           nested_ = 1;
           ++p;
           break;
         }
         check_start(c);
+        if (events_seen_ && c == '[' && stack_.size() == 1 && stack_[0] == '{' && key_ == "traceEvents")
+          throw std::invalid_argument("trace JSON has more than one traceEvents array");
         stack_.push_back(c);
         ++p;
         if (!events_seen_ && c == '[' &&
@@ -149,6 +162,7 @@ void Splitter::feed(const char* base, std::size_t n) {
           in_events_ = true;
           events_seen_ = true;
           events_depth_ = stack_.size();
+          slot_ = Slot::kStart;
           buf_.clear();
           reserve_chunk();
           buf_.push_back('[');
@@ -165,6 +179,7 @@ void Splitter::feed(const char* base, std::size_t n) {
       case ']': {
         if (stack_.empty()) throw std::invalid_argument("unbalanced brackets in trace JSON");
         if (in_events_ && stack_.size() == events_depth_) {
+          if (slot_ == Slot::kAfterComma) throw std::invalid_argument("trailing comma in the trace events");
           flush(p);
           in_events_ = false;
           buf_.push_back(']');
@@ -178,9 +193,12 @@ void Splitter::feed(const char* base, std::size_t n) {
         break;
       }
       case ',':
+        if (stack_.empty()) check_start(c);
         if (stack_.size() == 1 && stack_[0] == '{') {
           expect_key_ = true;
         } else if (in_events_ && stack_.size() == events_depth_) {
+          if (slot_ != Slot::kAfterValue) throw std::invalid_argument("unexpected comma in the trace events");
+          slot_ = Slot::kAfterComma;
           const std::size_t pending = buf_.size() + (seg ? static_cast<std::size_t>(p - seg) : 0);
           if (pending >= chunk_bytes_) {
             flush(p);
@@ -197,6 +215,7 @@ void Splitter::feed(const char* base, std::size_t n) {
         ++p;
         break;
       case ':':
+        if (stack_.empty()) check_start(c);
         if (stack_.size() == 1 && stack_[0] == '{') {
           expect_key_ = false;
         }
@@ -210,6 +229,10 @@ void Splitter::feed(const char* base, std::size_t n) {
         break;
       default:
         check_start(c);
+        if (in_events_ && stack_.size() == events_depth_ && !in_scalar_) {
+          event_value();
+          in_scalar_ = true;
+        }
         ++p;
         break;
     }

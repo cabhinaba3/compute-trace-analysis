@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <stdexcept>
 #include <string>
@@ -52,6 +53,12 @@ class Splitter {
   bool in_fast_ = false;  // inside an event, tracked by nested_ instead of stack_
   int nested_ = 0;
   std::size_t events_depth_ = 0;
+  // Position in the events array: just opened, after an event, or after a comma. A comma
+  // is dropped where a chunk is cut, so the array's punctuation is checked here.
+  enum class Slot : std::uint8_t { kStart, kAfterValue, kAfterComma };
+  Slot slot_ = Slot::kStart;
+  bool in_scalar_ = false;  // inside a number, true or null at the events level
+  void event_value();  // an element of the events array starts
   bool capture_info_ = false;
   std::string key_, info_;
 };
