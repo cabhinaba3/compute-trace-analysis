@@ -92,6 +92,36 @@ def open_chakra_host_stream(
     """Opens Chakra host JSON files as a chunked GraphStream."""
     ...
 
+def stream_aggregates(
+    stream: GraphStream,
+    include_collectives_in_traffic: bool = True,
+    min_world_size: int = 1,
+    quantile_sketch: str = "ddsketch",
+    quantile_exact_cap: int = 65536,
+    quantile_accuracy: float = 0.001,
+    chunk_nodes: int = 524288,
+) -> dict[str, Any]:
+    """Runs Engine A (1-pass O(P^2) aggregate analysis) over a GraphStream."""
+    ...
+
+class HybridQuantile:
+    """Exact-first quantile estimator spilling to DDSketch, KLL, or GK."""
+
+    count: int
+    is_exact: bool
+    sketch_name: str
+    error_bound: float
+
+    def __init__(
+        self,
+        sketch_kind: str = "ddsketch",
+        exact_cap: int = 65536,
+        accuracy: float = 0.001,
+    ) -> None: ...
+    def add(self, value: int, weight: int = 1) -> None: ...
+    def add_array(self, values: np.ndarray) -> None: ...
+    def quantile(self, q: float) -> float: ...
+
 # Analysis.
 
 def build_dag_edges(

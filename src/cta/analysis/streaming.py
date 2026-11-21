@@ -1,0 +1,313 @@
+"""Streaming graph analysis orchestration and honest provenance models.
+
+Wraps the native C++ streaming sources, quantile sketches, and execution
+engines behind typed Python dataclasses and helpers shared across CTA's
+distributed aspects and CLI.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import pathlib
+from typing import Any
+
+import numpy as np
+import polars as pl
+
+from cta import _native as native
+from cta import models
+from cta.adapters import common
+from cta.adapters.chakra import reader as chakra_reader
+from cta.adapters.goal import reader as goal_reader
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class StreamProvenance:
+    """Honest fidelity and diagnostic provenance of a streaming analysis run."""
+
+    engine: str = "in_memory"
+    exact: bool = True
+    slack_scope: str = "global_exact"
+    goal_semantics: str = "cta_legacy"
+    collective_sync: str = "none"
+    makespan_lb: float = 0.0
+    makespan_ub: float = 0.0
+    evicted_dep_hits: int = 0
+    lookahead_drops: int = 0
+    straddling_edges: int = 0
+    dead_end_sinks: int = 0
+    unmatched_p2p_sends: int = 0
+    unmatched_p2p_recvs: int = 0
+    has_cycle: bool = False
+    unordered_nodes: int = 0
+    cycle_witness: tuple[tuple[int, int], ...] = ()
+    quantile_sketch: str = "exact"
+    quantile_error_bound: float = 0.0
+    delay_timing_basis: str = "none"
+
+    @classmethod
+    def from_native(cls, raw: dict[str, Any]) -> StreamProvenance:
+        """Builds a ``StreamProvenance`` from a native provenance dict."""
+        ranks = raw.get("cycle_witness_rank", ())
+        ids = raw.get("cycle_witness_node_id", ())
+        witness = tuple(
+            (int(r), int(nid)) for r, nid in zip(ranks, ids, strict=True)
+        )
+        return cls(
+            engine=str(raw["engine"]),
+            exact=bool(raw["exact"]),
+            slack_scope=str(raw["slack_scope"]),
+            goal_semantics=str(raw["goal_semantics"]),
+            collective_sync=str(raw["collective_sync"]),
+            makespan_lb=float(raw["makespan_lb"]),
+            makespan_ub=float(raw["makespan_ub"]),
+            evicted_dep_hits=int(raw["evicted_dep_hits"]),
+            lookahead_drops=int(raw["lookahead_drops"]),
+            straddling_edges=int(raw["straddling_edges"]),
+            dead_end_sinks=int(raw["dead_end_sinks"]),
+            unmatched_p2p_sends=int(raw["unmatched_p2p_sends"]),
+            unmatched_p2p_recvs=int(raw["unmatched_p2p_recvs"]),
+            has_cycle=bool(raw["has_cycle"]),
+            unordered_nodes=int(raw["unordered_nodes"]),
+            cycle_witness=witness,
+            quantile_sketch=str(raw["quantile_sketch"]),
+            quantile_error_bound=float(raw["quantile_error_bound"]),
+            delay_timing_basis=str(raw["delay_timing_basis"]),
+        )
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class StreamingAggregateSummary:
+    """Outputs of Engine A (1-pass O(P^2) aggregate analysis)."""
+
+    num_nodes: int
+    num_raw_edges: int
+    world_size: int
+    per_rank: pl.DataFrame
+    max_rank_compute_us: float
+    mean_rank_compute_us: float
+    compute_skew_ratio: float
+    max_rank_comm_mb: float
+    comm_jains_fairness: float
+    total_comm_mb: float
+    comm_op_count: int
+    median_msg_kb: float
+    p95_msg_kb: float
+    max_msg_kb: float
+    by_comm_type: pl.DataFrame
+    traffic: pl.DataFrame
+    active_rank_links: int
+    hotspot_link_mb: float
+    mean_peer_degree: float
+    total_p2p_mb: float
+    total_compute_ns: int
+    total_send_bytes: int
+    send_count: int
+    recv_count: int
+    coll_bytes_by_type: dict[str, int]
+    provenance: StreamProvenance
+
+
+def open_stream_for_artifact(
+    artifact: models.TraceArtifact,
+    *,
+    goal_semantics: str = "cta_legacy",
+    chunk_nodes: int = 524288,
+) -> tuple[native.GraphStream, bool]:
+    """Opens a native ``GraphStream`` for a GOAL or Chakra artifact.
+
+    Args:
+        artifact: Trace artifact of format ``goal``, ``chakra``, or
+            ``chakra_host``.
+        goal_semantics: ``"cta_legacy"`` or ``"strict"`` for GOAL text.
+        chunk_nodes: Target node batch size per chunk.
+
+    Returns:
+        ``(stream, include_collectives_in_traffic)``.
+
+    Raises:
+        ValueError: If the format is unsupported or a GOAL artifact has
+            multiple files.
+    """
+    paths = sorted(artifact.paths)
+    if artifact.format == "goal":
+        if len(paths) != 1:
+            raise ValueError(
+                "Streaming GOAL expects a single .goal or .bin file, "
+                f"got {len(paths)}"
+            )
+        path = paths[0]
+        if goal_reader._is_goal_bin(path):
+            return (
+                native.open_goal_bin_stream(str(path), chunk_nodes=chunk_nodes),
+                False,
+            )
+        return (
+            native.open_goal_text_stream(
+                str(path),
+                goal_semantics=goal_semantics,
+                chunk_nodes=chunk_nodes,
+            ),
+            False,
+        )
+    if artifact.format == "chakra":
+        ranks = [
+            common.infer_rank(path, index) for index, path in enumerate(paths)
+        ]
+        return (
+            native.open_chakra_et_stream(
+                [str(path) for path in paths], ranks, chunk_nodes=chunk_nodes
+            ),
+            True,
+        )
+    if artifact.format == "chakra_host":
+        ranks = [
+            common.infer_rank(path, index) for index, path in enumerate(paths)
+        ]
+        return (
+            native.open_chakra_host_stream(
+                [str(path) for path in paths], ranks, chunk_nodes=chunk_nodes
+            ),
+            True,
+        )
+    raise ValueError(
+        f"Format '{artifact.format}' does not support streaming graph analysis"
+    )
+
+
+def open_stream_for_path(
+    path: str | pathlib.Path,
+    *,
+    fmt: str,
+    rank: int = 0,
+    goal_semantics: str = "cta_legacy",
+    chunk_nodes: int = 524288,
+) -> tuple[native.GraphStream, bool]:
+    """Opens a native ``GraphStream`` directly for a file, FIFO, or ``-``."""
+    target = str(path)
+    if fmt == "goal_bin":
+        return (
+            native.open_goal_bin_stream(target, chunk_nodes=chunk_nodes),
+            False,
+        )
+    if fmt == "goal":
+        is_bin = target != "-" and goal_reader._is_goal_bin(
+            pathlib.Path(target)
+        )
+        if is_bin:
+            return (
+                native.open_goal_bin_stream(target, chunk_nodes=chunk_nodes),
+                False,
+            )
+        return (
+            native.open_goal_text_stream(
+                target,
+                goal_semantics=goal_semantics,
+                chunk_nodes=chunk_nodes,
+            ),
+            False,
+        )
+    if fmt == "chakra":
+        return (
+            native.open_chakra_et_stream(
+                [target], [rank], chunk_nodes=chunk_nodes
+            ),
+            True,
+        )
+    if fmt == "chakra_host":
+        return (
+            native.open_chakra_host_stream(
+                [target], [rank], chunk_nodes=chunk_nodes
+            ),
+            True,
+        )
+    raise ValueError(
+        f"Unknown streaming format '{fmt}'; use goal, goal_bin, chakra, "
+        "or chakra_host"
+    )
+
+
+def run_streaming_aggregates(
+    stream: native.GraphStream,
+    *,
+    include_collectives_in_traffic: bool = True,
+    min_world_size: int = 1,
+    quantile_sketch: str = "ddsketch",
+    quantile_exact_cap: int = 65536,
+    quantile_accuracy: float = 0.001,
+    chunk_nodes: int = 524288,
+) -> StreamingAggregateSummary:
+    """Runs Engine A (1-pass O(P^2) aggregate analysis) over ``stream``."""
+    raw = native.stream_aggregates(
+        stream,
+        include_collectives_in_traffic=include_collectives_in_traffic,
+        min_world_size=min_world_size,
+        quantile_sketch=quantile_sketch,
+        quantile_exact_cap=quantile_exact_cap,
+        quantile_accuracy=quantile_accuracy,
+        chunk_nodes=chunk_nodes,
+    )
+    per_rank = pl.DataFrame(
+        {
+            "rank": np.asarray(raw["rank_ids"], dtype=np.uint32),
+            "compute_us": (
+                np.asarray(raw["rank_compute_ns"], dtype=np.float64) / 1e3
+            ),
+            "comm_mb": (
+                np.asarray(raw["rank_comm_bytes"], dtype=np.float64) / 1e6
+            ),
+            "op_count": np.asarray(raw["rank_op_count"], dtype=np.uint64),
+        }
+    )
+    by_comm_type = pl.DataFrame(
+        {
+            "comm_type": list(raw["comm_type_names"]),
+            "volume_mb": (
+                np.asarray(raw["comm_type_bytes"], dtype=np.float64) / 1e6
+            ),
+            "op_count": np.asarray(raw["comm_type_count"], dtype=np.uint64),
+        }
+    )
+    traffic = pl.DataFrame(
+        {
+            "src_rank": np.asarray(raw["traffic_src"], dtype=np.uint32),
+            "dst_rank": np.asarray(raw["traffic_dst"], dtype=np.uint32),
+            "message_count": np.asarray(raw["traffic_msgs"], dtype=np.uint64),
+            "total_bytes": np.asarray(raw["traffic_bytes"], dtype=np.uint64),
+        },
+        schema=chakra_reader.TRAFFIC_SCHEMA,
+    )
+    coll_bytes_by_type = {
+        str(name): int(nbytes)
+        for name, nbytes in zip(
+            raw["coll_type_names"], raw["coll_type_bytes"], strict=True
+        )
+    }
+    return StreamingAggregateSummary(
+        num_nodes=int(raw["num_nodes"]),
+        num_raw_edges=int(raw["num_raw_edges"]),
+        world_size=int(raw["world_size"]),
+        per_rank=per_rank,
+        max_rank_compute_us=float(raw["max_rank_compute_us"]),
+        mean_rank_compute_us=float(raw["mean_rank_compute_us"]),
+        compute_skew_ratio=float(raw["compute_skew_ratio"]),
+        max_rank_comm_mb=float(raw["max_rank_comm_mb"]),
+        comm_jains_fairness=float(raw["comm_jains_fairness"]),
+        total_comm_mb=float(raw["total_comm_mb"]),
+        comm_op_count=int(raw["comm_op_count"]),
+        median_msg_kb=float(raw["median_msg_kb"]),
+        p95_msg_kb=float(raw["p95_msg_kb"]),
+        max_msg_kb=float(raw["max_msg_kb"]),
+        by_comm_type=by_comm_type,
+        traffic=traffic,
+        active_rank_links=int(raw["active_rank_links"]),
+        hotspot_link_mb=float(raw["hotspot_link_mb"]),
+        mean_peer_degree=float(raw["mean_peer_degree"]),
+        total_p2p_mb=float(raw["total_p2p_mb"]),
+        total_compute_ns=int(raw["total_compute_ns"]),
+        total_send_bytes=int(raw["total_send_bytes"]),
+        send_count=int(raw["send_count"]),
+        recv_count=int(raw["recv_count"]),
+        coll_bytes_by_type=coll_bytes_by_type,
+        provenance=StreamProvenance.from_native(raw["provenance"]),
+    )

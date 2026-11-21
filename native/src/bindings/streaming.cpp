@@ -12,6 +12,8 @@
 #include "bindings/bindings.hpp"
 #include "bindings/convert.hpp"
 #include "streaming/batch.hpp"
+#include "streaming/engines/online_agg/online_agg.hpp"
+#include "streaming/sketches/quantile.hpp"
 #include "streaming/sources/source.hpp"
 #include "util/memory.hpp"
 #include "util/util.hpp"
@@ -59,6 +61,10 @@ class PyGraphStream {
     if (!source_) return;
     nb::gil_scoped_release release;
     source_->reset();
+  }
+  streaming::GraphSource& source() {
+    if (!source_) throw std::runtime_error("GraphStream has no source");
+    return *source_;
   }
 
  private:
@@ -172,6 +178,51 @@ void bind_streaming(nb::module_& m) {
         return to_dict(std::move(all));
       },
       "path"_a, "Reads a GOAL binary (.bin) schedule into node and edge columns in C++.");
+
+  m.def(
+      "stream_aggregates",
+      [](PyGraphStream& stream, bool include_collectives_in_traffic, std::uint32_t min_world_size,
+         const std::string& quantile_sketch, std::size_t quantile_exact_cap, double quantile_accuracy,
+         std::size_t chunk_nodes) {
+        streaming::engines::OnlineAggOptions opts;
+        opts.include_collectives_in_traffic = include_collectives_in_traffic;
+        opts.min_world_size = min_world_size;
+        opts.quantile_sketch = quantile_sketch;
+        opts.quantile_exact_cap = quantile_exact_cap;
+        opts.quantile_accuracy = quantile_accuracy;
+        opts.chunk_nodes = chunk_nodes;
+        streaming::engines::OnlineAggResult r;
+        {
+          nb::gil_scoped_release release;
+          r = streaming::engines::run_online_aggregates(stream.source(), opts);
+        }
+        return to_dict(std::move(r));
+      },
+      "stream"_a, "include_collectives_in_traffic"_a = true, "min_world_size"_a = 1, "quantile_sketch"_a = "ddsketch",
+      "quantile_exact_cap"_a = 65536, "quantile_accuracy"_a = 0.001, "chunk_nodes"_a = 524288,
+      "Runs Engine A (1-pass O(P^2) aggregate analysis + pluggable quantile sketch) over a GraphStream.");
+
+  nb::class_<streaming::sketches::HybridQuantile>(
+      m, "HybridQuantile", "Exact-first quantile estimator that spills to DDSketch, KLL, or Greenwald-Khanna.")
+      .def(nb::init<std::string, std::size_t, double>(), "sketch_kind"_a = "ddsketch", "exact_cap"_a = 65536,
+           "accuracy"_a = 0.001)
+      .def("add", &streaming::sketches::HybridQuantile::add, "value"_a, "weight"_a = 1)
+      .def(
+          "add_array",
+          [](streaming::sketches::HybridQuantile& self,
+             nb::ndarray<const std::uint64_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> values) {
+            nb::gil_scoped_release release;
+            const std::uint64_t* data = values.data();
+            const std::size_t n = values.shape(0);
+            for (std::size_t i = 0; i < n; ++i) self.add(data[i]);
+          },
+          "values"_a)
+      .def("quantile", &streaming::sketches::HybridQuantile::quantile, "q"_a)
+      .def_prop_ro("count", &streaming::sketches::HybridQuantile::count)
+      .def_prop_ro("is_exact", &streaming::sketches::HybridQuantile::is_exact)
+      .def_prop_ro("sketch_name",
+                   [](const streaming::sketches::HybridQuantile& self) { return std::string(self.sketch_name()); })
+      .def_prop_ro("error_bound", &streaming::sketches::HybridQuantile::error_bound);
 }
 
 }  // namespace cta::bindings
