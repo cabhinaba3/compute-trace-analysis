@@ -195,6 +195,44 @@ def solve_graph_cache(
     """Runs Engine C (GridGraph exact DAG + optional Scalasca) on cache."""
     ...
 
+class GraphCache:
+    """Read-only handle to a persistent .cta_graph topological block cache."""
+
+    path: str
+    num_vertices: int
+    num_total_vertices: int
+    num_edges: int
+    unordered: int
+    num_blocks: int
+    block_vertices: int
+    world_size: int
+    max_cutwidth: int
+    has_recorded_comm_times: bool
+
+    def __init__(self, path: str) -> None: ...
+    def names(self) -> list[str]: ...
+    def comm_types(self) -> list[str]: ...
+    def rank_stats(self) -> list[tuple[int, int, float]]: ...
+    def inspect_reprice(
+        self, target: dict[str, Any], base: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
+    def read_block_meta(
+        self, block_idx: int, reprice_steps: list[Any] = ...
+    ) -> dict[str, Any]: ...
+
+def solve_whatif_graph_cache(
+    cache_path: str,
+    groups_path: str,
+    scale: np.ndarray,
+    reprice_steps: list[Any] = ...,
+    threads: int = 0,
+    memory_budget_bytes: int = 0,
+    scratch_dir: str = "",
+    inline_groups: np.ndarray | None = None,
+) -> dict[str, Any]:
+    """Runs Engine D multi-lane streaming what-if directly on .cta_graph."""
+    ...
+
 # Analysis.
 
 def build_dag_edges(

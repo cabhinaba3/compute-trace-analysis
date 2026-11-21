@@ -10,7 +10,8 @@ target_sources(_native PRIVATE
   engines/frontier/frontier_engine.cpp
   engines/gridgraph/gridgraph_engine.cpp
   engines/graphchi/graphchi_engine.cpp
-  engines/xstream/xstream_engine.cpp)
+  engines/xstream/xstream_engine.cpp
+  engines/whatif/streaming_whatif.cpp)
 
 # Deterministic floating-point behavior across CPUs (no FMA contraction).
 set_source_files_properties(
@@ -19,5 +20,6 @@ set_source_files_properties(
   engines/gridgraph/gridgraph_engine.cpp
   engines/graphchi/graphchi_engine.cpp
   engines/xstream/xstream_engine.cpp
+  engines/whatif/streaming_whatif.cpp
   TARGET_DIRECTORY _native
   PROPERTIES COMPILE_OPTIONS -ffp-contract=off)

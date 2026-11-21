@@ -20,6 +20,7 @@
 #include "streaming/engines/frontier/frontier_engine.hpp"
 #include "streaming/engines/gridgraph/gridgraph_engine.hpp"
 #include "streaming/engines/online_agg/online_agg.hpp"
+#include "streaming/engines/whatif/streaming_whatif.hpp"
 #include "streaming/sketches/quantile.hpp"
 #include "streaming/sources/source.hpp"
 #include "util/memory.hpp"
@@ -378,6 +379,150 @@ void bind_streaming(nb::module_& m) {
       "cache_path"_a, "memory_budget_bytes"_a = 0, "goal_semantics"_a = "cta_legacy",
       "extract_critical_path_ops"_a = false, "delay_attribution"_a = false, "scratch_dir"_a = "",
       "Runs Engine C (GridGraph exact DAG + optional CP op chain + Scalasca delay attribution) on a .cta_graph file.");
+
+  auto parse_ic = [](const nb::dict& d) -> streaming::engines::InterconnectSpec {
+    streaming::engines::InterconnectSpec ic;
+    ic.gpus_per_node = nb::cast<std::int64_t>(d["gpus_per_node"]);
+    ic.intra_alpha_ns = nb::cast<double>(d["intra_alpha_ns"]);
+    ic.intra_ns_per_byte = nb::cast<double>(d["intra_ns_per_byte"]);
+    ic.inter_alpha_ns = nb::cast<double>(d["inter_alpha_ns"]);
+    ic.inter_ns_per_byte = nb::cast<double>(d["inter_ns_per_byte"]);
+    ic.algorithm = nb::cast<std::string>(d["algorithm"]);
+    if (d.contains("group_sizes")) {
+      ic.group_sizes = nb::cast<std::unordered_map<std::string, std::int64_t>>(d["group_sizes"]);
+    }
+    return ic;
+  };
+
+  auto parse_steps = [parse_ic](const nb::list& steps_list) -> std::vector<streaming::engines::RepriceStep> {
+    std::vector<streaming::engines::RepriceStep> out;
+    out.reserve(steps_list.size());
+    for (nb::handle item : steps_list) {
+      nb::tuple tup = nb::cast<nb::tuple>(item);
+      if (tup.size() != 2) throw std::invalid_argument("reprice step must be a (target, base_or_none) 2-tuple");
+      streaming::engines::RepriceStep step;
+      step.target = parse_ic(nb::cast<nb::dict>(tup[0]));
+      if (!tup[1].is_none()) {
+        step.has_base = true;
+        step.base = parse_ic(nb::cast<nb::dict>(tup[1]));
+      }
+      out.push_back(std::move(step));
+    }
+    return out;
+  };
+
+  nb::class_<streaming::cache::GraphCacheReader>(m, "GraphCache",
+                                                 "Read-only handle to a persistent .cta_graph topological block cache.")
+      .def(nb::init<const std::string&>(), "path"_a)
+      .def_prop_ro("path", &streaming::cache::GraphCacheReader::path)
+      .def_prop_ro("num_vertices", [](const streaming::cache::GraphCacheReader& r) { return r.header().num_real_vertices; })
+      .def_prop_ro("num_total_vertices",
+                   [](const streaming::cache::GraphCacheReader& r) { return r.header().num_total_vertices; })
+      .def_prop_ro("num_edges", [](const streaming::cache::GraphCacheReader& r) { return r.header().num_edges; })
+      .def_prop_ro("unordered", [](const streaming::cache::GraphCacheReader& r) { return r.header().unordered; })
+      .def_prop_ro("num_blocks", [](const streaming::cache::GraphCacheReader& r) { return r.header().num_blocks; })
+      .def_prop_ro("block_vertices",
+                   [](const streaming::cache::GraphCacheReader& r) { return r.header().block_vertices; })
+      .def_prop_ro("world_size", [](const streaming::cache::GraphCacheReader& r) { return r.header().world_size; })
+      .def_prop_ro("max_cutwidth", [](const streaming::cache::GraphCacheReader& r) { return r.header().max_cutwidth; })
+      .def_prop_ro("has_recorded_comm_times",
+                   [](const streaming::cache::GraphCacheReader& r) { return r.header().has_recorded_comm_times != 0; })
+      .def("names", [](const streaming::cache::GraphCacheReader& r) { return r.names(); })
+      .def("comm_types", [](const streaming::cache::GraphCacheReader& r) { return r.comm_types(); })
+      .def("rank_stats",
+           [](const streaming::cache::GraphCacheReader& r) {
+             nb::list out;
+             for (const auto& entry : r.rank_stats()) {
+               out.append(nb::make_tuple(entry.rank, entry.op_count, entry.compute_ns));
+             }
+             return out;
+           })
+      .def(
+          "inspect_reprice",
+          [parse_ic](const streaming::cache::GraphCacheReader& r, const nb::dict& target, nb::object base) {
+            streaming::engines::RepriceStep step;
+            step.target = parse_ic(target);
+            if (!base.is_none()) {
+              step.has_base = true;
+              step.base = parse_ic(nb::cast<nb::dict>(base));
+            }
+            streaming::engines::RepriceAudit audit;
+            {
+              nb::gil_scoped_release release;
+              audit = streaming::engines::inspect_reprice_warnings(r, step);
+            }
+            nb::dict d;
+            d["has_recorded_comm_without_base"] = audit.has_recorded_comm_without_base;
+            d["defaulted_collectives"] = audit.defaulted_collectives;
+            return d;
+          },
+          "target"_a, "base"_a = nb::none())
+      .def(
+          "read_block_meta",
+          [parse_steps](const streaming::cache::GraphCacheReader& r, std::uint32_t block_idx,
+                        const nb::list& reprice_steps) {
+            const auto steps = parse_steps(reprice_steps);
+            streaming::engines::BlockMetaView view;
+            {
+              nb::gil_scoped_release release;
+              view = streaming::engines::read_block_meta(r, block_idx, steps);
+            }
+            nb::dict d;
+            d["rank"] = to_numpy(std::move(view.rank));
+            d["op_class"] = to_numpy(std::move(view.op_class));
+            d["comm_type_id"] = to_numpy(std::move(view.comm_type_id));
+            d["name_id"] = to_numpy(std::move(view.name_id));
+            d["local_names"] = std::move(view.local_names);
+            d["weight_ns"] = to_numpy(std::move(view.weight_ns));
+            d["is_comm"] = to_numpy(std::move(view.is_comm));
+            d["is_compute"] = to_numpy(std::move(view.is_compute));
+            d["is_virtual"] = to_numpy(std::move(view.is_virtual));
+            d["size_bytes"] = to_numpy(std::move(view.size_bytes));
+            return d;
+          },
+          "block_idx"_a, "reprice_steps"_a = nb::list());
+
+  m.def(
+      "solve_whatif_graph_cache",
+      [parse_steps](const std::string& cache_path, const std::string& groups_path,
+                    nb::ndarray<const double, nb::ndim<2>, nb::c_contig, nb::device::cpu> scale,
+                    const nb::list& reprice_steps, int threads, std::uint64_t memory_budget_bytes,
+                    const std::string& scratch_dir, nb::object inline_groups_obj) {
+        const auto steps = parse_steps(reprice_steps);
+        const std::size_t num_scenarios = scale.shape(0);
+        const std::size_t num_groups = scale.shape(1);
+        const std::uint32_t* inline_ptr = nullptr;
+        std::size_t inline_len = 0;
+        nb::ndarray<const std::uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu> inline_arr;
+        if (!inline_groups_obj.is_none()) {
+          inline_arr =
+              nb::cast<nb::ndarray<const std::uint32_t, nb::ndim<1>, nb::c_contig, nb::device::cpu>>(inline_groups_obj);
+          inline_ptr = inline_arr.data();
+          inline_len = inline_arr.shape(0);
+        }
+        streaming::engines::StreamingWhatIfResult res;
+        {
+          nb::gil_scoped_release release;
+          res = streaming::engines::solve_whatif_streaming(cache_path, groups_path, inline_ptr, inline_len, num_groups,
+                                                           scale.data(), num_scenarios, steps, threads,
+                                                           memory_budget_bytes, scratch_dir);
+        }
+        nb::dict d;
+        d["makespan"] = to_numpy(std::move(res.makespan));
+        d["depth"] = to_numpy(std::move(res.depth));
+        d["critical_compute"] = to_numpy(std::move(res.critical_compute));
+        d["critical_comm"] = to_numpy(std::move(res.critical_comm));
+        d["critical_comm_bytes"] = to_numpy(std::move(res.critical_comm_bytes));
+        d["critical_by_group"] = to_numpy(std::move(res.critical_by_group));
+        d["lanes"] = res.lanes;
+        d["workers"] = res.workers;
+        d["bytes_per_worker"] = res.bytes_per_worker;
+        d["used_boundary_spill"] = res.used_boundary_spill;
+        return d;
+      },
+      "cache_path"_a, "groups_path"_a, "scale"_a, "reprice_steps"_a = nb::list(), "threads"_a = 0,
+      "memory_budget_bytes"_a = 0, "scratch_dir"_a = "", "inline_groups"_a = nb::none(),
+      "Runs Engine D (bounded-RAM streaming multi-lane what-if solver) directly over a .cta_graph cache.");
 }
 
 }  // namespace cta::bindings
