@@ -316,6 +316,17 @@ def sweep_command(
     trials: Annotated[
         int, typer.Option("--trials", help="Monte Carlo over this many seeds.")
     ] = 0,
+    workers: Annotated[
+        int | None,
+        typer.Option(
+            "--workers",
+            min=1,
+            help=(
+                "Threads for the points and seeds (default: all usable "
+                "CPUs). One simulation is sequential and stays on the CPU."
+            ),
+        ),
+    ] = None,
     model: Model = None,
     preset: Preset = None,
     config_file: ConfigFile = None,
@@ -340,12 +351,18 @@ def sweep_command(
             cache_dir=cache_dir,
         )
         points = (
-            sweep.sweep(graph, settings, sweep.parse_grid(param), level=level)
+            sweep.sweep(
+                graph,
+                settings,
+                sweep.parse_grid(param),
+                level=level,
+                workers=workers,
+            )
             if param
             else None
         )
         return points, sweep.monte_carlo(
-            graph, settings, trials, level=level
+            graph, settings, trials, level=level, workers=workers
         ) if trials > 0 else None
 
     points, monte = _guard(work)
