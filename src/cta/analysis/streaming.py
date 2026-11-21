@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import os
 import pathlib
 from typing import Any
 
@@ -480,6 +481,76 @@ def solve_artifact_frontier(
     return dag_result_from_native(raw)
 
 
+def ensure_graph_cache(
+    artifact: models.TraceArtifact,
+    cache_path: pathlib.Path,
+    *,
+    goal_semantics: str = "cta_legacy",
+    collective_sync: str = "none",
+    memory_budget_bytes: int = 0,
+    coll_group_sizes: dict[str, int] | None = None,
+    fail_on_cycle: bool = False,
+    scratch_dir: str = "",
+) -> pathlib.Path:
+    """Returns a readable `.cta_graph` at ``cache_path``, building it if needed.
+
+    The file is built beside its final name and renamed into place, so an
+    interrupted build never leaves a half-written file that looks valid. A file
+    that is already there but cannot be opened (cut short by an earlier crash,
+    or written by another format version) is deleted and built again.
+
+    Args:
+        artifact: The execution graph (Chakra, Chakra host or GOAL).
+        cache_path: Final path of the cache.
+        goal_semantics: `"cta_legacy"` or `"strict"`.
+        collective_sync: `"none"` or `"barrier"`.
+        memory_budget_bytes: RAM cap for the build (0 = auto).
+        coll_group_sizes: Collective group sizes for the build.
+        fail_on_cycle: Whether a cycle in the graph is an error. A cache built
+            earlier without it is checked for held-back vertices too.
+        scratch_dir: Optional scratch directory for out-of-core passes.
+
+    Returns:
+        ``cache_path``.
+
+    Raises:
+        RuntimeError: If the graph has a cycle and ``fail_on_cycle`` is set.
+    """
+    if cache_path.exists():
+        try:
+            unordered = int(native.GraphCache(str(cache_path)).unordered)
+        except (RuntimeError, ValueError, MemoryError, OSError):
+            cache_path.unlink(missing_ok=True)
+        else:
+            if fail_on_cycle and unordered > 0:
+                raise RuntimeError(
+                    "cycle detected in execution graph "
+                    f"({unordered} unordered vertices)"
+                )
+            return cache_path
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}")
+    try:
+        stream, _ = open_stream_for_artifact(
+            artifact, goal_semantics=goal_semantics
+        )
+        native.build_graph_cache(
+            stream,
+            str(tmp_path),
+            memory_budget_bytes=memory_budget_bytes,
+            goal_semantics=goal_semantics,
+            collective_sync=collective_sync,
+            world_size_hint=artifact.world_size,
+            coll_group_sizes=dict(coll_group_sizes) if coll_group_sizes else {},
+            fail_on_cycle=fail_on_cycle,
+            scratch_dir=scratch_dir,
+        )
+        tmp_path.replace(cache_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return cache_path
+
+
 def solve_artifact_outofcore(
     artifact: models.TraceArtifact,
     *,
@@ -497,22 +568,16 @@ def solve_artifact_outofcore(
     """Runs an out-of-core GraphEngine (default GridGraph) on an artifact."""
     groups = dict(coll_group_sizes) if coll_group_sizes else {}
     if cache_path is not None and engine == "gridgraph":
-        if not cache_path.exists():
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            stream, _ = open_stream_for_artifact(
-                artifact, goal_semantics=goal_semantics
-            )
-            native.build_graph_cache(
-                stream,
-                str(cache_path),
-                memory_budget_bytes=memory_budget_bytes,
-                goal_semantics=goal_semantics,
-                collective_sync=collective_sync,
-                world_size_hint=artifact.world_size,
-                coll_group_sizes=groups,
-                fail_on_cycle=fail_on_cycle,
-                scratch_dir=scratch_dir,
-            )
+        ensure_graph_cache(
+            artifact,
+            cache_path,
+            goal_semantics=goal_semantics,
+            collective_sync=collective_sync,
+            memory_budget_bytes=memory_budget_bytes,
+            coll_group_sizes=groups,
+            fail_on_cycle=fail_on_cycle,
+            scratch_dir=scratch_dir,
+        )
         raw = native.solve_graph_cache(
             str(cache_path),
             memory_budget_bytes=memory_budget_bytes,

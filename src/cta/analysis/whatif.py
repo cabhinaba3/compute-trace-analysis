@@ -406,20 +406,14 @@ def build_streaming_model_from_artifact(
     if not isinstance(artifact, models.TraceArtifact):
         raise TypeError(f"Expected TraceArtifact, got {type(artifact)!r}")
     start = time.perf_counter()
-    if not cache_path.exists():
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        stream, _ = streaming.open_stream_for_artifact(
-            artifact, goal_semantics=goal_semantics
-        )
-        native.build_graph_cache(
-            stream,
-            str(cache_path),
-            memory_budget_bytes=memory_budget_bytes,
-            goal_semantics=goal_semantics,
-            collective_sync=collective_sync,
-            world_size_hint=artifact.world_size,
-            scratch_dir=scratch_dir,
-        )
+    streaming.ensure_graph_cache(
+        artifact,
+        cache_path,
+        goal_semantics=goal_semantics,
+        collective_sync=collective_sync,
+        memory_budget_bytes=memory_budget_bytes,
+        scratch_dir=scratch_dir,
+    )
     cache_handle = native.GraphCache(str(cache_path))
     return StreamingWhatIfModel(
         cache_path=cache_path,
@@ -461,18 +455,12 @@ def load_streaming_model(
         FileNotFoundError: The path does not exist.
         ValueError: The source holds no execution graph.
     """
+    from cta.analysis import streaming
     from cta.ingest import discovery
 
     group = discovery.resolve_trial_group(source)
     trial = group.trials[0]
-    artifact = next(
-        (
-            item
-            for item in trial.artifacts.values()
-            if item.format in ("chakra", "goal")
-        ),
-        None,
-    )
+    artifact = streaming.pick_graph_artifact(trial)
     if artifact is None:
         raise ValueError(
             f"'{source}' holds no execution graph (Chakra or GOAL)"

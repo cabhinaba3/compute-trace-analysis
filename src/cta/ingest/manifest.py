@@ -26,6 +26,60 @@ def _optional_int_tuple(
     return tuple(int(value) for value in section[key])
 
 
+def _flag(section: dict[str, Any], key: str) -> bool:
+    """Reads a yes/no key of a manifest section (YAML or TOML booleans only)."""
+    value = section.get(key, False)
+    if not isinstance(value, bool):
+        raise ValueError(
+            f"Manifest config '{key}' must be true or false, got {value!r}"
+        )
+    return value
+
+
+def _streaming_options(
+    section: dict[str, Any], base_dir: pathlib.Path
+) -> dict[str, Any]:
+    """Reads the execution-graph streaming keys of a manifest's ``config``.
+
+    Keys that are absent keep the ``AnalysisConfig`` default; the same names
+    as the ``cta compare`` flags can still override them.
+
+    Args:
+        section: The manifest's ``config`` mapping.
+        base_dir: Directory a relative ``scratch_dir`` is taken from.
+
+    Returns:
+        ``AnalysisConfig`` keyword arguments for the keys that are present.
+
+    Raises:
+        ValueError: If a key has a value of the wrong type.
+    """
+    options: dict[str, Any] = {}
+    for key in (
+        "streaming",
+        "graph_engine",
+        "quantile_sketch",
+        "collective_sync",
+        "goal_semantics",
+    ):
+        if key in section:
+            options[key] = str(section[key]).strip().lower()
+    for key in ("memory_budget_bytes", "window_size", "parquet_bypass_bytes"):
+        value = _optional_int(section, key)
+        if value is not None:
+            options[key] = value
+    for key in (
+        "fail_on_cycle",
+        "extract_critical_path_ops",
+        "delay_attribution",
+    ):
+        if key in section:
+            options[key] = _flag(section, key)
+    if section.get("scratch_dir"):
+        options["scratch_dir"] = base_dir / str(section["scratch_dir"])
+    return options
+
+
 def _trial_path(base_dir: pathlib.Path, trial_spec: Any) -> pathlib.Path:
     """Returns a trial path, resolving relative ones against ``base_dir``."""
     return base_dir / str(trial_spec)
@@ -136,5 +190,6 @@ def load_manifest(
             else None
         ),
         cache_dir=cache_dir,
+        **_streaming_options(config_section, base_dir),
     )
     return tuple(groups), config

@@ -182,7 +182,6 @@ class CacheStore:
         scratch_dir: str = "",
     ) -> pathlib.Path:
         """Returns the cached `.cta_graph` path, building it on a miss."""
-        from cta import _native as native
         from cta.analysis import streaming
 
         cache_path = self.graph_cache_path(
@@ -190,30 +189,15 @@ class CacheStore:
             goal_semantics=goal_semantics,
             collective_sync=collective_sync,
         )
-        if cache_path.exists():
-            return cache_path
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = cache_path.with_name(f"{cache_path.name}.tmp.{os.getpid()}")
-        try:
-            stream, _ = streaming.open_stream_for_artifact(
-                artifact, goal_semantics=goal_semantics
-            )
-            native.build_graph_cache(
-                stream,
-                str(tmp_path),
-                memory_budget_bytes=memory_budget_bytes,
-                goal_semantics=goal_semantics,
-                collective_sync=collective_sync,
-                world_size_hint=artifact.world_size,
-                fail_on_cycle=fail_on_cycle,
-                scratch_dir=scratch_dir,
-            )
-            tmp_path.replace(cache_path)
-        except Exception:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            raise
-        return cache_path
+        return streaming.ensure_graph_cache(
+            artifact,
+            cache_path,
+            goal_semantics=goal_semantics,
+            collective_sync=collective_sync,
+            memory_budget_bytes=memory_budget_bytes,
+            fail_on_cycle=fail_on_cycle,
+            scratch_dir=scratch_dir,
+        )
 
     def ensure_parquet_tables(
         self, artifact: models.TraceArtifact

@@ -109,7 +109,7 @@ def whatif_command(
         str,
         typer.Option(
             "--streaming",
-            help="Bounded-RAM streaming Engine D mode: auto, on, or off.",
+            help="Bounded-RAM streaming Engine D mode: auto, on, exact or off.",
         ),
     ] = "auto",
     goal_semantics: Annotated[
@@ -151,7 +151,15 @@ def whatif_command(
     stream_mode = streaming.lower().strip()
     if stream_mode not in ("auto", "on", "off", "exact"):
         raise typer.BadParameter(
-            f"Unknown --streaming '{streaming}' (expected auto, on, or off)."
+            f"Unknown --streaming '{streaming}' "
+            "(expected auto, on, exact or off)."
+        )
+    if stream_mode == "off" and (
+        goal_semantics != "cta_legacy" or collective_sync != "none"
+    ):
+        raise typer.BadParameter(
+            "--goal-semantics and --collective-sync need the streaming model; "
+            "drop --streaming off."
         )
     budget = int(memory_gb * 1024**3)
     try:
