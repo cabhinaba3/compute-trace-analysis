@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Runs the CI checks before a push (enable with: ./ci-local.sh --install-hook).
+# CTA_SKIP_TESTS=1 runs only lint, format and types; `git push --no-verify` skips it.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+if [ "${CTA_SKIP_TESTS:-0}" = 1 ]; then exec ./ci-local.sh --fast; fi
+exec ./ci-local.sh

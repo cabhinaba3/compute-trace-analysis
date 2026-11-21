@@ -121,13 +121,14 @@ tests/unit/               laid out like src/cta; tests/integration runs the CLI 
 
 Issues and pull requests are welcome at <https://github.com/cabhinaba3/compute-trace-analysis>.
 
-Before opening a pull request, run the same checks as CI:
+Before pushing, run the same checks as CI:
 
 ```bash
-ruff check src tests examples
-ruff format --check src tests examples
-mypy src tests examples
-pytest
+./ci-local.sh          # ruff, ruff format, mypy and the full test suite
+./ci-local.sh --fast   # lint, format and types only
+./ci-local.sh --core   # also the clean-venv core-install job
+./ci-local.sh --linux  # the test job in an ubuntu:24.04 container (needs Docker running)
+./ci-local.sh --install-hook   # run it automatically before every git push
 ```
 
 Add a test for a change in behaviour and a line under "Unreleased" in `CHANGELOG.md`. Code under `native/` is built by `pip install`; rebuild with `pip install -e .` after changing it.

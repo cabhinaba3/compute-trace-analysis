@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Local CI (`ci-local.sh`)
+- `./ci-local.sh` runs the CI steps (ruff, ruff format, mypy, pytest) on your machine; `--fast` skips the tests, `--core` adds the clean-venv `core-install` job, `--linux` runs the test job in an ubuntu container, and `--install-hook` makes `git push` run it (`.githooks/pre-push`). A test checks that the script's commands are still the ones in `ci.yml`.
+- The mypy step was failing in CI (type errors in `test_advisor.py` and `test_cli_regressions.py`); fixed.
+
 ### macOS support
 - The package builds and passes its tests on macOS arm64 as well as Linux x86_64: `configure.sh` checks a Mac (Homebrew: `brew install cmake simdjson protobuf`), `environment.yml` uses `cxx-compiler` instead of `gxx_linux-64`, the classifiers list macOS, CI runs on `macos-latest` too, and the benchmark scripts read `ru_maxrss` in the unit the platform uses (KiB on Linux, bytes on macOS) and `ladder.py` runs without `os.sched_getaffinity`.
 
