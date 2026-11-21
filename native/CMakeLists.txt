@@ -21,6 +21,50 @@ find_package(Threads REQUIRED)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ChakraProto)  # protobuf, and the C++ sources generated from Chakra's schema
 
+# Optional GPU backends of the what-if solver (src/gpu). CTA_GPU is "auto" (use what the machine has),
+# "OFF", "ON" (CUDA on Linux, Metal on macOS, an error if missing), "CUDA" or "METAL". A build without
+# a toolkit is the same module with the CPU solver only.
+set(CTA_GPU "auto" CACHE STRING "GPU backends: auto, ON, OFF, CUDA or METAL")
+string(TOUPPER "${CTA_GPU}" _cta_gpu)
+set(CTA_HAVE_CUDA OFF)
+set(CTA_HAVE_METAL OFF)
+if(NOT _cta_gpu STREQUAL "OFF")
+  include(CheckLanguage)
+  if(APPLE AND (_cta_gpu STREQUAL "AUTO" OR _cta_gpu STREQUAL "ON" OR _cta_gpu STREQUAL "METAL"))
+    check_language(OBJCXX)
+    if(CMAKE_OBJCXX_COMPILER)
+      enable_language(OBJCXX)
+      find_library(CTA_METAL_FRAMEWORK Metal)
+      find_library(CTA_FOUNDATION_FRAMEWORK Foundation)
+      if(CTA_METAL_FRAMEWORK AND CTA_FOUNDATION_FRAMEWORK)
+        set(CTA_HAVE_METAL ON)
+      endif()
+    endif()
+  elseif(NOT APPLE AND (_cta_gpu STREQUAL "AUTO" OR _cta_gpu STREQUAL "ON" OR _cta_gpu STREQUAL "CUDA"))
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+      if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+        if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+          set(CMAKE_CUDA_ARCHITECTURES native)
+        else()
+          set(CMAKE_CUDA_ARCHITECTURES "70;80;86;90")
+        endif()
+      endif()
+      set(CMAKE_CUDA_STANDARD 17)
+      enable_language(CUDA)
+      find_package(CUDAToolkit)
+      if(CUDAToolkit_FOUND)
+        set(CTA_HAVE_CUDA ON)
+      endif()
+    endif()
+  endif()
+  if((_cta_gpu STREQUAL "CUDA" AND NOT CTA_HAVE_CUDA) OR (_cta_gpu STREQUAL "METAL" AND NOT CTA_HAVE_METAL)
+     OR (_cta_gpu STREQUAL "ON" AND NOT CTA_HAVE_CUDA AND NOT CTA_HAVE_METAL))
+    message(FATAL_ERROR "CTA_GPU=${CTA_GPU}, but no CUDA toolkit (Linux) or Metal (macOS) was found")
+  endif()
+endif()
+message(STATUS "cta: GPU backends: cuda=${CTA_HAVE_CUDA} metal=${CTA_HAVE_METAL}")
+
 # One module. Each area under src/ adds its sources with target_sources() in
 # its own CMakeLists.txt, so a new reader or generator only touches its
 # directory. src/ is the include root: every #include names its file from
@@ -34,6 +78,7 @@ set_target_properties(_native PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CTA_NATIVE_
 
 add_subdirectory(src/analysis)   # DAG solver and interval helpers
 add_subdirectory(src/readers)    # trace readers
+add_subdirectory(src/gpu)        # optional GPU backends of the what-if solver
 add_subdirectory(src/sim)        # the discrete-event simulator
 add_subdirectory(src/streaming)  # streaming graph sources, sketches, and engines
 add_subdirectory(src/synth)      # synthetic trace generators

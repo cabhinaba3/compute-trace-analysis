@@ -5,6 +5,13 @@ The C++ behind `cta._native`. `pip install .` builds it (a hatch hook in
 to the Python code. Linux x86_64 and macOS arm64; a C++20 compiler plus zlib, SQLite,
 Protobuf and simdjson development packages are needed.
 
+GPU backends of the what-if solver live in `src/gpu` (`cuda_solver.cu`, `metal_solver.mm`, and
+`dispatch.cpp`, which is always built). CMake option `CTA_GPU`: `auto` (default) enables CUDA on
+Linux if `nvcc` is found and Metal on macOS, `OFF` builds without them, `ON`/`CUDA`/`METAL` make a
+missing toolkit an error. Pass it as `CTA_CMAKE_ARGS=-DCTA_GPU=CUDA`. A GPU solve that fails
+throws `std::runtime_error`, and the binding then solves on the CPU and returns the message as
+`device_note`; `CTA_GPU_FAULT=1` makes every GPU solve fail, for tests.
+
 Every `#include` names its file from `src/`, for example
 `#include "util/sink.hpp"`. Each directory under `src/` lists its sources in
 its own `CMakeLists.txt` (there is no globbing), so a new `.cpp` file is added

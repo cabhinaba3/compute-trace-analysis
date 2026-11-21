@@ -11,6 +11,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace cta::analysis {
@@ -57,7 +58,21 @@ struct WhatIfResult {
   int lanes = 0;                          // scenarios sharing one walk over the graph
   int workers = 0;                        // threads that solved blocks
   std::uint64_t bytes_per_worker = 0;
+  std::string device = "cpu";  // where it ran: "cpu", "cuda" or "metal"
+  std::string note;            // why a GPU was not used, when one was asked for
 };
+
+// What every solver reads, checked and put in position order: the weight and group of the
+// vertex at each position.
+struct PreparedInputs {
+  std::vector<double> base;
+  std::vector<std::uint32_t> group;
+};
+
+// Throws std::invalid_argument for a group >= num_groups or a multiplier that is negative or
+// not finite.
+PreparedInputs prepare_inputs(const DagPlan& plan, const double* weights, const std::uint32_t* group,
+                              std::size_t num_groups, const double* scale, std::size_t num_scenarios);
 
 // Solves `num_scenarios` scenarios. `weights`, `is_comm`, `is_compute`,
 // `size_bytes` and `group` have one entry per vertex, in vertex order. Vertex

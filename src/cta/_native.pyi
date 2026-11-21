@@ -286,9 +286,20 @@ class DagPlan:
         scale: np.ndarray,
         threads: int = 0,
         memory_budget_bytes: int = 0,
+        device: str = "cpu",
+        gpu_memory_bytes: int = 0,
     ) -> dict[str, Any]:
-        """Solves one scenario per row of ``scale`` (scenarios x groups)."""
+        """Solves one scenario per row of ``scale`` (scenarios x groups).
+
+        ``device`` is ``"cpu"``, ``"cuda"`` or ``"metal"``; a GPU that is
+        missing or fails gives the CPU's answer, and ``device`` and
+        ``device_note`` in the result say what ran and why.
+        """
         ...
+
+def gpu_backends() -> list[str]:
+    """The GPU backends compiled in whose device is present."""
+    ...
 
 # Simulator (see native/src/sim and cta.sim).
 

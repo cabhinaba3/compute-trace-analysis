@@ -230,6 +230,24 @@ Chain trace_chain(const Context& c, const double* f, const std::int32_t* d, int 
 
 using namespace detail;
 
+PreparedInputs prepare_inputs(const DagPlan& plan, const double* weights, const std::uint32_t* group,
+                              std::size_t num_groups, const double* scale, std::size_t num_scenarios) {
+  const std::size_t n = plan.num_vertices();
+  for (std::size_t i = 0; i < num_scenarios * num_groups; ++i)
+    if (!std::isfinite(scale[i]) || scale[i] < 0.0) throw std::invalid_argument("a multiplier is negative or not finite");
+  PreparedInputs in;
+  in.base.resize(n);
+  in.group.resize(n);
+  const std::vector<std::uint32_t>& orig_of = plan.vertex_at();
+  for (std::size_t p = 0; p < n; ++p) {
+    const std::uint32_t id = orig_of[p];
+    if (group[id] >= num_groups) throw std::invalid_argument("a group id is outside 0..num_groups-1");
+    in.base[p] = weights[id];
+    in.group[p] = group[id];
+  }
+  return in;
+}
+
 WhatIfResult solve_scenarios(const DagPlan& plan, const double* weights, const bool* is_comm, const bool* is_compute,
                              const std::int64_t* size_bytes, const std::uint32_t* group, std::size_t num_groups,
                              const double* scale, std::size_t num_scenarios, int threads,
@@ -245,19 +263,11 @@ WhatIfResult solve_scenarios(const DagPlan& plan, const double* weights, const b
   result.critical_by_group.assign(S * G, 0.0);
   if (S == 0 || n == 0) return result;
 
-  for (std::size_t i = 0; i < S * G; ++i)
-    if (!std::isfinite(scale[i]) || scale[i] < 0.0) throw std::invalid_argument("a multiplier is negative or not finite");
-
-  // The graph's per-vertex inputs in position order.
-  std::vector<double> base(n);
-  std::vector<std::uint32_t> grp(n);
+  // The graph's per-vertex inputs in position order, checked.
+  PreparedInputs prepared = prepare_inputs(plan, weights, group, G, scale, S);
+  std::vector<double>& base = prepared.base;
+  std::vector<std::uint32_t>& grp = prepared.group;
   const std::vector<std::uint32_t>& orig_of = plan.vertex_at();
-  for (std::size_t p = 0; p < n; ++p) {
-    const std::uint32_t id = orig_of[p];
-    if (group[id] >= G) throw std::invalid_argument("a group id is outside 0..num_groups-1");
-    base[p] = weights[id];
-    grp[p] = group[id];
-  }
   Context ctx;
   ctx.n = n;
   ctx.pred_ptr = plan.pred_ptr().data();

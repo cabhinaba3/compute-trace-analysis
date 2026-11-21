@@ -5,6 +5,7 @@
 #include <memory>
 #include <new>
 #include <stdexcept>
+#include <string>
 #include <utility>
 
 #include "analysis/dag.hpp"
@@ -13,6 +14,7 @@
 #include "analysis/whatif.hpp"
 #include "bindings/bindings.hpp"
 #include "bindings/convert.hpp"
+#include "gpu/backend.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -123,7 +125,9 @@ void bind_analysis(nb::module_& m) {
           [](const cta::analysis::DagPlan& plan, Column<double> weights, Column<bool> is_comm, Column<bool> is_compute,
              Column<std::int64_t> size_bytes, Column<std::uint32_t> group,
              nb::ndarray<const double, nb::ndim<2>, nb::c_contig, nb::device::cpu> scale, int threads,
-             std::uint64_t memory_budget_bytes) {
+             std::uint64_t memory_budget_bytes, const std::string& device, std::uint64_t gpu_memory_bytes) {
+            if (device != "cpu" && device != "cuda" && device != "metal")
+              throw std::invalid_argument("unknown device '" + device + "'; expected cpu, cuda or metal");
             const std::size_t n = plan.num_vertices();
             if (weights.shape(0) != n || is_comm.shape(0) != n || is_compute.shape(0) != n ||
                 size_bytes.shape(0) != n || group.shape(0) != n)
@@ -132,9 +136,38 @@ void bind_analysis(nb::module_& m) {
             cta::analysis::WhatIfResult r;
             {
               nb::gil_scoped_release release;
-              r = cta::analysis::solve_scenarios(plan, weights.data(), is_comm.data(), is_compute.data(),
-                                       size_bytes.data(), group.data(), groups, scale.data(), scenarios, threads,
-                                       memory_budget_bytes);
+              bool solved = false;
+              std::string note;
+              if (device != "cpu" && n != 0 && scenarios != 0) {
+                // Bad inputs are errors on every device; anything else the GPU does wrong is a note
+                // and the CPU solves it.
+                const cta::analysis::PreparedInputs prepared = cta::analysis::prepare_inputs(
+                    plan, weights.data(), group.data(), groups, scale.data(), scenarios);
+                cta::gpu::SolveInput in;
+                in.plan = &plan;
+                in.prepared = &prepared;
+                in.is_comm = is_comm.data();
+                in.is_compute = is_compute.data();
+                in.size_bytes = size_bytes.data();
+                in.num_groups = groups;
+                in.scale = scale.data();
+                in.num_scenarios = scenarios;
+                try {
+                  r = cta::gpu::solve_on(device, in, gpu_memory_bytes);
+                  solved = true;
+                } catch (const std::exception& e) {
+                  note = e.what();
+                }
+              } else if (device != "cpu") {
+                note = device + " was not used: nothing to solve";
+              }
+              if (!solved) {
+                r = cta::analysis::solve_scenarios(plan, weights.data(), is_comm.data(), is_compute.data(),
+                                                   size_bytes.data(), group.data(), groups, scale.data(), scenarios,
+                                                   threads, memory_budget_bytes);
+                r.device = "cpu";
+                r.note = note;
+              }
             }
             nb::dict d;
             d["makespan"] = to_numpy(std::move(r.makespan));
@@ -146,11 +179,18 @@ void bind_analysis(nb::module_& m) {
             d["lanes"] = r.lanes;
             d["workers"] = r.workers;
             d["bytes_per_worker"] = r.bytes_per_worker;
+            d["device"] = r.device;
+            d["device_note"] = r.note;
             return d;
           },
           "weights"_a, "is_comm"_a, "is_compute"_a, "size_bytes"_a, "group"_a, "scale"_a, "threads"_a = 0,
-          "memory_budget_bytes"_a = 0,
-          "Solves one scenario per row of `scale` (scenarios x groups multipliers); see analysis/whatif.hpp.");
+          "memory_budget_bytes"_a = 0, "device"_a = "cpu", "gpu_memory_bytes"_a = 0,
+          "Solves one scenario per row of `scale` (scenarios x groups multipliers); see analysis/whatif.hpp. `device` "
+          "is cpu, cuda or metal; a GPU that is missing or fails gives the CPU's answer with a `device_note`.");
+
+  m.def(
+      "gpu_backends", []() { return cta::gpu::available_backends(); },
+      "The GPU backends this build has and finds a device for: 'cuda' and/or 'metal'.");
 }
 
 }  // namespace cta::bindings
