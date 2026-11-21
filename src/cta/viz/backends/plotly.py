@@ -199,6 +199,7 @@ def _add_trace(
                 y=list(trace.y) if trace.y is not None else [],
                 base=base,
                 marker_color=color,
+                **_bar_opacity(style),
                 **common,
             ),
             **cell,
@@ -210,6 +211,7 @@ def _add_trace(
                 y=list(trace.y) if trace.y is not None else [],
                 orientation="h",
                 marker_color=color,
+                **_bar_opacity(style),
                 **common,
             ),
             **cell,
@@ -394,6 +396,18 @@ def _add_trace(
             **cell,
         )
     return used_palette_colors
+
+
+def _bar_opacity(style: dict[str, Any]) -> dict[str, Any]:
+    """Returns the opacity ``style["alpha"]`` sets: one value or one per bar."""
+    alpha = style.get("alpha")
+    if alpha is None:
+        return {}
+    return {
+        "marker_opacity": list(alpha)
+        if isinstance(alpha, (list, tuple))
+        else alpha
+    }
 
 
 def _scatter_marker(

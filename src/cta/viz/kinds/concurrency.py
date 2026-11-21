@@ -125,6 +125,7 @@ def queue_depth(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
                 title=str(label),
                 xlabel="time since the first step (ms)",
                 ylabel="kernels running at once",
+                xkind="time",
             )
         )
     notes = (

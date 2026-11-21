@@ -339,6 +339,26 @@ def plot_command(
     cache_dir: Annotated[
         pathlib.Path, typer.Option("--cache-dir")
     ] = pathlib.Path(".cta_cache"),
+    pick_step: Annotated[
+        str | None,
+        typer.Option(
+            "--pick-step",
+            help=(
+                "Link the charts on one step, IDX or IDX@RANK: every chart "
+                "with a time axis zooms to it."
+            ),
+        ),
+    ] = None,
+    pick_family: Annotated[
+        str | None,
+        typer.Option(
+            "--pick-family",
+            help=(
+                "Link the charts on one kernel family: the other families "
+                "are dimmed in every chart that tags them."
+            ),
+        ),
+    ] = None,
     list_kinds: Annotated[
         bool,
         typer.Option(
@@ -369,6 +389,7 @@ def plot_command(
     from cta import engine
     from cta.ingest import manifest as ingest_manifest
     from cta.viz import context
+    from cta.viz import linking
     from cta.viz import registry as viz_registry
     from cta.viz import spec as viz_spec
 
@@ -405,7 +426,17 @@ def plot_command(
                 "Provide at least one trace path/directory, --manifest, or "
                 "--history GLOB."
             )
-        ctx = context.DataContext(report, history=history)
+        selection = linking.Selection(
+            step=linking.parse_step(pick_step) if pick_step else None,
+            family=pick_family or None,
+        )
+        ctx = context.DataContext(report, history=history, selection=selection)
+        if selection.step is not None:
+            if report is None:
+                raise typer.BadParameter(
+                    "--pick-step needs traces or --manifest"
+                )
+            linking.check(ctx, selection)
         if list_sources:
             for name, columns in ctx.describe().items():
                 output.console.print(
@@ -511,6 +542,7 @@ def plot_command(
                 title=page_title,
                 theme=shared_options.get("theme", "light"),
                 palette=shared_options.get("palette"),
+                selection=selection,
                 open_browser=not no_open,
                 on_ready=announce_url,
             )

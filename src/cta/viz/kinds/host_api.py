@@ -242,6 +242,7 @@ def runtime_timeline(
                 xlabel="ms since the rank's first event",
                 xrange=(low, high),
                 invert_y=True,
+                xkind="time",
             )
         )
     if not panels:

@@ -414,6 +414,7 @@ class Report:
         title: str = "CTA report",
         cdn: bool = False,
         kinds: Iterable[str] | None = None,
+        selection: Any = None,
         **options: Any,
     ) -> pathlib.Path:
         """Writes one interactive HTML dashboard of the report.
@@ -427,6 +428,8 @@ class Report:
                 embedding it.
             kinds: Plot kinds to include. None uses the default plot set
                 for the report's data.
+            selection: A ``cta.viz.linking.Selection``: the step and kernel
+                family every chart follows.
             **options: Options passed to every plot kind in ``kinds``.
                 Ignored when ``kinds`` is None.
 
@@ -443,7 +446,7 @@ class Report:
             else None
         )
         return viz_dashboard.build_dashboard(
-            context.DataContext(self),
+            context.DataContext(self, selection=selection),
             specs,
             pathlib.Path(path),
             title=title,

@@ -70,7 +70,12 @@ def pareto(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
             y=share_pct,
             name="share of GPU time",
             style={"ci": 0},
-            meta={"label": label},
+            meta={
+                "label": label,
+                **(
+                    {"family_axis": "x"} if entity_column == "op_family" else {}
+                ),
+            },
         )
         cumulative_line = ir.Trace(
             "line",
@@ -180,7 +185,16 @@ def family_share(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
             ]
         traces.append(
             ir.Trace(
-                "bar", x=labels, y=heights, name=str(entity), style={"ci": i}
+                "bar",
+                x=labels,
+                y=heights,
+                name=str(entity),
+                style={"ci": i},
+                meta=(
+                    {"family": str(entity)}
+                    if entity_column == "op_family"
+                    else {}
+                ),
             )
         )
     if options["normalize"]:

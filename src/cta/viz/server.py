@@ -22,6 +22,7 @@ from cta import engine
 from cta import models
 from cta.viz import context
 from cta.viz import dashboard
+from cta.viz import linking
 from cta.viz import registry
 from cta.viz import spec
 from cta.viz import suitability
@@ -114,6 +115,7 @@ class LiveSession:
         *,
         theme: str = "light",
         palette: str | None = None,
+        selection: linking.Selection | None = None,
     ) -> None:
         """Builds every plot once on the full report.
 
@@ -122,6 +124,8 @@ class LiveSession:
             specs: The plots; None uses ``dashboard.default_specs``.
             theme: Plot theme, ``"light"`` or ``"dark"``.
             palette: Palette name or colour list; None keeps the default.
+            selection: The step and kernel family every chart follows, for
+                every filter selection alike.
 
         Raises:
             ImportError: If Plotly is not installed.
@@ -129,7 +133,8 @@ class LiveSession:
         """
         self.base = report
         self.theme, self.palette = theme, palette
-        self.base_ctx = context.DataContext(report)
+        self.selection = selection or linking.Selection()
+        self.base_ctx = context.DataContext(report, selection=self.selection)
         self.cards, self.skipped = dashboard.plan(
             self.base_ctx, specs, theme, palette
         )
@@ -237,7 +242,7 @@ class LiveSession:
             target_spec = spec.PlotSpec(
                 kind=target_kind, options=filtered_options
             )
-            ctx = context.DataContext(report)
+            ctx = context.DataContext(report, selection=self.selection)
             fig_json, title, notes, warnings = dashboard.figure_json(
                 ctx, target_spec, self.theme, self.palette
             )
@@ -285,6 +290,7 @@ def make_server(
     title: str = "CTA report",
     theme: str = "light",
     palette: str | None = None,
+    selection: linking.Selection | None = None,
 ) -> tuple[server.ThreadingHTTPServer, LiveSession]:
     """Creates the live dashboard server without starting it.
 
@@ -298,6 +304,7 @@ def make_server(
         title: Page title.
         theme: Plot theme, ``"light"`` or ``"dark"``.
         palette: Palette name or colour list; None keeps the default.
+        selection: The step and kernel family every chart follows.
 
     Returns:
         The server, bound to 127.0.0.1, and its session.
@@ -308,7 +315,9 @@ def make_server(
     """
     from plotly import offline
 
-    session = LiveSession(report, specs, theme=theme, palette=palette)
+    session = LiveSession(
+        report, specs, theme=theme, palette=palette, selection=selection
+    )
     index = session.html(title, offline.get_plotlyjs()).encode("utf-8")
 
     class Handler(server.BaseHTTPRequestHandler):
@@ -364,6 +373,7 @@ def serve(
     title: str = "CTA report",
     theme: str = "light",
     palette: str | None = None,
+    selection: linking.Selection | None = None,
     open_browser: bool = True,
     on_ready: Any = None,
 ) -> None:
@@ -376,6 +386,7 @@ def serve(
         title: Page title.
         theme: Plot theme, ``"light"`` or ``"dark"``.
         palette: Palette name or colour list; None keeps the default.
+        selection: The step and kernel family every chart follows.
         open_browser: If True, opens the page in the default browser.
         on_ready: Called with the page URL once the server is bound.
 
@@ -384,7 +395,13 @@ def serve(
         NotApplicableError: If no plot could be drawn.
     """
     httpd, _ = make_server(
-        report, specs, port=port, title=title, theme=theme, palette=palette
+        report,
+        specs,
+        port=port,
+        title=title,
+        theme=theme,
+        palette=palette,
+        selection=selection,
     )
     url = f"http://127.0.0.1:{httpd.server_address[1]}/"
     if on_ready:

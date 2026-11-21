@@ -145,7 +145,14 @@ def timeline(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
                         "nolegend": panel_index > 0,
                         "width": 5,
                     },
-                    meta={"label": label},
+                    meta={
+                        "label": label,
+                        **(
+                            {"family": value}
+                            if color_column == "op_family"
+                            else {}
+                        ),
+                    },
                 )
             )
         panels.append(
@@ -154,7 +161,7 @@ def timeline(ctx: context.DataContext, options: dict[str, Any]) -> ir.Chart:
                 title=label,
                 xlabel="time since rank's first step (ms)",
                 ylabel="",
-                xkind="",
+                xkind="time",
                 legend=panel_index == 0,
             )
         )

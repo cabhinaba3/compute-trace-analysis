@@ -21,6 +21,7 @@ import polars as pl
 from cta import _optional
 from cta import models
 from cta.analysis import step_slicing
+from cta.viz import linking
 from cta.viz import registry
 
 SOURCES = (
@@ -55,6 +56,8 @@ class DataContext:
         report: The report being plotted; None for plots that need no report
             (such as ``history``).
         history: Glob of saved ``report.json`` files for the ``history`` plot.
+        selection: The step and kernel family every chart follows (see
+            ``cta.viz.linking``); empty picks nothing.
     """
 
     def __init__(
@@ -62,15 +65,18 @@ class DataContext:
         report: models.Report | None = None,
         *,
         history: str | None = None,
+        selection: linking.Selection | None = None,
     ) -> None:
         """Initialises the context.
 
         Args:
             report: The report to plot, if any.
             history: Glob of saved ``report.json`` files, if any.
+            selection: The step and kernel family the charts follow, if any.
         """
         self.report = report
         self.history = history
+        self.selection = selection or linking.Selection()
         self._raw_tables: dict[str, pl.DataFrame] = {}
         self._is_built = False
 

@@ -56,7 +56,10 @@ class Trace:
         size: Scatter marker sizes.
         text: Per-point text (annotations, hover text).
         meta: Filter tags (``label``, ``rank``, ``device``) the dashboard uses
-            to hide or show the trace.
+            to hide or show the trace. ``family`` or ``family_axis="x"|"y"``
+            marks a trace that is one kernel family, or whose category
+            labels are families; ``cta.viz.linking`` dims the other
+            families through these tags.
         style: Mark options (alpha, width, dash, stack, bins, cmap, density,
             marker, ...); ``ci`` pins the palette index and ``nolegend``
             hides the legend entry.
@@ -99,7 +102,9 @@ class Panel:
         xrange: Fixed x-axis limits; None lets the backend choose.
         colorbar: Label of the heatmap/scatter colour bar.
         xkind: ``"step"`` marks a step axis that the dashboard's step-range
-            filter may drive.
+            filter may drive. ``"time"`` marks an axis in ms since the rank's
+            origin (the ``t_ms`` of the kernel, call and step tables), which
+            a picked step zooms to (``cta.viz.linking``).
         polar: If True, the panel has polar axes (for ``radar`` traces).
         stacked: If True, bar traces stack instead of grouping.
         overlay: If True, bar traces share one position (waterfalls: floating

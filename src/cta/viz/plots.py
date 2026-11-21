@@ -10,6 +10,7 @@ import pathlib
 from typing import Any, TYPE_CHECKING
 
 from cta.viz import context
+from cta.viz import linking
 from cta.viz import registry as viz_registry
 from cta.viz import spec as viz_spec
 from cta.viz import suitability
@@ -55,6 +56,7 @@ def build_chart(
         chart.title = resolved["title"]
         if len(chart.panels) == 1:
             chart.panels[0].title = resolved["title"]
+    linking.apply(chart, ctx.selection, ctx)
     if warn:
         suitability.validate_and_warn(ctx, kind, resolved, chart=chart)
     return chart, resolved
@@ -170,6 +172,7 @@ def render_plot(
     path: pathlib.Path | None = None,
     style: str = "paper_single_col",
     dpi: int = 300,
+    selection: linking.Selection | None = None,
     **options: Any,
 ) -> Any:
     """Renders one plot kind of a report (see ``cta plot --list-kinds``).
@@ -181,6 +184,8 @@ def render_plot(
             only.
         style: Size preset for Matplotlib output.
         dpi: Resolution of raster Matplotlib output.
+        selection: The step and kernel family to link the chart on (see
+            ``cta.viz.linking``).
         **options: The kind's declared options.
 
     Returns:
@@ -191,7 +196,9 @@ def render_plot(
         NotApplicableError: If the kind cannot be drawn for this
             report.
     """
-    chart, resolved = build_chart(context.DataContext(report), kind, options)
+    chart, resolved = build_chart(
+        context.DataContext(report, selection=selection), kind, options
+    )
     return render_chart(chart, resolved, path, style=style, dpi=dpi)
 
 

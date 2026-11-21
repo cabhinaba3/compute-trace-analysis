@@ -525,24 +525,33 @@ def _draw_bars(
             if trace.y1 is not None
             else (stack_base[positions.astype(int)] if stacked else None)
         )
+        alpha = trace.style.get("alpha")
+        per_bar = isinstance(alpha, (list, tuple))
         if vertical:
-            ax.bar(
+            container = ax.bar(
                 positions + offset,
                 values,
                 width=width,
                 bottom=base,
                 color=color,
                 label=trace.name,
+                alpha=None if per_bar else alpha,
             )
         else:
-            ax.barh(
+            container = ax.barh(
                 positions + offset,
                 values,
                 height=width,
                 left=base,
                 color=color,
                 label=trace.name,
+                alpha=None if per_bar else alpha,
             )
+        if per_bar and alpha is not None:
+            for patch, patch_alpha in zip(
+                container.patches, alpha, strict=True
+            ):
+                patch.set_alpha(patch_alpha)
         if stacked:
             np.add.at(stack_base, positions.astype(int), values)
     longest_category = max(
