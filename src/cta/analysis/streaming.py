@@ -477,3 +477,65 @@ def solve_artifact_frontier(
         scratch_dir=scratch_dir,
     )
     return dag_result_from_native(raw)
+
+
+def solve_artifact_outofcore(
+    artifact: models.TraceArtifact,
+    *,
+    engine: str = "gridgraph",
+    memory_budget_bytes: int = 0,
+    goal_semantics: str = "cta_legacy",
+    collective_sync: str = "none",
+    coll_group_sizes: dict[str, int] | None = None,
+    fail_on_cycle: bool = False,
+    extract_critical_path_ops: bool = False,
+    delay_attribution: bool = False,
+    scratch_dir: str = "",
+    cache_path: pathlib.Path | None = None,
+) -> StreamingDagResult:
+    """Runs an out-of-core GraphEngine (default GridGraph) on an artifact."""
+    groups = dict(coll_group_sizes) if coll_group_sizes else {}
+    if cache_path is not None and engine == "gridgraph":
+        if not cache_path.exists():
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            stream, _ = open_stream_for_artifact(
+                artifact, goal_semantics=goal_semantics
+            )
+            native.build_graph_cache(
+                stream,
+                str(cache_path),
+                memory_budget_bytes=memory_budget_bytes,
+                goal_semantics=goal_semantics,
+                collective_sync=collective_sync,
+                world_size_hint=artifact.world_size,
+                coll_group_sizes=groups,
+                fail_on_cycle=fail_on_cycle,
+                scratch_dir=scratch_dir,
+            )
+        raw = native.solve_graph_cache(
+            str(cache_path),
+            memory_budget_bytes=memory_budget_bytes,
+            goal_semantics=goal_semantics,
+            extract_critical_path_ops=extract_critical_path_ops,
+            delay_attribution=delay_attribution,
+            scratch_dir=scratch_dir,
+        )
+        return dag_result_from_native(raw)
+
+    stream, _ = open_stream_for_artifact(
+        artifact, goal_semantics=goal_semantics
+    )
+    raw = native.solve_dag_stream(
+        stream,
+        engine=engine,
+        memory_budget_bytes=memory_budget_bytes,
+        goal_semantics=goal_semantics,
+        collective_sync=collective_sync,
+        world_size_hint=artifact.world_size,
+        coll_group_sizes=groups,
+        fail_on_cycle=fail_on_cycle,
+        extract_critical_path_ops=extract_critical_path_ops,
+        delay_attribution=delay_attribution,
+        scratch_dir=scratch_dir,
+    )
+    return dag_result_from_native(raw)

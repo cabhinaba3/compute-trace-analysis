@@ -128,7 +128,7 @@ def available_graph_engines() -> list[str]:
 
 def solve_dag_stream(
     stream: GraphStream,
-    engine: str = "frontier",
+    engine: str = "gridgraph",
     memory_budget_bytes: int = 0,
     goal_semantics: str = "cta_legacy",
     collective_sync: str = "none",
@@ -167,6 +167,32 @@ def solve_chakra_et_frontier(
     scratch_dir: str = "",
 ) -> dict[str, Any]:
     """Lockstep 1-pass frontier DAG solver over multi-rank Chakra .et files."""
+    ...
+
+def build_graph_cache(
+    stream: GraphStream,
+    cache_path: str,
+    memory_budget_bytes: int = 0,
+    goal_semantics: str = "cta_legacy",
+    collective_sync: str = "none",
+    world_size_hint: int = 0,
+    coll_group_sizes: dict[str, int] | None = None,
+    fail_on_cycle: bool = False,
+    scratch_dir: str = "",
+    chunk_nodes: int = 524288,
+) -> dict[str, Any]:
+    """Builds a persistent .cta_graph topological block cache on disk."""
+    ...
+
+def solve_graph_cache(
+    cache_path: str,
+    memory_budget_bytes: int = 0,
+    goal_semantics: str = "cta_legacy",
+    extract_critical_path_ops: bool = False,
+    delay_attribution: bool = False,
+    scratch_dir: str = "",
+) -> dict[str, Any]:
+    """Runs Engine C (GridGraph exact DAG + optional Scalasca) on cache."""
     ...
 
 # Analysis.

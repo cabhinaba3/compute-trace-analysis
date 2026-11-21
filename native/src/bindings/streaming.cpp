@@ -15,8 +15,10 @@
 #include "bindings/bindings.hpp"
 #include "bindings/convert.hpp"
 #include "streaming/batch.hpp"
+#include "streaming/cache/graph_cache.hpp"
 #include "streaming/engines/engine.hpp"
 #include "streaming/engines/frontier/frontier_engine.hpp"
+#include "streaming/engines/gridgraph/gridgraph_engine.hpp"
 #include "streaming/engines/online_agg/online_agg.hpp"
 #include "streaming/sketches/quantile.hpp"
 #include "streaming/sources/source.hpp"
@@ -280,7 +282,7 @@ void bind_streaming(nb::module_& m) {
         }
         return to_dict(std::move(r));
       },
-      "stream"_a, "engine"_a = "frontier", "memory_budget_bytes"_a = 0, "goal_semantics"_a = "cta_legacy",
+      "stream"_a, "engine"_a = "gridgraph", "memory_budget_bytes"_a = 0, "goal_semantics"_a = "cta_legacy",
       "collective_sync"_a = "none", "world_size_hint"_a = 0,
       "coll_group_sizes"_a = std::unordered_map<std::string, std::uint32_t>{}, "window_size"_a = 262144,
       "max_lookahead"_a = 65536, "fail_on_cycle"_a = false, "extract_critical_path_ops"_a = false,
@@ -325,6 +327,57 @@ void bind_streaming(nb::module_& m) {
       "max_lookahead"_a = 65536, "fail_on_cycle"_a = false, "extract_critical_path_ops"_a = false,
       "scratch_dir"_a = "",
       "Multi-rank lockstep 1-pass frontier DAG solver over Chakra .et files with Certified Eviction-Epoch bounds.");
+
+  m.def(
+      "build_graph_cache",
+      [](PyGraphStream& stream, const std::string& cache_path, std::uint64_t memory_budget_bytes,
+         const std::string& goal_semantics, const std::string& collective_sync, std::uint32_t world_size_hint,
+         const std::unordered_map<std::string, std::uint32_t>& coll_group_sizes, bool fail_on_cycle,
+         const std::string& scratch_dir, std::size_t chunk_nodes) {
+        const auto opts = build_dag_options("gridgraph", memory_budget_bytes, goal_semantics, collective_sync,
+                                            world_size_hint, coll_group_sizes, 262144, 65536, fail_on_cycle, false,
+                                            false, scratch_dir, chunk_nodes);
+        nb::dict info;
+        {
+          nb::gil_scoped_release release;
+          streaming::cache::build_graph_cache(stream.source(), cache_path, opts);
+        }
+        streaming::cache::GraphCacheReader reader(cache_path);
+        const auto& h = reader.header();
+        info["num_vertices"] = h.num_real_vertices;
+        info["num_total_vertices"] = h.num_total_vertices;
+        info["num_edges"] = h.num_edges;
+        info["unordered"] = h.unordered;
+        info["num_blocks"] = h.num_blocks;
+        info["block_vertices"] = h.block_vertices;
+        info["world_size"] = h.world_size;
+        info["max_cutwidth"] = h.max_cutwidth;
+        return info;
+      },
+      "stream"_a, "cache_path"_a, "memory_budget_bytes"_a = 0, "goal_semantics"_a = "cta_legacy",
+      "collective_sync"_a = "none", "world_size_hint"_a = 0,
+      "coll_group_sizes"_a = std::unordered_map<std::string, std::uint32_t>{}, "fail_on_cycle"_a = false,
+      "scratch_dir"_a = "", "chunk_nodes"_a = 524288,
+      "Builds a persistent .cta_graph 2D GridGraph topological cache from a GraphStream.");
+
+  m.def(
+      "solve_graph_cache",
+      [](const std::string& cache_path, std::uint64_t memory_budget_bytes, const std::string& goal_semantics,
+         bool extract_critical_path_ops, bool delay_attribution, const std::string& scratch_dir) {
+        const auto opts = build_dag_options("gridgraph", memory_budget_bytes, goal_semantics, "none", 0, {}, 262144,
+                                            65536, false, extract_critical_path_ops, delay_attribution, scratch_dir,
+                                            524288);
+        streaming::engines::DagStreamResult r;
+        {
+          nb::gil_scoped_release release;
+          streaming::cache::GraphCacheReader reader(cache_path);
+          r = streaming::engines::solve_from_graph_cache(reader, opts);
+        }
+        return to_dict(std::move(r));
+      },
+      "cache_path"_a, "memory_budget_bytes"_a = 0, "goal_semantics"_a = "cta_legacy",
+      "extract_critical_path_ops"_a = false, "delay_attribution"_a = false, "scratch_dir"_a = "",
+      "Runs Engine C (GridGraph exact DAG + optional CP op chain + Scalasca delay attribution) on a .cta_graph file.");
 }
 
 }  // namespace cta::bindings
