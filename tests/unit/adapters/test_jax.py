@@ -355,6 +355,47 @@ def test_host_launch_calls_fill_the_runtime_table(
     ]
 
 
+def test_runtime_counts_calls_inside_an_enclosing_step(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Step 1 is nested in step 0. A call after step 1 ends is still inside
+    # step 0; a call after both have ended is outside every step.
+    events = _process_name_events(1)
+    for step_num, start_us, duration_us in (
+        (0, 0.0, 1000.0),
+        (1, 100.0, 100.0),
+    ):
+        events.append(
+            {
+                "ph": "X",
+                "pid": 1,
+                "tid": 1,
+                "name": "train",
+                "ts": start_us,
+                "dur": duration_us,
+                "args": {"step_num": str(step_num)},
+            }
+        )
+    for call_start_us in (500.0, 1500.0):
+        events.append(
+            {
+                "ph": "X",
+                "pid": 1,
+                "tid": 1,
+                "name": "cuLaunchKernel",
+                "ts": call_start_us,
+                "dur": 4.0,
+                "args": {"correlation_id": str(int(call_start_us))},
+            }
+        )
+    events.append(_device_op(0, "fusion.1", 10.0, 5, 0))
+    trace_path = _write_trace(tmp_path / "h.trace.json.gz", events)
+    runtime = _ingest(trace_path, tmp_path / "o")["runtime"]
+    assert runtime.to_dicts() == [
+        {"name": "cuLaunchKernel", "duration_ns": 4_000, "calls": 1}
+    ]
+
+
 def test_work_outside_every_step_is_dropped(tmp_path: pathlib.Path) -> None:
     autotune_op = _device_op(0, "autotune.9", 50000.0, 5, 9)
     events = _trace_events(has_step_annotations=True, steps=1) + [autotune_op]

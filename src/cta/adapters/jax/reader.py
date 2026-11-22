@@ -464,6 +464,35 @@ def _assign_steps(
     return step_of_op.astype(np.int32), step_columns
 
 
+def _is_in_any_span(
+    times_ns: np.ndarray, step_spans: list[tuple[int, int, int]]
+) -> np.ndarray:
+    """Returns whether each time lies inside at least one step span.
+
+    Spans can nest, so a time past the end of the last span that starts
+    before it can still be inside an earlier, longer one. Each time is
+    compared with the latest end among the spans starting at or before it.
+
+    Args:
+        times_ns: The times to test.
+        step_spans: The (step, start_ns, end_ns) spans, sorted by start.
+
+    Returns:
+        One boolean per time; all True when there are no spans, since the
+        whole trace is then one step.
+    """
+    if not step_spans:
+        return np.ones(len(times_ns), dtype=bool)
+    starts_ns = np.array([span[1] for span in step_spans], dtype=np.int64)
+    latest_ends_ns = np.maximum.accumulate(
+        np.array([span[2] for span in step_spans], dtype=np.int64)
+    )
+    span_index = np.searchsorted(starts_ns, times_ns, side="right") - 1
+    return (span_index >= 0) & (
+        times_ns <= latest_ends_ns[np.maximum(0, span_index)]
+    )
+
+
 def _ingest_shard(
     events: list[dict[str, Any]],
     rank: int,
@@ -542,11 +571,14 @@ def _ingest_shard(
         pl.Series("step", step_of_op, dtype=pl.Int32)
     )
     # Like the kernels, only the API calls made inside a step count.
-    for api_name, call_start_ns, call_duration_ns in scan.api_calls:
-        if not step_spans or any(
-            span_start_ns <= call_start_ns <= span_end_ns
-            for _, span_start_ns, span_end_ns in step_spans
-        ):
+    call_starts_ns = np.array(
+        [call[1] for call in scan.api_calls], dtype=np.int64
+    )
+    is_in_step = _is_in_any_span(call_starts_ns, step_spans)
+    for (api_name, _, call_duration_ns), counts in zip(
+        scan.api_calls, is_in_step.tolist(), strict=True
+    ):
+        if counts:
             totals = runtime_by_name.setdefault(api_name, [0, 0])
             totals[0] += call_duration_ns
             totals[1] += 1
