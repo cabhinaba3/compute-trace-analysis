@@ -15,6 +15,7 @@ import pytest
 
 from cta.synth import chakra
 from cta.synth import goal
+from cta.synth import jax
 from cta.synth import jtop
 from cta.synth import kineto
 from cta.synth import ncu
@@ -186,3 +187,32 @@ def test_generators_reject_arguments_of_the_wrong_type(
             tmp_path / "j.json",
             duration_s=cast(Any, 2.5),
         )
+
+
+def test_jax_generators_are_deterministic_and_well_formed(
+    tmp_path: pathlib.Path,
+) -> None:
+    j1 = jax.write_trace(tmp_path / "a.json", steps=2, devices=2)
+    j2 = jax.write_trace(tmp_path / "b.json", steps=2, devices=2)
+    assert j1.read_bytes() == j2.read_bytes()
+    doc = json.loads(j1.read_text())
+    assert doc["displayTimeUnit"] == "ns"
+    assert len(doc["traceEvents"]) > 0
+
+    x1 = jax.write_xplane(tmp_path / "a.xplane.pb", steps=2, devices=2)
+    x2 = jax.write_xplane(tmp_path / "b.xplane.pb", steps=2, devices=2)
+    assert x1.stat().st_size > 0
+    assert x2.stat().st_size == x1.stat().st_size
+
+    p1 = jax.write_pftrace(tmp_path / "a.pftrace", steps=2, devices=2)
+    p2 = jax.write_pftrace(tmp_path / "b.pftrace", steps=2, devices=2)
+    assert p1.read_bytes() == p2.read_bytes()
+
+    big1 = tmp_path / "big1.json"
+    big2 = tmp_path / "big2.json"
+    n1 = jax.write_large_trace(big1, target_bytes=1 << 20, seed=5)
+    n2 = jax.write_large_trace(big2, target_bytes=1 << 20, seed=5)
+    assert n1 == n2
+    assert big1.read_bytes() == big2.read_bytes()
+    assert big1.stat().st_size >= 1 << 20
+    assert len(json.loads(big1.read_text())["traceEvents"]) == n1

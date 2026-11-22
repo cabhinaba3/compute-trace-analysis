@@ -6,6 +6,7 @@
 #include "bindings/bindings.hpp"
 #include "synth/chakra.hpp"
 #include "synth/goal.hpp"
+#include "synth/jax.hpp"
 #include "synth/kineto.hpp"
 #include "synth/jtop.hpp"
 #include "synth/ncu.hpp"
@@ -119,6 +120,29 @@ void bind_synth(nb::module_& m) {
         call_guard<Nogil>());
   m.def("write_chakra_training", &cta::synth::write_chakra_training, "out_dir"_a, "spec"_a,
         "threads"_a = 0, call_guard<Nogil>());
+
+  m.def("write_jax_trace", &cta::synth::write_jax_trace, "path"_a, "steps"_a = 3, "devices"_a = 2,
+        "gemm_us"_a = 180.0, "comm_us"_a = 60.0, "annotated"_a = true, call_guard<Nogil>());
+  m.def("write_jax_xplane", &cta::synth::write_jax_xplane, "path"_a, "steps"_a = 3, "devices"_a = 2,
+        "gemm_us"_a = 180.0, "comm_us"_a = 60.0, "annotated"_a = true, call_guard<Nogil>());
+  m.def("write_jax_pftrace", &cta::synth::write_jax_pftrace, "path"_a, "steps"_a = 3, "devices"_a = 2,
+        "gemm_us"_a = 180.0, "comm_us"_a = 60.0, "annotated"_a = true, "legacy_chrome"_a = false,
+        call_guard<Nogil>());
+  m.def(
+      "write_jax_trace_large",
+      [](const std::string& path, std::uint64_t target_bytes, std::uint64_t seed, int devices,
+         int layers_per_step, int python_events_per_layer, bool annotated) {
+        cta::synth::JaxLargeSpec s;
+        s.target_bytes = target_bytes;
+        s.seed = seed;
+        s.devices = devices;
+        s.layers_per_step = layers_per_step;
+        s.python_events_per_layer = python_events_per_layer;
+        s.annotated = annotated;
+        return cta::synth::write_jax_trace_large(path, s);
+      },
+      "path"_a, "target_bytes"_a = 64ull << 20, "seed"_a = 1, "devices"_a = 2, "layers_per_step"_a = 16,
+      "python_events_per_layer"_a = 4, "annotated"_a = true, call_guard<Nogil>());
 }
 
 }  // namespace cta::bindings

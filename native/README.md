@@ -16,11 +16,14 @@ Every `#include` names its file from `src/`, for example
 `#include "util/sink.hpp"`. Each directory under `src/` lists its sources in
 its own `CMakeLists.txt` (there is no globbing), so a new `.cpp` file is added
 there. `cmake/ChakraProto.cmake` generates the C++ for Chakra's protobuf
-schema from the submodule.
+schema from the submodule, and `cmake/JaxProto.cmake` generates the C++ for
+the vendored XPlane and Perfetto schemas under `proto/`.
 
 ```
 CMakeLists.txt            dependencies and the one module target
 cmake/ChakraProto.cmake   protobuf, and C++ generated from Chakra's schema
+cmake/JaxProto.cmake      C++ generated from vendored XPlane & Perfetto schemas
+proto/                    minimal wire-compatible xplane.proto and perfetto_trace.proto
 src/
   module.cpp              the NB_MODULE; calls the four bind_* functions
   bindings/               what Python sees: names, arguments and defaults
@@ -55,8 +58,8 @@ src/
                           loop and critical path); engine.hpp states the
                           semantics of every network model
   synth/                  namespace cta::synth: one generator per format
-                          (kineto, goal, nsys, chakra, ncu, jtop, trtexec) and
-                          the 3D-parallel training graphs
+                          (kineto, goal, nsys, chakra, jax, ncu, jtop, trtexec)
+                          and the 3D-parallel training graphs
 ```
 
 The helpers in `util/` stay in namespace `cta`, so code in the nested
@@ -136,6 +139,28 @@ Two rules keep the output independent of thread count, chunk size and block
 size: chunks are merged in file order, and ids are assigned at the merge, not
 while parsing. `tests/unit/native/test_kineto_reader.py` checks this by cutting
 the same file at many sizes, down to one byte.
+
+## readers/jax
+
+`read_jax` reads all three JAX/XProf trace formats into one uniform
+dictionary-coded `JaxColumns` struct (selecting format automatically from the
+extension and header, or explicitly via `format="json"|"xplane"|"pftrace"`):
+
+| File | Role |
+| --- | --- |
+| `reader.hpp/.cpp` | public entry point `read_jax`, format dispatch, and `JaxColumns` |
+| `common.hpp` | plain/gzip byte source, streaming protobuf framer, regex-free classification/scope helpers, `JaxEventBuilder` |
+| `json_reader.*` | self-contained streaming gzip + `traceEvents` splitter, `OrderedPool` parallel simdjson parsing, late-metadata-safe merge |
+| `xplane_reader.*` | streaming `XSpace` -> per-plane `OrderedPool` protobuf decode (`xplane.proto`), resolving `ref_value` stats and derived-line prefixes |
+| `pftrace_reader.*` | streaming Perfetto `TracePacket` decode (`perfetto_trace.proto`), supporting `TrackDescriptor`/`TrackEvent`/`InternedData` slices and legacy `ChromeEventBundle` |
+
+All three formats resolve device processes (`/device:<kind>:<ordinal>`),
+preferred device lines (`Stream #` -> `XLA Ops` -> all), HLO scopes, transfer
+bytes, and first-launch correlation matching through the shared
+`JaxEventBuilder`. `tests/unit/native/test_jax_reader.py` verifies exact parity
+with the original Python reader, arbitrary block/chunk/thread invariance down
+to one byte, cross-format JSON/XPlane/Perfetto equivalence, and real H200
+fixtures.
 
 ## streaming/
 

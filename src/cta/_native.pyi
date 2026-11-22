@@ -41,6 +41,16 @@ def read_goal_bin(path: str) -> dict[str, Any]:
     """Reads a GOAL binary (.bin) schedule into node and edge columns."""
     ...
 
+def read_jax(
+    path: str,
+    format: str = "auto",
+    threads: int = 0,
+    chunk_bytes: int = 33554432,
+    block_bytes: int = 8388608,
+) -> dict[str, Any]:
+    """Reads a JAX/XProf trace (JSON, xplane.pb, or pftrace) into columns."""
+    ...
+
 # Streaming readers and memory helpers.
 
 def available_memory_bytes() -> int:
@@ -522,4 +532,50 @@ def write_chakra_training(
     out_dir: str, spec: TrainingSpec, threads: int = 0
 ) -> int:
     """Writes the graph as one Chakra .et file per rank; returns the bytes."""
+    ...
+
+def write_jax_trace(
+    path: str,
+    steps: int = 3,
+    devices: int = 2,
+    gemm_us: float = 180.0,
+    comm_us: float = 60.0,
+    annotated: bool = True,
+) -> None:
+    """Writes a synthetic JAX/XProf Chrome trace (.json or .json.gz)."""
+    ...
+
+def write_jax_xplane(
+    path: str,
+    steps: int = 3,
+    devices: int = 2,
+    gemm_us: float = 180.0,
+    comm_us: float = 60.0,
+    annotated: bool = True,
+) -> None:
+    """Writes a synthetic JAX/XProf XPlane protobuf (.xplane.pb[.gz])."""
+    ...
+
+def write_jax_pftrace(
+    path: str,
+    steps: int = 3,
+    devices: int = 2,
+    gemm_us: float = 180.0,
+    comm_us: float = 60.0,
+    annotated: bool = True,
+    legacy_chrome: bool = False,
+) -> None:
+    """Writes a synthetic JAX binary Perfetto trace (.pftrace[.gz])."""
+    ...
+
+def write_jax_trace_large(
+    path: str,
+    target_bytes: int = 67108864,
+    seed: int = 1,
+    devices: int = 2,
+    layers_per_step: int = 16,
+    python_events_per_layer: int = 4,
+    annotated: bool = True,
+) -> int:
+    """Writes a large JAX/XProf Chrome trace; returns the event count."""
     ...

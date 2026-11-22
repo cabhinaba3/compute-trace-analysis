@@ -35,12 +35,13 @@ def synth_command(
         ),
     ] = pathlib.Path("demo_traces"),
 ) -> None:
-    """Generates small valid traces of all 7 ecosystems.
+    """Generates small valid traces of all 8 ecosystems.
 
     For demos and offline testing.
     """
     from cta.synth import chakra
     from cta.synth import goal
+    from cta.synth import jax
     from cta.synth import jtop
     from cta.synth import kineto
     from cta.synth import ncu
@@ -112,6 +113,27 @@ def synth_command(
         attn_us=210.0,
         gemm_us=280.0,
         kernel_variant="fp8",
+    )
+    jax.write_trace(
+        out_dir / "jax" / "baseline.trace.json.gz",
+        steps=3,
+        devices=2,
+        gemm_us=240.0,
+        comm_us=80.0,
+    )
+    jax.write_xplane(
+        out_dir / "jax" / "optimized.xplane.pb",
+        steps=3,
+        devices=2,
+        gemm_us=140.0,
+        comm_us=50.0,
+    )
+    jax.write_pftrace(
+        out_dir / "jax" / "perfetto.pftrace",
+        steps=3,
+        devices=2,
+        gemm_us=140.0,
+        comm_us=50.0,
     )
     ncu.write_csv(out_dir / "ncu" / "baseline.csv", sm_pct=35.0, dram_pct=84.0)
     ncu.write_csv(

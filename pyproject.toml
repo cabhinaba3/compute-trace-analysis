@@ -53,7 +53,7 @@ ncu = ["ncu-report>=2026.2.0"]  # NVIDIA's native .ncu-rep reader (wheels for ma
 # no macOS wheels, so it is Linux-only.
 profile = ["nsight-python @ {root:uri}/third_party/nsight-python ; sys_platform == 'linux'"]
 viz = ["plotly>=5.20"]  # interactive HTML plots and the dashboard (static PDF/SVG/PNG need only matplotlib)
-jax = ["xprof>=2.24.2"]  # converts JAX/XProf *.xplane.pb to a trace (the Chrome-format files need nothing)
+jax = ["xprof>=2.24.2"]  # optional upstream xprof tools (CTA reads .xplane.pb, .pftrace and Chrome traces natively)
 hta = ["traceinsight>=0.6.1"]  # Meta Holistic Trace Analysis; enables the opt-in `hta_kineto` aspect
 sql = ["duckdb>=1.0.0"]  # SQL plots (`--sql`, the `custom` kind) and the `where` filter of raw-table plots
 # Run table queries on an NVIDIA GPU (`--accelerator cuda`) with Polars' GPU engine; Linux and CUDA only. Needs

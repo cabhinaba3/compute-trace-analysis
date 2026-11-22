@@ -2,10 +2,11 @@
 
 A trace session (``<logdir>/plugins/profile/<run>/``) holds
 ``<host>.xplane.pb`` and, with ``create_perfetto_trace=True``,
-``<host>.trace.json.gz`` and ``perfetto_trace.json.gz``. The three describe
-the same profile, so exactly one file per host is read: the XProf Chrome trace
-if present, else the Perfetto one, else the ``xplane.pb`` (converted with the
-optional ``xprof`` package from the ``jax`` extra).
+``<host>.trace.json.gz`` and ``perfetto_trace.json.gz`` (or binary Perfetto
+``.pftrace`` exports). These describe the same profile, so one source per host
+is read: the XProf Chrome trace if present, else ``perfetto_trace.json.gz``,
+else binary ``.pftrace`` exports, else ``<host>.xplane.pb`` (all parsed
+natively in C++20 via ``cta._native.read_jax``).
 
 Device ops are every event on a ``/device:*`` stream (GPU kernels, memcpys,
 memsets) plus XLA:CPU thunks (events with an ``hlo_op`` argument on the host).
@@ -19,55 +20,94 @@ and its device op), like the Kineto reader does.
 from __future__ import annotations
 
 from collections.abc import Sequence
-import dataclasses
 import gzip
-import json
 import pathlib
 import re
 from typing import Any
 import warnings
+import zlib
 
 import numpy as np
 import polars as pl
 
-from cta import _optional
+from cta import _native as native
 from cta import models
 from cta import plugins
 from cta import table_schemas
 from cta.adapters import common
+from cta.adapters import runtime_calls
 from cta.analysis import alignment
+from cta.analysis import network
 
-_XPLANE_SUFFIX = ".xplane.pb"
+_XPLANE_SUFFIXES = (".xplane.pb.gz", ".xplane.pb")
 _HOST_TRACE_SUFFIX = ".trace.json.gz"
 _PERFETTO_NAME = "perfetto_trace.json.gz"
-_COMM_RE = re.compile(
-    r"all[-_]?reduce|all[-_]?gather|reduce[-_]?scatter|all[-_]?to[-_]?all"
-    r"|collective[-_]?permute|nccl|^(send|recv)[-.\d]",
-    re.IGNORECASE,
+_PFTRACE_SUFFIXES = (
+    ".pftrace.gz",
+    ".pftrace",
+    ".perfetto-trace.gz",
+    ".perfetto-trace",
 )
-_COPY_RE = re.compile(
-    r"memcpy|memset|copy[-_]?(start|done)|infeed|outfeed", re.IGNORECASE
+_XLA_COLL_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"all[-_]?reduce", re.IGNORECASE), "allreduce"),
+    (re.compile(r"all[-_]?gather", re.IGNORECASE), "allgather"),
+    (re.compile(r"reduce[-_]?scatter", re.IGNORECASE), "reducescatter"),
+    (re.compile(r"all[-_]?to[-_]?all", re.IGNORECASE), "alltoall"),
+    (re.compile(r"collective[-_]?permute", re.IGNORECASE), "collectivepermute"),
+    (re.compile(r"^send[-.\d]", re.IGNORECASE), "send"),
+    (re.compile(r"^recv[-.\d]", re.IGNORECASE), "recv"),
 )
-# Name prefix of the host event of each execution of a compiled module (PJRT).
-_EXECUTE_PREFIX = "CommonPjRtLoadedExecutable::Execute ("
-_BYTES_RE = re.compile(r"(?:size|num_bytes):(\d+)")
-_DEVICE_RE = re.compile(r"/device:(?:[A-Za-z]+):(\d+)")
+
+
+def _is_xplane_name(name: str) -> bool:
+    """Returns whether ``name`` ends with an XPlane protobuf suffix."""
+    lower = name.lower()
+    return any(lower.endswith(suffix) for suffix in _XPLANE_SUFFIXES)
+
+
+def _is_pftrace_name(name: str) -> bool:
+    """Returns whether ``name`` ends with a binary Perfetto trace suffix."""
+    lower = name.lower()
+    return any(lower.endswith(suffix) for suffix in _PFTRACE_SUFFIXES)
 
 
 def _host_stem(name: str) -> str | None:
     """Returns the host part of an XProf xplane/trace file name, else None."""
-    for suffix in (_XPLANE_SUFFIX, _HOST_TRACE_SUFFIX):
+    for suffix in (*_XPLANE_SUFFIXES, _HOST_TRACE_SUFFIX):
         if name.endswith(suffix):
             return name[: -len(suffix)]
     return None
+
+
+def _has_pftrace_header(path: pathlib.Path) -> bool:
+    """Checks that ``path`` begins with a Perfetto ``Trace.packet`` varint."""
+    try:
+        with path.open("rb") as fh:
+            prefix = fh.read(2)
+        if len(prefix) < 2:
+            return False
+        if prefix == b"\x1f\x8b" or path.suffix.lower() == ".gz":
+            with gzip.open(path, "rb") as gz:
+                head = gz.read(16)
+        else:
+            with path.open("rb") as fh:
+                head = fh.read(16)
+    except (OSError, EOFError, zlib.error):
+        return False
+    # Perfetto Trace has a single repeated field: TracePacket packet = 1
+    # (tag byte 0x0a: field 1, wire type 2), followed by a base-128 length.
+    if len(head) < 2 or head[0] != 0x0A:
+        return False
+    return any((byte & 0x80) == 0 for byte in head[1:11])
 
 
 def select_sources(paths: Sequence[pathlib.Path]) -> list[pathlib.Path]:
     """Selects one file per host and trace session directory.
 
     In each directory the XProf Chrome traces are read if there are any, else
-    the Perfetto export, else the xplane.pb files. Next to XProf traces, the
-    xplane.pb files of hosts without a converted trace are read too.
+    ``perfetto_trace.json.gz``, else binary ``.pftrace`` exports, else the
+    ``xplane.pb`` files. Next to XProf traces, the ``xplane.pb`` files of
+    hosts without a converted trace are read too.
 
     Args:
         paths: The files of a JAX artifact.
@@ -87,53 +127,36 @@ def select_sources(paths: Sequence[pathlib.Path]) -> list[pathlib.Path]:
         perfetto_traces = [
             path for path in session_paths if path.name == _PERFETTO_NAME
         ]
-        converted_hosts = {_host_stem(path.name) for path in host_traces}
-        unconverted_xplanes = [
-            path
-            for path in session_paths
-            if path.name.endswith(_XPLANE_SUFFIX)
-            and _host_stem(path.name) not in converted_hosts
+        pftrace_traces = [
+            path for path in session_paths if _is_pftrace_name(path.name)
         ]
-        selected += host_traces or perfetto_traces or unconverted_xplanes
+        converted_hosts = {_host_stem(path.name) for path in host_traces}
+        xplane_by_host: dict[str | None, pathlib.Path] = {}
+        for path in sorted(session_paths):
+            if not _is_xplane_name(path.name):
+                continue
+            stem = _host_stem(path.name)
+            if stem in converted_hosts:
+                continue
+            # Prefer plain .xplane.pb over .xplane.pb.gz for the same host.
+            existing = xplane_by_host.get(stem)
+            if existing is None or (
+                existing.name.endswith(".gz") and not path.name.endswith(".gz")
+            ):
+                xplane_by_host[stem] = path
+        unconverted_xplanes = list(xplane_by_host.values())
+        selected += (
+            host_traces
+            or perfetto_traces
+            or pftrace_traces
+            or unconverted_xplanes
+        )
         if host_traces:
             selected += unconverted_xplanes
     return sorted(set(selected)) or sorted(paths)
 
 
-def _xplane_to_events(path: pathlib.Path) -> list[dict[str, Any]]:
-    """Converts an XPlane protobuf to trace events with the ``xprof`` package.
-
-    Raises:
-        ImportError: If the optional ``xprof`` package is not installed.
-    """
-    raw_to_tool_data = _optional.require(
-        "xprof.convert.raw_to_tool_data",
-        extra="jax",
-        purpose=f"reading the XPlane protobuf {path.name}",
-    )
-    tool_data, _ = raw_to_tool_data.xspace_to_tool_data(
-        [str(path)], "trace_viewer", {}
-    )
-    trace_json = (
-        tool_data if isinstance(tool_data, (str, bytes)) else str(tool_data)
-    )
-    trace = json.loads(trace_json)
-    return list(trace.get("traceEvents", []))
-
-
-def _load_events(path: pathlib.Path) -> list[dict[str, Any]]:
-    """Returns the trace events of an XProf/Perfetto JSON trace or xplane.pb."""
-    if path.name.endswith(_XPLANE_SUFFIX):
-        return _xplane_to_events(path)
-    opener = gzip.open if path.suffix == ".gz" else open
-    with opener(path, "rt", encoding="utf-8") as fh:
-        trace = json.load(fh)
-    if isinstance(trace, dict):
-        return list(trace.get("traceEvents", []))
-    return list(trace)
-
-
-@plugins.register_adapter("jax", version="1.0")
+@plugins.register_adapter("jax", version="2.0")
 class JaxAdapter:
     """Reads JAX profiler traces into kernels, steps and runtime tables.
 
@@ -143,21 +166,25 @@ class JaxAdapter:
     """
 
     format_name = "jax"
-    version = "1.0"
+    version = "2.0"
 
     def detect(self, path: pathlib.Path) -> bool:
-        """Checks whether a file is a JAX profiler trace.
+        """Checks whether a file is a JAX/XProf or Perfetto profiler trace.
 
         Args:
             path: The candidate file.
 
         Returns:
-            True for an xplane.pb file, or a JSON (optionally gzipped) trace
-            that starts with ``"displayTimeUnit": "ns"``.
+            True for an ``.xplane.pb[.gz]`` file, a valid binary Perfetto
+            ``.pftrace[.gz]`` / ``.perfetto-trace[.gz]`` file, or a JSON
+            (optionally gzipped) trace starting with ``"displayTimeUnit":
+            "ns"``.
         """
         name = path.name
-        if name.endswith(_XPLANE_SUFFIX):
+        if _is_xplane_name(name):
             return True
+        if _is_pftrace_name(name):
+            return _has_pftrace_header(path)
         is_json = (
             name.endswith(_HOST_TRACE_SUFFIX)
             or name == _PERFETTO_NAME
@@ -174,31 +201,41 @@ class JaxAdapter:
     def ingest(
         self, artifact: models.TraceArtifact, out_dir: pathlib.Path
     ) -> dict[str, pathlib.Path]:
-        """Converts the artifact's traces to kernels/steps/runtime tables.
+        """Converts the artifact's traces to CTA's standard Parquet tables.
 
         One file per host is read (see ``select_sources``); each becomes a
-        rank, numbered in sorted path order. The runtime table sums the
-        host-side API calls made inside a step per call name.
+        rank, numbered in sorted path order. The ``runtime`` table sums the
+        host-side API calls made inside a step per call name, ``runtime_calls``
+        records every host correlation call (``step = -1`` outside steps), and
+        ``network_ops`` captures NCCL/XLA collectives and peer-to-peer copies.
 
         Args:
             artifact: The JAX artifact to read.
             out_dir: The directory to write the Parquet tables to.
 
         Returns:
-            The table names ``"kernels"``, ``"steps"`` and ``"runtime"``
-            mapped to their Parquet paths.
+            The table names ``"kernels"``, ``"steps"``, ``"runtime"``,
+            ``"network_ops"`` and ``"runtime_calls"`` mapped to their Parquet
+            paths.
         """
         kernel_frames: list[pl.DataFrame] = []
         step_frames: list[pl.DataFrame] = []
+        net_frames: list[pl.DataFrame] = []
+        call_frames: list[pl.DataFrame] = []
         runtime_by_name: dict[str, list[int]] = {}
         for rank, path in enumerate(select_sources(artifact.paths)):
-            shard_kernels, shard_steps = _ingest_shard(
-                _load_events(path), rank, path.name, runtime_by_name
+            columns = native.read_jax(str(path))
+            shard_kernels, shard_steps, shard_net, shard_calls = _ingest_shard(
+                columns, rank, path.name, runtime_by_name
             )
             if shard_kernels.height:
                 kernel_frames.append(shard_kernels)
             if shard_steps.height:
                 step_frames.append(shard_steps)
+            if shard_net.height:
+                net_frames.append(shard_net)
+            if shard_calls.height:
+                call_frames.append(shard_calls)
         kernels = (
             pl.concat(kernel_frames).sort("rank", "start_ns")
             if kernel_frames
@@ -208,6 +245,16 @@ class JaxAdapter:
             pl.concat(step_frames).sort("rank", "start_ns")
             if step_frames
             else pl.DataFrame(schema=table_schemas.STEPS)
+        )
+        network_ops = (
+            pl.concat(net_frames).sort("rank", "start_ns")
+            if net_frames
+            else pl.DataFrame(schema=table_schemas.NETWORK_OPS)
+        )
+        calls = (
+            pl.concat(call_frames).sort("rank", "start_ns")
+            if call_frames
+            else pl.DataFrame(schema=table_schemas.RUNTIME_CALLS)
         )
         runtime = pl.DataFrame(
             [
@@ -222,216 +269,10 @@ class JaxAdapter:
                 "kernels": kernels,
                 "steps": steps,
                 "runtime": runtime,
+                "network_ops": network_ops,
+                "runtime_calls": calls,
             },
         )
-
-
-def _us_to_ns(us: Any) -> int:
-    """Converts a trace time in microseconds to whole nanoseconds."""
-    return int(round(float(us) * 1000.0))
-
-
-def _scope_path(args: dict[str, Any], module: str) -> list[str]:
-    """Returns an op's HLO name stack as a list of scopes.
-
-    The stack looks like ``jit(train_step)/jvp()/dot_general``: GPU ops carry
-    it in ``name``, others in ``tf_op``. Without one, the op's HLO module
-    stands in, spelled like a name stack entry (``jit_f`` -> ``jit(f)``).
-    """
-    for key in ("name", "tf_op"):
-        value = str(args.get(key) or "")
-        if "/" in value or value.startswith("jit("):
-            return [segment for segment in value.split("/") if segment]
-    if module.startswith(("jit_", "pjit_", "pmap_")):
-        transform, _, function_name = module.partition("_")
-        return [f"{transform}({function_name})"]
-    return [module] if module else []
-
-
-def _op_category(name: str, hlo_op: str) -> str:
-    """Classifies a device op as ``comm``, ``memcpy`` or ``compute``."""
-    if _COMM_RE.search(name) or _COMM_RE.search(hlo_op):
-        return "comm"
-    if _COPY_RE.search(name):
-        return "memcpy"
-    return "compute"
-
-
-@dataclasses.dataclass
-class _DeviceLines:
-    """The device processes of one trace and the event lines read on each.
-
-    Attributes:
-        devices_by_pid: The device ordinal of each ``/device:*`` process id.
-        thread_names_by_id: The name of each (pid, tid) event line.
-        line_prefixes_by_pid: The name prefix of the lines read on each device
-            process.
-    """
-
-    devices_by_pid: dict[Any, int]
-    thread_names_by_id: dict[tuple[Any, Any], str]
-    line_prefixes_by_pid: dict[Any, str]
-
-    def is_read(self, pid: Any, tid: Any) -> bool:
-        """Returns whether events on a device's (pid, tid) line are read."""
-        thread_name = self.thread_names_by_id.get((pid, tid), "")
-        return thread_name.startswith(self.line_prefixes_by_pid.get(pid, ""))
-
-
-def _device_lines(events: list[dict[str, Any]]) -> _DeviceLines:
-    """Finds a trace's device processes and the lines to read on each."""
-    process_names_by_pid: dict[Any, str] = {}
-    for event in events:
-        if event.get("ph") == "M" and event.get("name") == "process_name":
-            process_names_by_pid[event.get("pid")] = str(
-                (event.get("args") or {}).get("name", "")
-            )
-    devices_by_pid = {
-        pid: int(device_match.group(1))
-        for pid, name in process_names_by_pid.items()
-        if (device_match := _DEVICE_RE.search(name))
-    }
-    thread_names_by_id: dict[tuple[Any, Any], str] = {
-        (event.get("pid"), event.get("tid")): str(
-            (event.get("args") or {}).get("name", "")
-        )
-        for event in events
-        if event.get("ph") == "M" and event.get("name") == "thread_name"
-    }
-    # A device process may also carry XProf's derived lines (XLA Ops, XLA
-    # Modules, Steps, ...) that repeat the raw stream events: read the raw GPU
-    # streams, or on TPU the XLA Ops line.
-    line_prefixes_by_pid: dict[Any, str] = {}
-    for pid in devices_by_pid:
-        line_names = [
-            name
-            for (line_pid, _), name in thread_names_by_id.items()
-            if line_pid == pid
-        ]
-        if any(name.startswith("Stream #") for name in line_names):
-            line_prefixes_by_pid[pid] = "Stream #"
-        elif "XLA Ops" in line_names:
-            line_prefixes_by_pid[pid] = "XLA Ops"
-        else:
-            line_prefixes_by_pid[pid] = ""
-    return _DeviceLines(
-        devices_by_pid, thread_names_by_id, line_prefixes_by_pid
-    )
-
-
-@dataclasses.dataclass
-class _ShardEvents:
-    """The events of one host's trace that its kernels and steps come from.
-
-    Attributes:
-        op_rows: One kernels-table row per device op, in trace order.
-        op_details: The (HLO module, HLO op, correlation id) of each op row;
-            the correlation id is -1 if unknown.
-        annotated_steps: The (step_num, start_ns, end_ns) of each
-            StepTraceAnnotation.
-        launch_ns_by_correlation: The host launch time of each correlation id.
-        api_calls: The (name, start_ns, duration_ns) of each host-side API
-            call (a host event with a correlation id).
-        executions: The (module, start_ns, end_ns) of each host-side
-            execution of a jitted module.
-    """
-
-    op_rows: list[dict[str, object]] = dataclasses.field(default_factory=list)
-    op_details: list[tuple[str, str, int]] = dataclasses.field(
-        default_factory=list
-    )
-    annotated_steps: list[tuple[int, int, int]] = dataclasses.field(
-        default_factory=list
-    )
-    launch_ns_by_correlation: dict[int, int] = dataclasses.field(
-        default_factory=dict
-    )
-    api_calls: list[tuple[str, int, int]] = dataclasses.field(
-        default_factory=list
-    )
-    executions: list[tuple[str, int, int]] = dataclasses.field(
-        default_factory=list
-    )
-
-
-def _scan_events(events: list[dict[str, Any]], rank: int) -> _ShardEvents:
-    """Splits one host's complete ("X") events into ops, steps and launches."""
-    lines = _device_lines(events)
-    scan = _ShardEvents()
-    for event in events:
-        if event.get("ph") != "X":
-            continue
-        duration_ns = _us_to_ns(event.get("dur", 0.0))
-        if duration_ns <= 0:
-            continue
-        start_ns = _us_to_ns(event.get("ts", 0.0))
-        end_ns = start_ns + duration_ns
-        raw_args = event.get("args")
-        args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
-        pid = event.get("pid")
-        correlation_id = (
-            int(args["correlation_id"])
-            if str(args.get("correlation_id", "")).isdigit()
-            else -1
-        )
-        is_on_device = pid in lines.devices_by_pid
-        if (
-            "step_num" in args
-            and str(args["step_num"]).lstrip("-").isdigit()
-            and not is_on_device
-        ):
-            step_num = int(args["step_num"])
-            scan.annotated_steps.append((step_num, start_ns, end_ns))
-            continue
-        if (
-            not is_on_device
-            and str(event.get("name", "")).startswith(_EXECUTE_PREFIX)
-            and args.get("name")
-        ):
-            scan.executions.append((str(args["name"]), start_ns, end_ns))
-        if not is_on_device and "hlo_op" not in args:
-            if correlation_id >= 0:
-                scan.launch_ns_by_correlation.setdefault(
-                    correlation_id, start_ns
-                )
-                api_name = str(event.get("name", ""))
-                scan.api_calls.append((api_name, start_ns, duration_ns))
-            continue
-        if is_on_device and not lines.is_read(pid, event.get("tid")):
-            continue
-
-        name = str(event.get("name", ""))
-        hlo_op = str(args.get("hlo_op") or name)
-        module = str(args.get("hlo_module") or args.get("module") or "")
-        scope_path = _scope_path(args, module)
-        transfer_details = str(
-            args.get("memcpy_details") or args.get("Memset_details") or ""
-        )
-        bytes_match = _BYTES_RE.search(transfer_details)
-        default_device = (
-            int(args["device_ordinal"])
-            if str(args.get("device_ordinal", "")).isdigit()
-            else 0
-        )
-        scan.op_rows.append(
-            {
-                "name": name,
-                "scope": scope_path[-1] if scope_path else "",
-                "scope_path": " > ".join(scope_path),
-                "category": _op_category(name, hlo_op),
-                "start_ns": start_ns,
-                "end_ns": end_ns,
-                "duration_ns": duration_ns,
-                "bytes": int(bytes_match.group(1)) if bytes_match else 0,
-                "stream": int(event.get("tid", 0) or 0) % 2**31,
-                "device": lines.devices_by_pid.get(pid, default_device),
-                "rank": rank,
-            }
-        )
-        scan.op_details.append(
-            (module, str(args.get("hlo_op") or ""), correlation_id)
-        )
-    return scan
 
 
 def _assign_steps(
@@ -493,53 +334,185 @@ def _is_in_any_span(
     )
 
 
+def _xla_collective_op(name: str, hlo_op: str) -> str | None:
+    """Extracts a logical collective op name from an XLA HLO op or name."""
+    for text in (hlo_op, name):
+        if not text:
+            continue
+        for pattern, logical in _XLA_COLL_PATTERNS:
+            if pattern.search(text):
+                return logical
+    return None
+
+
+def _network_ops(
+    kernels: pl.DataFrame,
+    names: Sequence[str],
+    hlo_op_codes: np.ndarray,
+    launch_ns: np.ndarray,
+) -> pl.DataFrame:
+    """Builds the ``network_ops`` table of one rank from its JAX kernels.
+
+    NCCL kernels use ``api="nccl"``, non-NCCL XLA/TPU HLO collectives use
+    ``api="xla"``, and ``MemcpyP2P`` transfers use ``api="p2p"``.
+    """
+    if kernels.is_empty():
+        return pl.DataFrame(schema=table_schemas.NETWORK_OPS)
+
+    comm_mask = (kernels["category"] == "comm").to_numpy()
+    comm_indices = np.flatnonzero(comm_mask)
+    collective: pl.DataFrame | None = None
+    if len(comm_indices):
+        kernel_names = kernels["name"].to_list()
+        coll_rows: list[int] = []
+        coll_ops: list[str] = []
+        for idx in comm_indices.tolist():
+            hlo_op = names[int(hlo_op_codes[idx])]
+            logical = _xla_collective_op(kernel_names[idx], hlo_op)
+            if logical is not None:
+                coll_rows.append(idx)
+                coll_ops.append(logical)
+        if coll_rows:
+            n_coll = len(coll_rows)
+            collective = pl.DataFrame(
+                {
+                    "row": pl.Series(coll_rows, dtype=pl.UInt32),
+                    "collective": pl.Series(coll_ops, dtype=pl.String),
+                    "dtype": pl.repeat("", n_coll, dtype=pl.String, eager=True),
+                    "group": pl.repeat("", n_coll, dtype=pl.String, eager=True),
+                    "in_elems": np.zeros(n_coll, dtype=np.int64),
+                    "out_elems": np.zeros(n_coll, dtype=np.int64),
+                    "group_size": np.zeros(n_coll, dtype=np.int64),
+                }
+            )
+
+    ops = network.ops_from_kernels(kernels, collective, launch_ns)
+    if not len(comm_indices):
+        return ops
+
+    # ops_from_kernels emits the comm rows first (in kernels order), followed
+    # by peer_copies. Label non-NCCL XLA collectives as api="xla" and preserve
+    # any kernel bytes recorded on comm rows.
+    n_comm = len(comm_indices)
+    comm_slice = ops.slice(0, n_comm)
+    p2p_slice = ops.slice(n_comm)
+    comm_kernels = kernels.filter(pl.col("category") == "comm")
+    is_nccl = comm_kernels["name"].str.contains(r"(?i)nccl")
+    comm_bytes = comm_kernels["bytes"]
+    comm_slice = comm_slice.with_columns(
+        pl.when(is_nccl)
+        .then(pl.lit("nccl"))
+        .otherwise(pl.lit("xla"))
+        .alias("api"),
+        pl.when(pl.col("bytes") > 0)
+        .then(pl.col("bytes"))
+        .otherwise(comm_bytes)
+        .alias("bytes"),
+    )
+    return pl.concat([comm_slice, p2p_slice]).cast(table_schemas.NETWORK_OPS)
+
+
 def _ingest_shard(
-    events: list[dict[str, Any]],
+    columns: dict[str, Any],
     rank: int,
     source: str,
     runtime_by_name: dict[str, list[int]] | None = None,
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Builds the kernels and steps tables of one host's trace.
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Builds kernels, steps, network_ops and runtime_calls for one host.
 
     Args:
-        events: The host's trace events.
+        columns: Native columns returned by ``native.read_jax``.
         rank: The rank to give the host.
         source: The trace's file name, for the warning.
         runtime_by_name: Per host-side API call name, the [total duration ns,
             call count] of the calls made inside a step; updated in place.
 
     Returns:
-        The kernels and steps frames.
+        The kernels, steps, network_ops, and runtime_calls frames.
     """
     runtime_by_name = {} if runtime_by_name is None else runtime_by_name
-    scan = _scan_events(events, rank)
-    if not scan.op_rows:
-        return pl.DataFrame(schema=table_schemas.KERNELS), pl.DataFrame(
-            schema=table_schemas.STEPS
+    names: list[str] = columns["names"]
+    empty_steps = pl.DataFrame(schema=table_schemas.STEPS)
+    if not len(columns["op_name"]):
+        calls = runtime_calls.runtime_calls_frame(
+            names,
+            columns["rcall_name"],
+            columns["rcall_start"],
+            columns["rcall_end"],
+            columns["rcall_thread"],
+            columns["rcall_correlation"],
+            rank,
+            empty_steps,
+        )
+        return (
+            pl.DataFrame(schema=table_schemas.KERNELS),
+            empty_steps,
+            pl.DataFrame(schema=table_schemas.NETWORK_OPS),
+            calls,
         )
 
-    start_times_ns = np.asarray([row["start_ns"] for row in scan.op_rows])
-    order = np.argsort(start_times_ns, kind="stable")
-    kernels = alignment.enrich_ops_df(
-        pl.DataFrame(scan.op_rows)[order.tolist()], "name"
+    order = np.argsort(columns["op_start"], kind="stable")
+    op_name_codes = columns["op_name"][order]
+    starts_ns = columns["op_start"][order]
+    ends_ns = columns["op_end"][order]
+    durations_ns = ends_ns - starts_ns
+    op_launch_ns = columns["op_launch_ns"][order]
+    op_hlo_op = columns["op_hlo_op"][order]
+    op_hlo_module = columns["op_hlo_module"][order]
+    row_count = len(op_name_codes)
+
+    names_arr = np.array(names, dtype=object)
+    used_codes, name_rows = np.unique(op_name_codes, return_inverse=True)
+    distinct = alignment.enrich_ops_df(
+        pl.DataFrame(
+            {"name": pl.Series([names[c] for c in used_codes.tolist()])}
+        ),
+        "name",
     )
-    op_details = [scan.op_details[i] for i in order]
-    starts_ns = kernels["start_ns"].to_numpy()
-    ends_ns = kernels["end_ns"].to_numpy()
-    # An op belongs to the step whose host code launched it; ops without a
-    # known launch use their own start.
-    launch_ns = np.array(
-        [
-            scan.launch_ns_by_correlation.get(correlation_id, int(starts_ns[i]))
-            if correlation_id >= 0
-            else int(starts_ns[i])
-            for i, (_, _, correlation_id) in enumerate(op_details)
-        ],
-        dtype=np.int64,
+    kernels = pl.DataFrame(
+        {
+            "name": distinct["name"].gather(name_rows),
+            "scope": pl.Series(
+                names_arr[columns["op_scope"][order]], dtype=pl.String
+            ),
+            "scope_path": pl.Series(
+                names_arr[columns["op_scope_path"][order]], dtype=pl.String
+            ),
+            "category": pl.Series(columns["op_category"][order]).replace_strict(
+                table_schemas.GPU_CATEGORIES, return_dtype=pl.String
+            ),
+            "start_ns": starts_ns,
+            "end_ns": ends_ns,
+            "duration_ns": durations_ns,
+            "bytes": columns["op_bytes"][order],
+            "stream": columns["op_stream"][order],
+            "device": columns["op_device"][order],
+            "rank": np.full(row_count, rank, dtype=np.int64),
+        }
+    ).with_columns(
+        distinct["demangled_name"].gather(name_rows),
+        distinct["canonical_name"].gather(name_rows),
+        distinct["op_family"].gather(name_rows),
     )
 
-    if scan.annotated_steps:
-        step_spans = sorted(set(scan.annotated_steps), key=lambda span: span[1])
+    # An op belongs to the step whose host code launched it; ops without a
+    # known launch use their own start.
+    launch_ns = np.where(
+        np.isnan(op_launch_ns), starts_ns, op_launch_ns
+    ).astype(np.int64)
+
+    if len(columns["step_id"]):
+        annotated = list(
+            zip(
+                columns["step_id"].tolist(),
+                columns["step_start"].tolist(),
+                columns["step_end"].tolist(),
+                strict=True,
+            )
+        )
+        step_spans = sorted(
+            set(annotated), key=lambda span: (span[1], span[0], span[2])
+        )
     else:
         warnings.warn(
             f"{source}: no jax.profiler.StepTraceAnnotation step markers; "
@@ -549,13 +522,21 @@ def _ingest_shard(
             RuntimeWarning,
             stacklevel=3,
         )
-        step_spans = _infer_module_steps(kernels, op_details, scan.executions)
+        step_spans = _infer_module_steps(
+            names,
+            op_hlo_module,
+            op_hlo_op,
+            durations_ns,
+            columns["exec_module"],
+            columns["exec_start"],
+            columns["exec_end"],
+        )
 
     step_columns: dict[str, Any]
     if step_spans:
         step_of_op, step_columns = _assign_steps(launch_ns, step_spans)
     else:
-        step_of_op = np.zeros(kernels.height, dtype=np.int32)
+        step_of_op = np.zeros(row_count, dtype=np.int32)
         first_start_ns, last_end_ns = int(starts_ns.min()), int(ends_ns.max())
         step_columns = {
             "step": [0],
@@ -570,29 +551,62 @@ def _ingest_shard(
     kernels = kernels.with_columns(
         pl.Series("step", step_of_op, dtype=pl.Int32)
     )
-    # Like the kernels, only the API calls made inside a step count.
-    call_starts_ns = np.array(
-        [call[1] for call in scan.api_calls], dtype=np.int64
+
+    # Like the kernels, only the API calls made inside a step count in runtime.
+    rcall_starts_ns = columns["rcall_start"]
+    if len(rcall_starts_ns):
+        is_in_step = _is_in_any_span(rcall_starts_ns, step_spans)
+        in_step_codes = columns["rcall_name"][is_in_step]
+        if len(in_step_codes):
+            in_step_durs = (
+                columns["rcall_end"][is_in_step] - rcall_starts_ns[is_in_step]
+            )
+            uniq_codes, first_pos, inv = np.unique(
+                in_step_codes, return_index=True, return_inverse=True
+            )
+            dur_sums = np.bincount(inv, weights=in_step_durs).astype(np.int64)
+            call_counts = np.bincount(inv).astype(np.int64)
+            for idx in np.argsort(first_pos).tolist():
+                api_name = names[int(uniq_codes[idx])]
+                totals = runtime_by_name.setdefault(api_name, [0, 0])
+                totals[0] += int(dur_sums[idx])
+                totals[1] += int(call_counts[idx])
+
+    calls = runtime_calls.runtime_calls_frame(
+        names,
+        columns["rcall_name"],
+        columns["rcall_start"],
+        columns["rcall_end"],
+        columns["rcall_thread"],
+        columns["rcall_correlation"],
+        rank,
+        steps,
     )
-    is_in_step = _is_in_any_span(call_starts_ns, step_spans)
-    for (api_name, _, call_duration_ns), counts in zip(
-        scan.api_calls, is_in_step.tolist(), strict=True
-    ):
-        if counts:
-            totals = runtime_by_name.setdefault(api_name, [0, 0])
-            totals[0] += call_duration_ns
-            totals[1] += 1
+
     if step_spans:
         # Compile/autotune work and transfers outside every step are not
         # step work.
-        kernels = kernels.filter(pl.col("step") >= 0)
-    return table_schemas.conform(kernels, table_schemas.KERNELS), steps
+        keep = step_of_op >= 0
+        kernels = kernels.filter(pl.Series(keep))
+        kept_hlo_op = op_hlo_op[keep]
+        kept_launch_ns = op_launch_ns[keep]
+    else:
+        kept_hlo_op = op_hlo_op
+        kept_launch_ns = op_launch_ns
+
+    kernels = table_schemas.conform(kernels, table_schemas.KERNELS)
+    net_ops = _network_ops(kernels, names, kept_hlo_op, kept_launch_ns)
+    return kernels, steps, net_ops, calls
 
 
 def _infer_module_steps(
-    kernels: pl.DataFrame,
-    op_details: list[tuple[str, str, int]],
-    executions: list[tuple[str, int, int]],
+    names: Sequence[str],
+    op_hlo_module: np.ndarray,
+    op_hlo_op: np.ndarray,
+    durations_ns: np.ndarray,
+    exec_module: np.ndarray,
+    exec_start: np.ndarray,
+    exec_end: np.ndarray,
 ) -> list[tuple[int, int, int]]:
     """Infers steps from the host-side executions of the busiest module.
 
@@ -601,32 +615,46 @@ def _infer_module_steps(
     map to these steps by launch time.
 
     Args:
-        kernels: The host's ops, in the order of ``op_details``.
-        op_details: The (HLO module, HLO op, correlation id) of each op.
-        executions: The (module, start_ns, end_ns) of each host-side
-            execution of a jitted module.
+        names: Dictionary of interned names from the native reader.
+        op_hlo_module: Module name code per op.
+        op_hlo_op: HLO op name code per op.
+        durations_ns: Duration in nanoseconds per op.
+        exec_module: Module name code per host-side PJRT Execute span.
+        exec_start: Start timestamps of executions in nanoseconds.
+        exec_end: End timestamps of executions in nanoseconds.
 
     Returns:
         The (step, start_ns, end_ns) spans, sorted by start; empty if no
         execution of a module with HLO ops was recorded.
     """
-    durations_ns = kernels["duration_ns"].to_numpy()
+    if not len(exec_module):
+        return []
     device_ns_by_module: dict[str, int] = {}
-    for (module, hlo_op, _), duration_ns in zip(
-        op_details, durations_ns, strict=True
+    for mod_code, op_code, dur_ns in zip(
+        op_hlo_module.tolist(),
+        op_hlo_op.tolist(),
+        durations_ns.tolist(),
+        strict=True,
     ):
-        if module and hlo_op:
-            previous_ns = device_ns_by_module.get(module, 0)
-            device_ns_by_module[module] = previous_ns + int(duration_ns)
+        module = names[mod_code]
+        if module and names[op_code]:
+            device_ns_by_module[module] = (
+                device_ns_by_module.get(module, 0) + dur_ns
+            )
     known_executions = [
-        execution
-        for execution in executions
-        if execution[0] in device_ns_by_module
+        (names[mod_code], start_ns, end_ns)
+        for mod_code, start_ns, end_ns in zip(
+            exec_module.tolist(),
+            exec_start.tolist(),
+            exec_end.tolist(),
+            strict=True,
+        )
+        if names[mod_code] in device_ns_by_module
     ]
     if not known_executions:
         return []
     busiest_module = max(
-        {execution[0] for execution in known_executions},
+        sorted({execution[0] for execution in known_executions}),
         key=lambda module: device_ns_by_module[module],
     )
     busiest_executions = sorted(

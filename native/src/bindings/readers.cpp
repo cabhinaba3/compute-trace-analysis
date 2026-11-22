@@ -11,6 +11,7 @@
 #include "bindings/convert.hpp"
 #include "readers/chakra/reader.hpp"
 #include "readers/goal/reader.hpp"
+#include "readers/jax/reader.hpp"
 #include "readers/kineto/reader.hpp"
 #include "readers/nsys/reader.hpp"
 
@@ -63,6 +64,18 @@ void bind_readers(nb::module_& m) {
       [](const std::string& path) { return read_without_gil([&] { return readers::read_nsys(path); }); },
       "path"_a,
       "Reads the GPU activities, NVTX ranges and GPU metrics of an Nsight Systems SQLite export.");
+
+  m.def(
+      "read_jax",
+      [](const std::string& path, const std::string& format, int threads, std::uint64_t chunk_bytes,
+         std::uint64_t block_bytes) {
+        return read_without_gil(
+            [&] { return readers::read_jax(path, format, threads, chunk_bytes, block_bytes); });
+      },
+      "path"_a, "format"_a = "auto", "threads"_a = 0, "chunk_bytes"_a = 32ull << 20,
+      "block_bytes"_a = 8ull << 20,
+      "Reads a JAX/XProf trace (.trace.json.gz, perfetto_trace.json.gz, .xplane.pb, or .pftrace) into "
+      "dictionary-coded columns.");
 }
 
 }  // namespace cta::bindings

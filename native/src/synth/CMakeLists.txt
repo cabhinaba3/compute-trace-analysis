@@ -2,6 +2,7 @@
 target_sources(_native PRIVATE
   chakra.cpp
   goal.cpp
+  jax.cpp
   jtop.cpp
   kineto.cpp
   ncu.cpp

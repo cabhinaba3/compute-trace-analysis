@@ -20,6 +20,7 @@ find_package(simdjson CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(ChakraProto)  # protobuf, and the C++ sources generated from Chakra's schema
+include(JaxProto)     # C++ sources generated from vendored XPlane and Perfetto schemas
 
 # Optional GPU backends of the what-if solver (src/gpu). CTA_GPU is "auto" (use what the machine has),
 # "OFF", "ON" (CUDA on Linux, Metal on macOS, an error if missing), "CUDA" or "METAL". A build without
@@ -69,7 +70,7 @@ message(STATUS "cta: GPU backends: cuda=${CTA_HAVE_CUDA} metal=${CTA_HAVE_METAL}
 # its own CMakeLists.txt, so a new reader or generator only touches its
 # directory. src/ is the include root: every #include names its file from
 # there ("util/sink.hpp").
-nanobind_add_module(_native NB_STATIC src/module.cpp ${CHAKRA_PROTO_SRCS})
+nanobind_add_module(_native NB_STATIC src/module.cpp ${CHAKRA_PROTO_SRCS} ${JAX_PROTO_SRCS})
 target_include_directories(_native PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR})
 target_link_libraries(_native PRIVATE ZLIB::ZLIB SQLite::SQLite3 protobuf::libprotobuf simdjson::simdjson
                                       Threads::Threads)

@@ -17,7 +17,7 @@ from cta.analysis import step_slicing
 @plugins.register_aspect(
     "network",
     title="Network API: Bandwidth and Cross-Rank Wait by Operation and Size",
-    required_formats=("nsys", "kineto"),
+    required_formats=("nsys", "kineto", "jax"),
     any_of_formats=True,
 )
 class NetworkAspect(plugins.Aspect):
