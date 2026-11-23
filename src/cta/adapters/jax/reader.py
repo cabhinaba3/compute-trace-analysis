@@ -42,6 +42,9 @@ from cta.analysis import network
 _XPLANE_SUFFIXES = (".xplane.pb.gz", ".xplane.pb")
 _HOST_TRACE_SUFFIX = ".trace.json.gz"
 _PERFETTO_NAME = "perfetto_trace.json.gz"
+# XProf and jax's Perfetto export both start with displayTimeUnit "ns";
+# PyTorch/Kineto traces start with schemaVersion.
+_XPROF_HEAD_RE = re.compile(r'\{\s*"displayTimeUnit"\s*:\s*"ns"')
 _PFTRACE_SUFFIXES = (
     ".pftrace.gz",
     ".pftrace",
@@ -194,9 +197,7 @@ class JaxAdapter:
         if not is_json:
             return False
         head = common.peek_text(path).lstrip()
-        # XProf and jax's Perfetto export both start with displayTimeUnit
-        # "ns"; PyTorch/Kineto traces start with schemaVersion.
-        return re.match(r'\{\s*"displayTimeUnit"\s*:\s*"ns"', head) is not None
+        return _XPROF_HEAD_RE.match(head) is not None
 
     def ingest(
         self, artifact: models.TraceArtifact, out_dir: pathlib.Path
